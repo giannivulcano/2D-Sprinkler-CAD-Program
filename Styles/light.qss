@@ -1,0 +1,9 @@
+QWidget { background-color: #f0f0f0; color: #000000; }
+QLineEdit, QComboBox, QSpinBox, QDateEdit, QListWidget, QTreeView {
+    background-color: #ffffff; color: #000000; border: 1px solid #cccccc;
+    border-radius: 3px; padding: 2px 4px;
+}
+QPushButton { background-color: #e0e0e0; color: #000000; border: 1px solid #cccccc; border-radius: 3px; padding: 5px 10px; }
+QPushButton:hover { background-color: #d0d0d0; }
+QProgressBar { background-color: #ffffff; border: 1px solid #cccccc; border-radius: 5px; text-align: center; color: black; }
+QProgressBar::chunk { background-color: #0078d7; border-radius: 5px; }
