@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -7,18 +7,23 @@ class Underlay:
     """
     Tracks a linked underlay file (PDF or DXF) in the project.
     The scene item is stored separately; this is the serialisable record.
+    Only the *path* is stored — the file is re-read from disk on every load
+    so external edits are picked up automatically (linked-file workflow).
     """
     type: Literal["pdf", "dxf"]
     path: str
     x: float = 0.0
     y: float = 0.0
     scale: float = 1.0
+    rotation: float = 0.0
+    opacity: float = 1.0
+    locked: bool = False
     # PDF-specific
     page: int = 0
     dpi: int = 150
     # DXF-specific — store colour as hex string e.g. "#ffffff"
     colour: str = "#ffffff"
-    line_weight: int = 0
+    line_weight: float = 0.0
 
     def to_dict(self) -> dict:
         d = {
@@ -27,6 +32,9 @@ class Underlay:
             "x":          self.x,
             "y":          self.y,
             "scale":      self.scale,
+            "rotation":   self.rotation,
+            "opacity":    self.opacity,
+            "locked":     self.locked,
         }
         if self.type == "pdf":
             d["page"] = self.page
@@ -44,6 +52,9 @@ class Underlay:
             x           = d.get("x", 0.0),
             y           = d.get("y", 0.0),
             scale       = d.get("scale", 1.0),
+            rotation    = d.get("rotation", 0.0),
+            opacity     = d.get("opacity", 1.0),
+            locked      = d.get("locked", False),
             page        = d.get("page", 0),
             dpi         = d.get("dpi", 150),
             colour      = d.get("colour", "#ffffff"),

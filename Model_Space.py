@@ -1,9 +1,9 @@
-import sys, json
-import ezdxf
+import sys, json, math
 from PyQt6.QtWidgets import (QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem,
-                              QGraphicsItem, QGraphicsPixmapItem, QGraphicsTextItem, QApplication)
-from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize
-from PyQt6.QtGui import QPen, QBrush, QColor, QPixmap
+                              QGraphicsItem, QGraphicsPixmapItem, QGraphicsTextItem,
+                              QGraphicsPathItem, QApplication, QProgressDialog)
+from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize, QTimer
+from PyQt6.QtGui import QPen, QBrush, QColor, QPixmap, QPainterPath
 from PyQt6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
 from node import Node
 from pipe import Pipe
@@ -14,11 +14,14 @@ from Annotations import Annotation, DimensionAnnotation, NoteAnnotation
 from underlay import Underlay
 from scale_manager import ScaleManager
 from calibrate_dialog import CalibrateDialog
+from underlay_context_menu import UnderlayContextMenu
+from dxf_import_worker import DxfImportWorker
+import os
 
 
 class Model_Space(QGraphicsScene):
     SNAP_RADIUS = 10
-    SAVE_VERSION = 2
+    SAVE_VERSION = 3
     requestPropertyUpdate = pyqtSignal(object)
 
     def __init__(self):
@@ -112,7 +115,7 @@ class Model_Space(QGraphicsScene):
             if item is not None:
                 data.x = item.scenePos().x()
                 data.y = item.scenePos().y()
-                data.scale = item.scale() if hasattr(item, "scale") else 1.0
+                # rotation and opacity are already kept in sync via context menu
             underlays_data.append(data.to_dict())
 
         # --- Assemble and write ---
@@ -140,7 +143,6 @@ class Model_Space(QGraphicsScene):
         if "scale" in payload:
             self.scale_manager = ScaleManager.from_dict(payload["scale"])
         else:
-            # Legacy file — fall back to old units_per_meter if present
             self.scale_manager = ScaleManager()
 
         # --- Nodes ---
@@ -151,7 +153,6 @@ class Model_Space(QGraphicsScene):
             if entry.get("sprinkler"):
                 template = Sprinkler(None)
                 for key, value in entry["sprinkler"].items():
-                    # stored as {key: {"type":..,"value":..}} OR {key: value} depending on version
                     if isinstance(value, dict):
                         template.set_property(key, value["value"])
                     else:
@@ -209,7 +210,6 @@ class Model_Space(QGraphicsScene):
         self.underlays = []
         self.scale_manager = ScaleManager()
         self.clear()
-        # Restore items that clear() destroyed
         self.init_preview_node()
         self.init_preview_pipe()
         self.draw_origin()
@@ -263,7 +263,7 @@ class Model_Space(QGraphicsScene):
         print(f"Mode set to: {self.mode}")
         self.preview_node.hide()
         self.preview_pipe.hide()
-        self._cal_point1 = None          # reset calibration state
+        self._cal_point1 = None
         if self.node_start_pos is not None:
             self.remove_node(self.node_start_pos)
         if mode in ("sprinkler", "pipe", "set_scale"):
@@ -361,78 +361,111 @@ class Model_Space(QGraphicsScene):
         n.delete_sprinkler()
 
     # -------------------------------------------------------------------------
-    # UNDERLAYS
+    # UNDERLAYS — IMPORT
 
     def import_dxf(self, file_path, color=QColor("white"), line_weight=0,
-                   x=0.0, y=0.0, _record: Underlay = None):
-        try:
-            doc = ezdxf.readfile(file_path)
-            msp = doc.modelspace()
-        except Exception as e:
-            print("❌ Failed to load DXF:", e)
+                   x=0.0, y=0.0, layers=None, _record: Underlay = None):
+        """
+        Import a DXF file as an underlay using a background thread.
+
+        Supported entities: LINE, CIRCLE, ARC, ELLIPSE, LWPOLYLINE, POLYLINE,
+        SPLINE, TEXT, MTEXT.
+
+        Parameters
+        ----------
+        layers : list[str] | None
+            If given, only import entities on these layers. None = all layers.
+        """
+        parent_widget = self.views()[0] if self.views() else None
+
+        # Create progress dialog
+        progress = QProgressDialog("Importing DXF…", "Cancel", 0, 100, parent_widget)
+        progress.setWindowTitle("DXF Import")
+        progress.setMinimumDuration(0)   # show immediately
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+
+        # Create and configure worker
+        worker = DxfImportWorker(file_path, color, line_weight, layers)
+
+        # Store references so they don't get garbage-collected
+        self._dxf_worker = worker
+        self._dxf_progress = progress
+        self._dxf_import_params = {
+            "file_path": file_path, "color": color, "line_weight": line_weight,
+            "x": x, "y": y, "layers": layers, "_record": _record,
+        }
+
+        # Wire signals
+        worker.progress.connect(lambda cur, tot: self._on_dxf_progress(progress, cur, tot))
+        worker.status.connect(lambda msg: progress.setLabelText(msg))
+        worker.finished_items.connect(lambda items: self._on_dxf_finished(items, progress))
+        worker.error.connect(lambda msg: self._on_dxf_error(msg, progress))
+        progress.canceled.connect(worker.cancel)
+
+        worker.start()
+
+    def _on_dxf_progress(self, progress: QProgressDialog, current: int, total: int):
+        if total > 0:
+            progress.setMaximum(total)
+            progress.setValue(current)
+
+    def _on_dxf_finished(self, items: list, progress: QProgressDialog):
+        params = self._dxf_import_params
+        progress.setLabelText(f"Adding {len(items)} items to scene…")
+        QApplication.processEvents()
+
+        if not items:
+            progress.close()
+            self._cleanup_dxf_worker()
             return
 
-        pen = QPen(color, line_weight)
-        imported_items = []
+        # Temporarily disable BSP indexing for bulk insertion
+        old_method = self.itemIndexMethod()
+        self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
 
-        for e in msp:
-            try:
-                if e.dxftype() == "LINE":
-                    start = QPointF(e.dxf.start[0], -e.dxf.start[1])
-                    end   = QPointF(e.dxf.end[0],   -e.dxf.end[1])
-                    line  = QGraphicsLineItem(start.x(), start.y(), end.x(), end.y())
-                    line.setPen(pen)
-                    line.setZValue(-100)
-                    imported_items.append(line)
+        for item in items:
+            self.addItem(item)
+        group = self.createItemGroup(items)
+        group.setZValue(-100)
+        group.setPos(params["x"], params["y"])
+        group.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        )
+        group.setData(0, "DXF Underlay")
 
-                elif e.dxftype() == "CIRCLE":
-                    r = e.dxf.radius
-                    cx, cy = e.dxf.center.x, e.dxf.center.y
-                    circle = QGraphicsEllipseItem(cx - r, -cy - r, 2 * r, 2 * r)
-                    circle.setPen(pen)
-                    circle.setZValue(-100)
-                    imported_items.append(circle)
+        record = params["_record"] or Underlay(
+            type="dxf", path=params["file_path"],
+            x=params["x"], y=params["y"],
+            colour=params["color"].name(),
+            line_weight=params["line_weight"],
+        )
 
-                elif e.dxftype() in ("LWPOLYLINE", "POLYLINE"):
-                    points = [(p[0], -p[1]) for p in e.get_points()]
-                    for i in range(len(points) - 1):
-                        x1, y1 = points[i]
-                        x2, y2 = points[i + 1]
-                        pline = QGraphicsLineItem(x1, y1, x2, y2)
-                        pline.setPen(pen)
-                        pline.setZValue(-100)
-                        imported_items.append(pline)
+        # Apply saved display settings
+        self._apply_underlay_display(group, record)
+        self.underlays.append((record, group))
 
-                elif e.dxftype() == "TEXT":
-                    pos = e.dxf.insert
-                    text_item = QGraphicsTextItem(e.dxf.text)
-                    text_item.setPos(pos[0], -pos[1])
-                    text_item.setDefaultTextColor(color)
-                    text_item.setZValue(-100)
-                    imported_items.append(text_item)
+        # Restore indexing
+        self.setItemIndexMethod(old_method)
 
-            except Exception as inner:
-                print(f"⚠️ Skipped entity {e.dxftype()} due to:", inner)
+        progress.close()
+        self._cleanup_dxf_worker()
+        print(f"✅ Imported DXF: {params['file_path']} ({len(items)} items)")
 
-        if imported_items:
-            for item in imported_items:
-                self.addItem(item)
-            group = self.createItemGroup(imported_items)
-            group.setZValue(-100)
-            group.setPos(x, y)
-            group.setFlags(
-                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
-                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-            )
-            group.setData(0, "DXF Underlay")
+    def _on_dxf_error(self, msg: str, progress: QProgressDialog):
+        progress.close()
+        print(f"❌ {msg}")
+        self._cleanup_dxf_worker()
 
-            # Register in underlay list
-            record = _record or Underlay(
-                type="dxf", path=file_path, x=x, y=y,
-                colour=color.name(), line_weight=line_weight
-            )
-            self.underlays.append((record, group))
-            print(f"✅ Imported DXF: {file_path}")
+    def _cleanup_dxf_worker(self):
+        if hasattr(self, "_dxf_worker") and self._dxf_worker is not None:
+            self._dxf_worker.quit()
+            self._dxf_worker.wait()
+        self._dxf_worker = None
+        self._dxf_progress = None
+        self._dxf_import_params = None
 
     def import_pdf(self, file_path, dpi=150, page=0, x=0.0, y=0.0,
                    _record: Underlay = None):
@@ -468,17 +501,101 @@ class Model_Space(QGraphicsScene):
             item.setData(0, "PDF Underlay")
             self.addItem(item)
 
-            # Register in underlay list
             record = _record or Underlay(
                 type="pdf", path=file_path,
                 x=item.pos().x(), y=item.pos().y(),
                 dpi=dpi, page=page
             )
+
+            # Apply saved display settings
+            self._apply_underlay_display(item, record)
+
             self.underlays.append((record, item))
             print(f"✅ Imported PDF '{file_path}' page {page} at {dpi} DPI")
 
         except Exception as e:
             print("❌ Error importing PDF:", e)
+
+    # -------------------------------------------------------------------------
+    # UNDERLAYS — MANAGEMENT
+
+    def _apply_underlay_display(self, item: QGraphicsItem, record: Underlay):
+        """Apply scale, rotation, opacity, and lock state from the record."""
+        if record.scale != 1.0:
+            item.setScale(record.scale)
+        if record.rotation != 0.0:
+            item.setRotation(record.rotation)
+        if record.opacity < 1.0:
+            item.setOpacity(record.opacity)
+        if record.locked:
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+    def find_underlay_for_item(self, item: QGraphicsItem):
+        """Return the (Underlay, QGraphicsItem) tuple for a scene item, or None."""
+        for data, scene_item in self.underlays:
+            if scene_item is item:
+                return data, scene_item
+        return None
+
+    def remove_underlay(self, data: Underlay, item: QGraphicsItem):
+        """Remove an underlay from the scene and the tracking list."""
+        pair = (data, item)
+        if pair in self.underlays:
+            self.underlays.remove(pair)
+        if item.scene() is self:
+            # If it's a group, destroy the group properly
+            if hasattr(self, "destroyItemGroup") and isinstance(item, type(self.createItemGroup([]))):
+                self.destroyItemGroup(item)
+            else:
+                self.removeItem(item)
+        print(f"🗑️ Removed underlay: {data.path}")
+
+    def refresh_underlay(self, data: Underlay, item: QGraphicsItem):
+        """Re-import an underlay from disk, preserving position/scale/rotation/opacity."""
+        # Sync current position back to record
+        data.x = item.scenePos().x()
+        data.y = item.scenePos().y()
+
+        # Remove old item from scene
+        idx = None
+        for i, (d, it) in enumerate(self.underlays):
+            if d is data:
+                idx = i
+                break
+        if item.scene() is self:
+            self.removeItem(item)
+
+        # Re-import
+        if data.type == "pdf":
+            self.import_pdf(
+                data.path, dpi=data.dpi, page=data.page,
+                x=data.x, y=data.y, _record=data
+            )
+        elif data.type == "dxf":
+            self.import_dxf(
+                data.path, color=QColor(data.colour),
+                line_weight=data.line_weight,
+                x=data.x, y=data.y, _record=data
+            )
+
+        # The import functions append a new entry — remove the duplicate old slot if needed
+        if idx is not None and idx < len(self.underlays):
+            # Find and remove the entry pointing to the old (now removed) item
+            # The fresh entry is at the end
+            old_entries = [(i, d) for i, (d, it) in enumerate(self.underlays) if d is data]
+            if len(old_entries) > 1:
+                # Remove the first (stale) one
+                self.underlays.pop(old_entries[0][0])
+
+        print(f"🔄 Refreshed underlay: {data.path}")
+
+    def refresh_all_underlays(self):
+        """Re-import every underlay from disk."""
+        # Take a snapshot since refresh modifies the list
+        snapshot = list(self.underlays)
+        for data, item in snapshot:
+            self.refresh_underlay(data, item)
 
     # -------------------------------------------------------------------------
     # GEOMETRY HELPERS
@@ -593,11 +710,9 @@ class Model_Space(QGraphicsScene):
 
         elif self.mode == "set_scale":
             if self._cal_point1 is None:
-                # First click — store the point
                 self._cal_point1 = snapped
                 print(f"Scale point 1: ({snapped.x():.1f}, {snapped.y():.1f}) — click second point")
             else:
-                # Second click — open calibration dialog
                 dialog = CalibrateDialog(self.views()[0] if self.views() else None)
                 if dialog.exec():
                     distance = dialog.get_distance()
@@ -607,10 +722,8 @@ class Model_Space(QGraphicsScene):
                             self._cal_point1, snapped, distance, unit
                         )
                         print(f"✅ Scale set: {self.scale_manager.pixels_per_mm:.4f} px/mm")
-                        # Refresh all pipe labels with new scale
                         for pipe in self.sprinkler_system.pipes:
                             pipe.update_label()
-                        # Refresh dimension annotations
                         for dim in self.annotations.dimensions:
                             dim.update_label()
                     except ValueError as e:
@@ -648,6 +761,25 @@ class Model_Space(QGraphicsScene):
                 print(f"node has: {len(selection.pipes)} pipes connected")
 
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Show context menu for underlays on right-click."""
+        item = self.itemAt(event.scenePos(), self.views()[0].transform() if self.views() else __import__('PyQt6.QtGui', fromlist=['QTransform']).QTransform())
+
+        # Walk up parent chain to find if this item belongs to an underlay group
+        candidate = item
+        while candidate is not None:
+            result = self.find_underlay_for_item(candidate)
+            if result is not None:
+                data, scene_item = result
+                UnderlayContextMenu.show(
+                    self, data, scene_item,
+                    event.screenPos()
+                )
+                return
+            candidate = candidate.parentItem()
+
+        super().contextMenuEvent(event)
 
     # -------------------------------------------------------------------------
     # KEY EVENTS
