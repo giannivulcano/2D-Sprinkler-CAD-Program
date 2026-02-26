@@ -386,8 +386,8 @@ class Model_Space(QGraphicsScene):
         progress.setAutoReset(False)
         progress.setValue(0)
 
-        # Create and configure worker
-        worker = DxfImportWorker(file_path, color, line_weight, layers)
+        # Create and configure worker (no Qt objects passed — created on main thread later)
+        worker = DxfImportWorker(file_path, layers)
 
         # Store references so they don't get garbage-collected
         self._dxf_worker = worker
@@ -400,7 +400,7 @@ class Model_Space(QGraphicsScene):
         # Wire signals
         worker.progress.connect(lambda cur, tot: self._on_dxf_progress(progress, cur, tot))
         worker.status.connect(lambda msg: progress.setLabelText(msg))
-        worker.finished_items.connect(lambda items: self._on_dxf_finished(items, progress))
+        worker.finished_data.connect(lambda geom_list: self._on_dxf_finished(geom_list, progress))
         worker.error.connect(lambda msg: self._on_dxf_error(msg, progress))
         progress.canceled.connect(worker.cancel)
 
@@ -411,15 +411,34 @@ class Model_Space(QGraphicsScene):
             progress.setMaximum(total)
             progress.setValue(current)
 
-    def _on_dxf_finished(self, items: list, progress: QProgressDialog):
+    def _on_dxf_finished(self, geom_list: list, progress: QProgressDialog):
+        """Receives raw geometry dicts from the worker and creates QGraphicsItems
+        on the main thread (required by Qt)."""
         params = self._dxf_import_params
-        progress.setLabelText(f"Adding {len(items)} items to scene…")
+        progress.setLabelText(f"Building {len(geom_list)} items…")
         QApplication.processEvents()
+
+        if not geom_list:
+            progress.close()
+            self._cleanup_dxf_worker()
+            return
+
+        color = params["color"]
+        pen = QPen(color, params["line_weight"])
+
+        items = []
+        for geom in geom_list:
+            item = self._geom_to_item(geom, pen, color)
+            if item is not None:
+                items.append(item)
 
         if not items:
             progress.close()
             self._cleanup_dxf_worker()
             return
+
+        progress.setLabelText(f"Adding {len(items)} items to scene…")
+        QApplication.processEvents()
 
         # Temporarily disable BSP indexing for bulk insertion
         old_method = self.itemIndexMethod()
@@ -439,7 +458,7 @@ class Model_Space(QGraphicsScene):
         record = params["_record"] or Underlay(
             type="dxf", path=params["file_path"],
             x=params["x"], y=params["y"],
-            colour=params["color"].name(),
+            colour=color.name(),
             line_weight=params["line_weight"],
         )
 
@@ -453,6 +472,65 @@ class Model_Space(QGraphicsScene):
         progress.close()
         self._cleanup_dxf_worker()
         print(f"✅ Imported DXF: {params['file_path']} ({len(items)} items)")
+
+    def _geom_to_item(self, geom: dict, pen: QPen, color: QColor):
+        """Convert a geometry dict (from DxfImportWorker) into a QGraphicsItem.
+        Must be called on the main thread."""
+        kind = geom["kind"]
+
+        if kind == "line":
+            item = QGraphicsLineItem(geom["x1"], geom["y1"], geom["x2"], geom["y2"])
+            item.setPen(pen)
+            item.setZValue(-100)
+            return item
+
+        elif kind == "circle":
+            item = QGraphicsEllipseItem(geom["x"], geom["y"], geom["w"], geom["h"])
+            item.setPen(pen)
+            item.setZValue(-100)
+            return item
+
+        elif kind == "arc":
+            path = QPainterPath()
+            rect = QRectF(geom["rx"], geom["ry"], geom["rw"], geom["rh"])
+            path.arcMoveTo(rect, geom["start"])
+            path.arcTo(rect, geom["start"], geom["span"])
+            item = QGraphicsPathItem(path)
+            item.setPen(pen)
+            item.setZValue(-100)
+            return item
+
+        elif kind == "ellipse_full":
+            item = QGraphicsEllipseItem(geom["x"], geom["y"], geom["w"], geom["h"])
+            item.setPen(pen)
+            item.setZValue(-100)
+            item.setPos(geom["pos_cx"], geom["pos_cy"])
+            item.setRotation(geom["rotation"])
+            return item
+
+        elif kind == "path_points":
+            points = geom["points"]
+            if len(points) < 2:
+                return None
+            path = QPainterPath()
+            path.moveTo(points[0][0], points[0][1])
+            for pt in points[1:]:
+                path.lineTo(pt[0], pt[1])
+            if geom.get("closed"):
+                path.closeSubpath()
+            item = QGraphicsPathItem(path)
+            item.setPen(pen)
+            item.setZValue(-100)
+            return item
+
+        elif kind == "text":
+            item = QGraphicsTextItem(geom["text"])
+            item.setPos(geom["x"], geom["y"])
+            item.setDefaultTextColor(color)
+            item.setZValue(-100)
+            return item
+
+        return None
 
     def _on_dxf_error(self, msg: str, progress: QProgressDialog):
         progress.close()
