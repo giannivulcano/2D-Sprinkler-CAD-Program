@@ -141,7 +141,11 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
 
     def update_label(self):
         length = self.line().length()
-        self.label.setPlainText(f"{length:.2f}")
+        scene = self.scene()
+        if scene and hasattr(scene, "scale_manager"):
+            self.label.setPlainText(scene.scale_manager.scene_to_display(length))
+        else:
+            self.label.setPlainText(f"{length:.1f} px")
         self.set_label_position()
 
     def set_label_position(self):

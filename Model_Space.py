@@ -12,11 +12,13 @@ from sprinkler_system import SprinklerSystem
 from CAD_Math import CAD_Math
 from Annotations import Annotation, DimensionAnnotation, NoteAnnotation
 from underlay import Underlay
+from scale_manager import ScaleManager
+from calibrate_dialog import CalibrateDialog
 
 
 class Model_Space(QGraphicsScene):
     SNAP_RADIUS = 10
-    SAVE_VERSION = 1
+    SAVE_VERSION = 2
     requestPropertyUpdate = pyqtSignal(object)
 
     def __init__(self):
@@ -24,9 +26,10 @@ class Model_Space(QGraphicsScene):
         self.sprinkler_system = SprinklerSystem()
         self.annotations = Annotation()
         self.underlays: list[tuple[Underlay, QGraphicsItem]] = []  # (data, scene_item)
+        self.scale_manager = ScaleManager()
         self.mode = None
-        self.units_per_meter = 10000
         self.dimension_start = None
+        self._cal_point1 = None          # first point for "set_scale" mode
         self.node_start_pos = None
         self.node_end_pos = None
         self._selected_items = None
@@ -115,7 +118,7 @@ class Model_Space(QGraphicsScene):
         # --- Assemble and write ---
         payload = {
             "version":     self.SAVE_VERSION,
-            "units_per_meter": self.units_per_meter,
+            "scale":       self.scale_manager.to_dict(),
             "nodes":       nodes_data,
             "pipes":       pipes_data,
             "annotations": annotations_data,
@@ -133,7 +136,12 @@ class Model_Space(QGraphicsScene):
         version = payload.get("version", 1)
         self._clear_scene()
 
-        self.units_per_meter = payload.get("units_per_meter", 10000)
+        # --- Scale ---
+        if "scale" in payload:
+            self.scale_manager = ScaleManager.from_dict(payload["scale"])
+        else:
+            # Legacy file — fall back to old units_per_meter if present
+            self.scale_manager = ScaleManager()
 
         # --- Nodes ---
         id_to_node: dict[int, Node] = {}
@@ -199,6 +207,7 @@ class Model_Space(QGraphicsScene):
         self.sprinkler_system = SprinklerSystem()
         self.annotations = Annotation()
         self.underlays = []
+        self.scale_manager = ScaleManager()
         self.clear()
         # Restore items that clear() destroyed
         self.init_preview_node()
@@ -254,9 +263,10 @@ class Model_Space(QGraphicsScene):
         print(f"Mode set to: {self.mode}")
         self.preview_node.hide()
         self.preview_pipe.hide()
+        self._cal_point1 = None          # reset calibration state
         if self.node_start_pos is not None:
             self.remove_node(self.node_start_pos)
-        if mode in ("sprinkler", "pipe"):
+        if mode in ("sprinkler", "pipe", "set_scale"):
             self.current_template = template
             if template:
                 self.requestPropertyUpdate.emit(template)
@@ -515,6 +525,18 @@ class Model_Space(QGraphicsScene):
             else:
                 self.update_preview_node(snapped)
                 self.preview_pipe.hide()
+
+        elif self.mode == "set_scale":
+            self.update_preview_node(snapped)
+            if self._cal_point1 is not None:
+                self.preview_pipe.setLine(
+                    self._cal_point1.x(), self._cal_point1.y(),
+                    snapped.x(), snapped.y()
+                )
+                self.preview_pipe.show()
+            else:
+                self.preview_pipe.hide()
+
         elif self.mode in ("sprinkler", "dimension", "paste", "move"):
             self.update_preview_node(snapped)
             self.preview_pipe.hide()
@@ -568,6 +590,34 @@ class Model_Space(QGraphicsScene):
                 self.node_start_pos = None
                 self.preview_pipe.hide()
                 self.preview_node.hide()
+
+        elif self.mode == "set_scale":
+            if self._cal_point1 is None:
+                # First click — store the point
+                self._cal_point1 = snapped
+                print(f"Scale point 1: ({snapped.x():.1f}, {snapped.y():.1f}) — click second point")
+            else:
+                # Second click — open calibration dialog
+                dialog = CalibrateDialog(self.views()[0] if self.views() else None)
+                if dialog.exec():
+                    distance = dialog.get_distance()
+                    unit = dialog.get_unit_code()
+                    try:
+                        self.scale_manager.calibrate(
+                            self._cal_point1, snapped, distance, unit
+                        )
+                        print(f"✅ Scale set: {self.scale_manager.pixels_per_mm:.4f} px/mm")
+                        # Refresh all pipe labels with new scale
+                        for pipe in self.sprinkler_system.pipes:
+                            pipe.update_label()
+                        # Refresh dimension annotations
+                        for dim in self.annotations.dimensions:
+                            dim.update_label()
+                    except ValueError as e:
+                        print(f"❌ Calibration failed: {e}")
+                self._cal_point1 = None
+                self.set_mode(None)
+                return
 
         elif self.mode == "dimension":
             if self.dimension_start is None:

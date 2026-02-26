@@ -66,7 +66,11 @@ class Pipe(QGraphicsLineItem):
 
         # Format text
         diameter = self._properties.get('Diameter', {}).get('value', 'N/A')
-        length = self.set_units(getattr(self, "length", 0.0), "Imperial")
+        scene = self.scene()
+        if scene and hasattr(scene, "scale_manager"):
+            length = scene.scale_manager.scene_to_display(getattr(self, "length", 0.0))
+        else:
+            length = f"{self.length:.1f} px"
 
         html = f"<div style='text-align:center'>{diameter}<br>{length}</div>"
         self.label.setHtml(html)
@@ -116,63 +120,6 @@ class Pipe(QGraphicsLineItem):
 
         self.update_label()  # <- move here
 
-    def set_units(self, length, units):
-        if units == "Imperial":
-            return self.format_feet_inches(float(length))
-    
-    def format_feet_inches(self, total_inches):
-        """
-        Format total inches into feet-inches-fractions with denominators 2, 4, 8, 16 only.
-        Example: 1' 3 1/2", 7/8", 2' 0"
-        """
-        # break into feet and inches
-        feet = int(total_inches // 12)
-        inches_decimal = total_inches % 12
-        inches_whole = int(floor(inches_decimal))
-        frac_decimal = inches_decimal - inches_whole
-        
-        # possible denominators: 2, 4, 8, 16
-        denominators = [2, 4, 8, 16]
-        best_num, best_den = 0, 1
-        min_error = 1.0
-        
-        for d in denominators:
-            n = round(frac_decimal * d)
-            error = abs(frac_decimal - n / d)
-            if error < min_error:
-                min_error = error
-                best_num, best_den = n, d
-        
-        # normalize (if fraction rounds to whole inch)
-        if best_num == best_den:
-            inches_whole += 1
-            best_num, best_den = 0, 1
-        
-        # carry over 12 inches → 1 foot
-        if inches_whole == 12:
-            feet += 1
-            inches_whole = 0
-        
-        # build string
-        parts = []
-        if feet > 0:
-            parts.append(f"{feet}'")
-        
-        inch_part = ""
-        if inches_whole > 0:
-            inch_part += str(inches_whole)
-        if best_num > 0:
-            if inch_part:
-                inch_part += f" {best_num}/{best_den}"
-            else:
-                inch_part = f"{best_num}/{best_den}"
-        if inch_part:
-            parts.append(f'{inch_part}"')
-        
-        if not parts:  # handle case 0"
-            parts.append('0"')
-        
-        return " ".join(parts)
 
     @classmethod
     def snap_point_45_if_close(cls, start: QPointF, end: QPointF) -> QPointF:

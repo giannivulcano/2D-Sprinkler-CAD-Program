@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
 
             # Example: hand off to scene
             self.scene.import_pdf(opts["file"], dpi=opts["dpi"], page=opts["page"])
-            
+
     #-------------------------------------
     # PROPERTY MANAGER HELPERS -----------
     #-------------------------------------
@@ -229,7 +229,9 @@ class MainWindow(QMainWindow):
         self.restoreGeometry(self.settings.value("geometry", b""))
         self.restoreState(self.settings.value("windowState", b""))
 
-
+    def set_scale_dialog(self):
+        self.scene.set_mode("set_scale")
+ 
 #-------------------------------------
 # USER FORMS             -------------
 
