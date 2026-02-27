@@ -1340,6 +1340,7 @@ class Model_Space(QGraphicsScene):
                 self._cline_anchor = None   # ready for the next line immediately
                 self.preview_pipe.hide()
                 self.push_undo_state()
+            return  # don't let super() deselect items mid-draw
 
         elif self.mode == "polyline":
             if self._polyline_active is None:
@@ -1356,6 +1357,7 @@ class Model_Space(QGraphicsScene):
             else:
                 # Subsequent clicks — append vertex
                 self._polyline_active.append_point(snapped)
+            return  # don't let super() deselect items mid-draw
 
         elif self.mode is None:
             if isinstance(selection, Node):

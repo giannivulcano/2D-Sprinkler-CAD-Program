@@ -49,8 +49,13 @@ class Model_View(QGraphicsView):
 
         # Dot colour from theme
         dot_color = QColor(th.detect().grid_dot)
+
+        # Use a cosmetic pen so dots stay the same device-pixel size at all
+        # zoom levels. Width=2 makes dots clearly visible without being distracting.
         pen = QPen(dot_color)
-        pen.setWidth(0)                         # cosmetic (1 viewport pixel)
+        pen.setWidthF(2.0)
+        pen.setCosmetic(True)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
 
         left = math.floor(rect.left()  / grid_px) * grid_px

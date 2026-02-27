@@ -177,20 +177,21 @@ class RibbonGroup(QWidget):
 
         outer.addStretch(1)
 
-        # Horizontal separator above label
+        # Horizontal separator above label — color adapts to theme
+        _t = th.detect()
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background: #c8c8c8;")
+        sep.setStyleSheet(f"background: {_t.border_subtle};")
         outer.addWidget(sep)
 
-        # Group label
+        # Group label — use theme text color so it's white in dark mode
         lbl = QLabel(title)
         lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         f = QFont()
         f.setPointSizeF(7.5)
         lbl.setFont(f)
-        lbl.setStyleSheet("color: #555555; padding: 1px 0 2px 0;")
+        lbl.setStyleSheet(f"color: {_t.text_primary}; padding: 1px 0 2px 0;")
         outer.addWidget(lbl)
 
     # ── Internal helpers ─────────────────────────────────────────────────────

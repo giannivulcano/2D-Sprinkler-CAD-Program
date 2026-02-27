@@ -13,7 +13,7 @@ import math
 
 from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
 from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QPen, QColor, QPainterPath
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ class PolylineItem(QGraphicsPathItem):
         pen.setWidth(1)
         pen.setCosmetic(True)
         self.setPen(pen)
-        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
 
         self.setZValue(1)
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)

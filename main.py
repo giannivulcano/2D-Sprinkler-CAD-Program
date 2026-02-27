@@ -429,11 +429,8 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
             self.refresh_underlays)
 
-        # --- Draw ---
+        # --- Draw (reference geometry only — pipe lives in Sprinkler tab) ---
         g_draw = ref_page.add_group("Draw")
-        g_draw.add_large_button(
-            "Pipe", QIcon(r"graphics/Toolbar/pipe_icon.svg"),
-            lambda: self.scene.set_mode("pipe", self.current_pipe_template))
         g_draw.add_large_button(
             "Construction\nLine",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
@@ -496,6 +493,9 @@ class MainWindow(QMainWindow):
 
         # --- Place ---
         g_place = spr_page.add_group("Place")
+        g_place.add_large_button(
+            "Pipe", QIcon(r"graphics/Toolbar/pipe_icon.svg"),
+            lambda: self.scene.set_mode("pipe", self.current_pipe_template))
         g_place.add_large_button(
             "Sprinkler", QIcon(r"graphics/Toolbar/sprinkler_icon.svg"),
             lambda: self.scene.set_mode("sprinkler", self.current_sprinkler_template))
