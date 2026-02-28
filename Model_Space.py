@@ -61,6 +61,7 @@ class Model_Space(QGraphicsScene):
         self._draw_lines: list[LineItem] = []
         self._draw_rects: list[RectangleItem] = []
         self._draw_circles: list[CircleItem] = []
+        self._draw_dim_hint: "str | None" = None              # live dim overlay for Model_View
         self._draw_line_anchor: "QPointF | None" = None       # first click for line
         self._draw_rect_anchor: "QPointF | None" = None       # first click for rectangle
         self._draw_circle_center: "QPointF | None" = None     # first click for circle
@@ -967,10 +968,16 @@ class Model_Space(QGraphicsScene):
                 "properties": {k: v["value"] for k, v in ws.get_properties().items()},
             }
         return {
-            "nodes":        nodes_data,
-            "pipes":        pipes_data,
-            "annotations":  annotations_data,
-            "water_supply": ws_data,
+            "nodes":              nodes_data,
+            "pipes":              pipes_data,
+            "annotations":        annotations_data,
+            "water_supply":       ws_data,
+            # ── Draw geometry ──────────────────────────────────────────────
+            "construction_lines": [cl.to_dict() for cl in self._construction_lines],
+            "polylines":          [pl.to_dict() for pl in self._polylines],
+            "draw_lines":         [l.to_dict()  for l in self._draw_lines],
+            "draw_rectangles":    [r.to_dict()  for r in self._draw_rects],
+            "draw_circles":       [c.to_dict()  for c in self._draw_circles],
         }
 
     def _restore_network(self, state: dict):
@@ -1052,6 +1059,60 @@ class Model_Space(QGraphicsScene):
                 self.sprinkler_system.supply_node = ws
                 for key, value in ws_data.get("properties", {}).items():
                     ws.set_property(key, value)
+
+            # ── Draw geometry ──────────────────────────────────────────────
+            # Remove existing items from scene and lists
+            for cl in list(self._construction_lines):
+                if cl.scene() is self:
+                    self.removeItem(cl)
+            self._construction_lines.clear()
+
+            for pl in list(self._polylines):
+                if pl.scene() is self:
+                    self.removeItem(pl)
+            self._polylines.clear()
+
+            for item in list(self._draw_lines):
+                if item.scene() is self:
+                    self.removeItem(item)
+            self._draw_lines.clear()
+
+            for item in list(self._draw_rects):
+                if item.scene() is self:
+                    self.removeItem(item)
+            self._draw_rects.clear()
+
+            for item in list(self._draw_circles):
+                if item.scene() is self:
+                    self.removeItem(item)
+            self._draw_circles.clear()
+
+            # Restore from snapshot
+            for d in state.get("construction_lines", []):
+                cl = ConstructionLine.from_dict(d)
+                self.addItem(cl)
+                self._construction_lines.append(cl)
+
+            for d in state.get("polylines", []):
+                pl = PolylineItem.from_dict(d)
+                self.addItem(pl)
+                self._polylines.append(pl)
+
+            for d in state.get("draw_lines", []):
+                li = LineItem.from_dict(d)
+                self.addItem(li)
+                self._draw_lines.append(li)
+
+            for d in state.get("draw_rectangles", []):
+                ri = RectangleItem.from_dict(d)
+                self.addItem(ri)
+                self._draw_rects.append(ri)
+
+            for d in state.get("draw_circles", []):
+                ci = CircleItem.from_dict(d)
+                self.addItem(ci)
+                self._draw_circles.append(ci)
+
         finally:
             self._in_undo_restore = False
 
@@ -1252,6 +1313,201 @@ class Model_Space(QGraphicsScene):
         return QPointF(anchor.x() + dist * math.cos(snapped),
                        anchor.y() + dist * math.sin(snapped))
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tab exact-input handler
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _handle_tab_input(self):
+        """
+        Open a small dialog to let the user type exact dimensions for the
+        current drawing operation (line length+angle, rect W+H, circle radius).
+        Called by Model_View.keyPressEvent when Tab is pressed.
+        """
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QFormLayout,
+            QDoubleSpinBox, QDialogButtonBox,
+        )
+
+        sm = self.scale_manager
+
+        # ── Line / Construction Line ──────────────────────────────────────
+        if self.mode in ("draw_line", "construction_line"):
+            anchor = (self._draw_line_anchor if self.mode == "draw_line"
+                      else self._cline_anchor)
+            if anchor is None:
+                return
+
+            dlg = QDialog()
+            dlg.setWindowTitle("Exact Length & Angle")
+            form = QFormLayout()
+            l_spin = QDoubleSpinBox()
+            l_spin.setRange(0.01, 1_000_000)
+            l_spin.setDecimals(3)
+            l_spin.setValue(100)
+            l_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            a_spin = QDoubleSpinBox()
+            a_spin.setRange(-360, 360)
+            a_spin.setDecimals(2)
+            a_spin.setValue(0)
+            a_spin.setSuffix("  °")
+            form.addRow("Length:", l_spin)
+            form.addRow("Angle:", a_spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            outer = QVBoxLayout(dlg)
+            outer.addLayout(form)
+            outer.addWidget(buttons)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            length = l_spin.value()
+            angle_rad = math.radians(a_spin.value())
+            tip = QPointF(
+                anchor.x() + length * math.cos(angle_rad),
+                anchor.y() + length * math.sin(angle_rad),
+            )
+
+            if self.mode == "draw_line":
+                color = self._get_draw_color()
+                item = LineItem(anchor, tip, color, self._draw_lineweight)
+                item.user_layer = self.active_user_layer
+                self.addItem(item)
+                self._draw_lines.append(item)
+                self._draw_line_anchor = None
+                self.preview_pipe.hide()
+            else:   # construction_line
+                cl = ConstructionLine(anchor, tip)
+                self.addItem(cl)
+                self._construction_lines.append(cl)
+                self._cline_anchor = None
+                self.preview_pipe.hide()
+            self.push_undo_state()
+
+        # ── Rectangle ────────────────────────────────────────────────────
+        elif self.mode == "draw_rectangle" and self._draw_rect_anchor is not None:
+            dlg = QDialog()
+            dlg.setWindowTitle("Exact Width & Height")
+            form = QFormLayout()
+            suf = "" if not sm.is_calibrated else ""
+            w_spin = QDoubleSpinBox()
+            w_spin.setRange(0.01, 1_000_000)
+            w_spin.setDecimals(3)
+            w_spin.setValue(100)
+            w_spin.setSuffix(suf)
+            h_spin = QDoubleSpinBox()
+            h_spin.setRange(0.01, 1_000_000)
+            h_spin.setDecimals(3)
+            h_spin.setValue(100)
+            h_spin.setSuffix(suf)
+            form.addRow("Width:", w_spin)
+            form.addRow("Height:", h_spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            outer = QVBoxLayout(dlg)
+            outer.addLayout(form)
+            outer.addWidget(buttons)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            pt2 = QPointF(
+                self._draw_rect_anchor.x() + w_spin.value(),
+                self._draw_rect_anchor.y() + h_spin.value(),
+            )
+            color = self._get_draw_color()
+            item = RectangleItem(self._draw_rect_anchor, pt2, color, self._draw_lineweight)
+            item.user_layer = self.active_user_layer
+            self.addItem(item)
+            self._draw_rects.append(item)
+            if self._draw_rect_preview is not None:
+                self.removeItem(self._draw_rect_preview)
+                self._draw_rect_preview = None
+            self._draw_rect_anchor = None
+            self.push_undo_state()
+
+        # ── Circle ───────────────────────────────────────────────────────
+        elif self.mode == "draw_circle" and self._draw_circle_center is not None:
+            dlg = QDialog()
+            dlg.setWindowTitle("Exact Radius")
+            form = QFormLayout()
+            r_spin = QDoubleSpinBox()
+            r_spin.setRange(0.01, 1_000_000)
+            r_spin.setDecimals(3)
+            r_spin.setValue(50)
+            form.addRow("Radius:", r_spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            outer = QVBoxLayout(dlg)
+            outer.addLayout(form)
+            outer.addWidget(buttons)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            r = r_spin.value()
+            color = self._get_draw_color()
+            item = CircleItem(self._draw_circle_center, r, color, self._draw_lineweight)
+            item.user_layer = self.active_user_layer
+            self.addItem(item)
+            self._draw_circles.append(item)
+            if self._draw_circle_preview is not None:
+                self.removeItem(self._draw_circle_preview)
+                self._draw_circle_preview = None
+            self._draw_circle_center = None
+            self.push_undo_state()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Grid Lines
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def place_grid_lines(self, params: dict):
+        """
+        Place a rectangular grid of construction lines from *params*.
+
+        Parameters (keys in *params*)
+        ------------------------------
+        h_count   : int   — number of horizontal lines (0 = none)
+        h_first   : float — Y-coordinate of the first horizontal line
+        h_spacing : float — Y-increment between successive horizontal lines
+        v_count   : int   — number of vertical lines (0 = none)
+        v_first   : float — X-coordinate of the first vertical line
+        v_spacing : float — X-increment between successive vertical lines
+        """
+        h_count   = int(params.get("h_count",   0))
+        h_first   = float(params.get("h_first",   0))
+        h_spacing = float(params.get("h_spacing", 100))
+        v_count   = int(params.get("v_count",   0))
+        v_first   = float(params.get("v_first",   0))
+        v_spacing = float(params.get("v_spacing", 100))
+
+        # Horizontal lines: run parallel to the X-axis (constant Y)
+        # Two anchor points differ only in X so the line extends left↔right.
+        for i in range(h_count):
+            y = h_first + i * h_spacing
+            cl = ConstructionLine(QPointF(-1, y), QPointF(1, y))
+            self.addItem(cl)
+            self._construction_lines.append(cl)
+
+        # Vertical lines: run parallel to the Y-axis (constant X)
+        for i in range(v_count):
+            x = v_first + i * v_spacing
+            cl = ConstructionLine(QPointF(x, -1), QPointF(x, 1))
+            self.addItem(cl)
+            self._construction_lines.append(cl)
+
+        if h_count > 0 or v_count > 0:
+            self.push_undo_state()
+
     def project_point_onto_line(self, p1: QPointF, p2: QPointF, p: QPointF) -> QPointF:
         line_dx = p2.x() - p1.x()
         line_dy = p2.y() - p1.y()
@@ -1287,6 +1543,7 @@ class Model_Space(QGraphicsScene):
         self.cursorMoved.emit(coord_str)
 
         snapped = self.get_effective_position(scene_pos)
+        self._draw_dim_hint = None   # cleared each frame; draw modes set it below
 
         if self.mode == "pipe":
             if self.node_start_pos:
@@ -1329,6 +1586,15 @@ class Model_Space(QGraphicsScene):
                     tip.x(), tip.y()
                 )
                 self.preview_pipe.show()
+                _dx = tip.x() - self._cline_anchor.x()
+                _dy = tip.y() - self._cline_anchor.y()
+                _len = math.hypot(_dx, _dy)
+                _ang = math.degrees(math.atan2(_dy, _dx))
+                self._draw_dim_hint = (
+                    f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
+                    if sm.is_calibrated else
+                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
+                )
             else:
                 self.preview_pipe.hide()
 
@@ -1343,6 +1609,16 @@ class Model_Space(QGraphicsScene):
                         self._polyline_active._points[-1], snapped
                     )
                 self._polyline_active.update_preview(tip)
+                _last = self._polyline_active._points[-1]
+                _dx = tip.x() - _last.x()
+                _dy = tip.y() - _last.y()
+                _len = math.hypot(_dx, _dy)
+                _ang = math.degrees(math.atan2(_dy, _dx))
+                self._draw_dim_hint = (
+                    f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
+                    if sm.is_calibrated else
+                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
+                )
 
         elif self.mode == "draw_line":
             self.preview_node.hide()
@@ -1355,6 +1631,15 @@ class Model_Space(QGraphicsScene):
                     tip.x(), tip.y()
                 )
                 self.preview_pipe.show()
+                _dx = tip.x() - self._draw_line_anchor.x()
+                _dy = tip.y() - self._draw_line_anchor.y()
+                _len = math.hypot(_dx, _dy)
+                _ang = math.degrees(math.atan2(_dy, _dx))
+                self._draw_dim_hint = (
+                    f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
+                    if sm.is_calibrated else
+                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
+                )
             else:
                 self.preview_pipe.hide()
 
@@ -1364,6 +1649,11 @@ class Model_Space(QGraphicsScene):
             if self._draw_rect_anchor is not None and self._draw_rect_preview is not None:
                 rect = QRectF(self._draw_rect_anchor, snapped).normalized()
                 self._draw_rect_preview.setRect(rect)
+                self._draw_dim_hint = (
+                    f"W: {sm.scene_to_display(rect.width())}  H: {sm.scene_to_display(rect.height())}"
+                    if sm.is_calibrated else
+                    f"W: {rect.width():.0f}px  H: {rect.height():.0f}px"
+                )
 
         elif self.mode == "draw_circle":
             self.preview_node.hide()
@@ -1373,6 +1663,11 @@ class Model_Space(QGraphicsScene):
                                snapped.y() - self._draw_circle_center.y())
                 cx, cy = self._draw_circle_center.x(), self._draw_circle_center.y()
                 self._draw_circle_preview.setRect(cx - r, cy - r, 2 * r, 2 * r)
+                self._draw_dim_hint = (
+                    f"R: {sm.scene_to_display(r)}"
+                    if sm.is_calibrated else
+                    f"R: {r:.0f}px"
+                )
 
         elif self.mode in ("sprinkler", "dimension", "paste", "move", "water_supply"):
             self.update_preview_node(snapped)

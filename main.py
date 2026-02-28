@@ -19,6 +19,7 @@ from user_layer_manager import UserLayerManager, UserLayerWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
 from ribbon_bar import RibbonBar
 from array_dialog import ArrayDialog
+from grid_lines_dialog import GridLinesDialog
 import theme as th
 
 
@@ -461,6 +462,10 @@ class MainWindow(QMainWindow):
             "Construction\nLine",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView),
             lambda: self.scene.set_mode("construction_line"))
+        g_draw.add_large_button(
+            "Grid\nLines",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+            self._place_grid_lines)
 
         # Row 2 — colour and lineweight controls (small buttons)
         self._draw_color_btn = g_draw.add_small_button(
@@ -753,6 +758,14 @@ class MainWindow(QMainWindow):
         dlg = ArrayDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.scene.array_items(dlg.get_params())
+
+    # ── Grid Lines ───────────────────────────────────────────────────────────
+
+    def _place_grid_lines(self):
+        """Open the Grid Lines dialog and place construction lines on the canvas."""
+        dlg = GridLinesDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.scene.place_grid_lines(dlg.get_params())
 
     def open_import_dialog(self):
         """Open the unified PDF/DXF underlay import dialog."""

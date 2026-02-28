@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QGraphicsRectItem, QGraphicsEllipseItem,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF
-from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QPainterPathStroker
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +25,23 @@ from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
 
 _CONSTRUCTION_COLOR = "#00aaff"     # cyan-blue
 _CONSTRUCTION_EXTEND = 100_000      # px beyond the two anchor points (effectively infinite)
+
+
+def _scene_hit_width(item) -> float:
+    """Viewport-scale-aware hit width — always ~10 screen pixels regardless of zoom.
+
+    Cosmetic pens have a fixed screen-pixel width but their shape() is in scene
+    units.  At high zoom the two coincide; at low zoom a 1px cosmetic pen maps to
+    a tiny fraction of a scene unit, making the item nearly impossible to click.
+    This helper returns a scene-unit width that is always ~10 screen pixels.
+    """
+    sc = item.scene()
+    if sc:
+        views = sc.views()
+        if views:
+            scale = views[0].transform().m11()
+            return max(2.0, 10.0 / max(scale, 1e-6))
+    return 6.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +122,18 @@ class ConstructionLine(QGraphicsLineItem):
         x2 = self._pt2.x() + ux * _CONSTRUCTION_EXTEND
         y2 = self._pt2.y() + uy * _CONSTRUCTION_EXTEND
         self.setLine(x1, y1, x2, y2)
+
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a viewport-scale-aware stroked path so the line is clickable."""
+        ln = self.line()
+        path = QPainterPath()
+        path.moveTo(ln.p1())
+        path.lineTo(ln.p2())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +235,14 @@ class PolylineItem(QGraphicsPathItem):
             path.lineTo(p)
         self.setPath(path)
 
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a viewport-scale-aware stroked path so thin polylines are clickable."""
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(self.path())
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LineItem  — finite 2-point line (AutoCAD-style Line tool)
@@ -288,6 +325,17 @@ class LineItem(QGraphicsLineItem):
         self._pt1 = QPointF(self._pt1.x() + dx, self._pt1.y() + dy)
         self._pt2 = QPointF(self._pt2.x() + dx, self._pt2.y() + dy)
         self.setLine(self._pt1.x(), self._pt1.y(), self._pt2.x(), self._pt2.y())
+
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a viewport-scale-aware stroked path so the line is easily clickable."""
+        path = QPainterPath()
+        path.moveTo(self._pt1)
+        path.lineTo(self._pt2)
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -388,6 +436,16 @@ class RectangleItem(QGraphicsRectItem):
     def translate(self, dx: float, dy: float):
         self.setRect(self.rect().translated(dx, dy))
 
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a stroked outline path so the rectangle border is clickable."""
+        path = QPainterPath()
+        path.addRect(self.rect())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(path)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CircleItem  — circle defined by centre + edge point
@@ -476,3 +534,13 @@ class CircleItem(QGraphicsEllipseItem):
         self._center = QPointF(self._center.x() + dx, self._center.y() + dy)
         cx, cy, r = self._center.x(), self._center.y(), self._radius
         self.setRect(cx - r, cy - r, 2 * r, 2 * r)
+
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a stroked ellipse outline path so the circle border is clickable."""
+        path = QPainterPath()
+        path.addEllipse(self.rect())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(path)

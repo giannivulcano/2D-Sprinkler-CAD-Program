@@ -1,8 +1,11 @@
 import math
 
-from PyQt6.QtWidgets import QGraphicsView, QScrollBar
+from PyQt6.QtWidgets import (
+    QGraphicsView, QScrollBar,
+    QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsRectItem,
+)
 from PyQt6.QtCore import Qt, QPoint, QPointF
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon
+from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon, QFont
 import theme as th
 from snap_engine import SNAP_COLORS, SNAP_MARKERS
 
@@ -72,18 +75,46 @@ class Model_View(QGraphicsView):
 
     def drawForeground(self, painter: QPainter, rect):
         """
-        Overlay drawn in device (viewport) coordinates – not affected by zoom.
+        Overlay drawn on top of all scene content.
 
-        Renders two things:
-        1. Grip handles (small cyan squares) on selected geometry items.
-        2. OSNAP snap indicator (coloured shape) at the nearest snap point.
+        Renders four things (in order):
+        1. Snap trace — dashed ghost of the item being snapped to (scene coords).
+        2. Grip handles — small squares on selected geometry items (viewport coords).
+        3. OSNAP snap indicator — coloured shape at snap point (viewport coords).
+        4. Dim HUD — live dimension text near the cursor (viewport coords).
         """
         super().drawForeground(painter, rect)
         scene = self.scene()
         if scene is None:
             return
 
-        # ── 1. Grip handles ──────────────────────────────────────────────────
+        snap_result = getattr(scene, "_snap_result", None)
+
+        # ── 1. Snap trace (scene coordinates — no resetTransform) ─────────────
+        if snap_result is not None and snap_result.source_item is not None:
+            src = snap_result.source_item
+            color = QColor(SNAP_COLORS.get(snap_result.snap_type, "#aaaaaa"))
+            trace_pen = QPen(color, 1)
+            trace_pen.setStyle(Qt.PenStyle.DashLine)
+            trace_pen.setCosmetic(True)
+            painter.save()
+            painter.setPen(trace_pen)
+            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+            if isinstance(src, QGraphicsLineItem):
+                ln = src.line()
+                painter.drawLine(src.mapToScene(ln.p1()), src.mapToScene(ln.p2()))
+            elif isinstance(src, QGraphicsEllipseItem):
+                painter.drawEllipse(src.mapRectToScene(src.rect()))
+            elif isinstance(src, QGraphicsPathItem):
+                painter.drawPath(src.mapToScene(src.path()))
+            elif isinstance(src, QGraphicsRectItem):
+                painter.drawRect(src.mapRectToScene(src.rect()))
+
+            painter.restore()
+
+        # ── 2. Grip handles (viewport coordinates) ────────────────────────────
         selected = [i for i in scene.selectedItems() if hasattr(i, "grip_points")]
         active_item  = getattr(scene, "_grip_item",  None)
         active_idx   = getattr(scene, "_grip_index", -1)
@@ -101,53 +132,75 @@ class Model_View(QGraphicsView):
                     painter.drawRect(vp.x() - 4, vp.y() - 4, 8, 8)
             painter.restore()
 
-        # ── 2. OSNAP snap indicator ───────────────────────────────────────────
-        snap_result = getattr(scene, "_snap_result", None)
-        if snap_result is None:
-            return
+        # ── 3. OSNAP snap indicator (viewport coordinates) ────────────────────
+        if snap_result is not None:
+            color  = QColor(SNAP_COLORS.get(snap_result.snap_type, "#ffffff"))
+            marker = SNAP_MARKERS.get(snap_result.snap_type, "square")
+            vp     = self.mapFromScene(snap_result.point)
+            x, y   = vp.x(), vp.y()
+            s      = 6   # half-size in screen pixels
 
-        color  = QColor(SNAP_COLORS.get(snap_result.snap_type, "#ffffff"))
-        marker = SNAP_MARKERS.get(snap_result.snap_type, "square")
-        vp     = self.mapFromScene(snap_result.point)
-        x, y   = vp.x(), vp.y()
-        s      = 6   # half-size in screen pixels
+            painter.save()
+            painter.resetTransform()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            pen = QPen(color, 2)
+            pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
 
-        painter.save()
-        painter.resetTransform()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        pen = QPen(color, 2)
-        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
-        painter.setPen(pen)
-        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            if marker == "square":
+                painter.drawRect(int(x) - s, int(y) - s, 2 * s, 2 * s)
+            elif marker == "circle":
+                painter.drawEllipse(int(x) - s, int(y) - s, 2 * s, 2 * s)
+            elif marker == "triangle":
+                poly = QPolygon([
+                    QPoint(int(x),     int(y) - s),
+                    QPoint(int(x) + s, int(y) + s),
+                    QPoint(int(x) - s, int(y) + s),
+                ])
+                painter.drawPolygon(poly)
+            elif marker == "diamond":
+                poly = QPolygon([
+                    QPoint(int(x),     int(y) - s),
+                    QPoint(int(x) + s, int(y)),
+                    QPoint(int(x),     int(y) + s),
+                    QPoint(int(x) - s, int(y)),
+                ])
+                painter.drawPolygon(poly)
+            elif marker == "cross":
+                painter.drawLine(int(x) - s, int(y) - s, int(x) + s, int(y) + s)
+                painter.drawLine(int(x) + s, int(y) - s, int(x) - s, int(y) + s)
 
-        if marker == "square":
-            painter.drawRect(int(x) - s, int(y) - s, 2 * s, 2 * s)
+            painter.restore()
 
-        elif marker == "circle":
-            painter.drawEllipse(int(x) - s, int(y) - s, 2 * s, 2 * s)
+        # ── 4. Dim HUD (viewport coordinates, near cursor) ───────────────────
+        dim_hint = getattr(scene, "_draw_dim_hint", None)
+        vp_cursor = getattr(self, "_last_vp_pos", None)
+        if dim_hint and vp_cursor:
+            painter.save()
+            painter.resetTransform()
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
-        elif marker == "triangle":
-            poly = QPolygon([
-                QPoint(int(x),     int(y) - s),
-                QPoint(int(x) + s, int(y) + s),
-                QPoint(int(x) - s, int(y) + s),
-            ])
-            painter.drawPolygon(poly)
+            font = QFont("Consolas", 9)
+            painter.setFont(font)
+            fm = painter.fontMetrics()
+            text_rect = fm.boundingRect(dim_hint)
+            tx = vp_cursor.x() + 14
+            ty = vp_cursor.y() - 6
+            # Keep within viewport bounds
+            vp_w = self.viewport().width()
+            vp_h = self.viewport().height()
+            if tx + text_rect.width() + 6 > vp_w:
+                tx = vp_cursor.x() - text_rect.width() - 14
+            if ty - text_rect.height() < 0:
+                ty = vp_cursor.y() + text_rect.height() + 6
 
-        elif marker == "diamond":
-            poly = QPolygon([
-                QPoint(int(x),         int(y) - s),
-                QPoint(int(x) + s,     int(y)),
-                QPoint(int(x),         int(y) + s),
-                QPoint(int(x) - s,     int(y)),
-            ])
-            painter.drawPolygon(poly)
+            bg_r = text_rect.adjusted(-4, -2, 4, 2).translated(tx, ty - text_rect.height())
+            painter.fillRect(bg_r, QColor(0, 0, 0, 190))
+            painter.setPen(QPen(QColor("#ffffff")))
+            painter.drawText(tx, ty, dim_hint)
 
-        elif marker == "cross":
-            painter.drawLine(int(x) - s, int(y) - s, int(x) + s, int(y) + s)
-            painter.drawLine(int(x) + s, int(y) - s, int(x) - s, int(y) + s)
-
-        painter.restore()
+            painter.restore()
 
     # -----------------------------
     # Zoom with mouse wheel
@@ -199,6 +252,7 @@ class Model_View(QGraphicsView):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        self._last_vp_pos = event.pos()   # used by drawForeground for dim HUD
         if self._panning:
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
@@ -216,3 +270,15 @@ class Model_View(QGraphicsView):
                 self._grip_press_active = False
                 self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
             super().mouseReleaseEvent(event)
+
+    # -----------------------------
+    # Tab — exact dimension input
+    # -----------------------------
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Tab:
+            sc = self.scene()
+            if sc is not None and hasattr(sc, "_handle_tab_input"):
+                sc._handle_tab_input()
+                event.accept()
+                return
+        super().keyPressEvent(event)

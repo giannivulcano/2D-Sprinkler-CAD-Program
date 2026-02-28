@@ -1,7 +1,7 @@
 from math import floor
 import math
 from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsItem, QGraphicsTextItem, QStyle
-from PyQt6.QtGui import QPen, QColor, QBrush
+from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainterPathStroker
 from PyQt6.QtCore import Qt, QPointF
 from CAD_Math import CAD_Math
 
@@ -155,6 +155,26 @@ class Pipe(QGraphicsLineItem):
         self.length = CAD_Math.get_vector_length(self.node1.scenePos(),self.node2.scenePos())
 
         self.update_label()  # <- move here
+
+    def shape(self):
+        """Viewport-scale-aware hit path — always at least ~10 screen pixels wide.
+
+        Pipes use a non-cosmetic scene-unit pen whose width shrinks when the scale
+        manager converts mm → scene units.  Without this override, a thin calibrated
+        pipe can become nearly impossible to click.
+        """
+        ln = self.line()
+        path = QPainterPath()
+        path.moveTo(ln.p1())
+        path.lineTo(ln.p2())
+        stroker = QPainterPathStroker()
+        sc = self.scene()
+        views = sc.views() if sc else []
+        scale = views[0].transform().m11() if views else 1.0
+        # Take max of actual pen width and 10 screen-pixel equivalent
+        hit_w = max(self.pen().widthF(), 10.0 / max(scale, 1e-6))
+        stroker.setWidth(hit_w)
+        return stroker.createStroke(path)
 
 
     @classmethod
