@@ -18,7 +18,9 @@ from calibrate_dialog import CalibrateDialog
 from underlay_context_menu import UnderlayContextMenu
 from dxf_import_worker import DxfImportWorker
 from water_supply import WaterSupply
-from construction_geometry import ConstructionLine, PolylineItem
+from construction_geometry import (
+    ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem,
+)
 import os
 
 
@@ -54,6 +56,17 @@ class Model_Space(QGraphicsScene):
         self._polylines: list[PolylineItem] = []
         self._cline_anchor: "QPointF | None" = None           # first click for construction line
         self._polyline_active: "PolylineItem | None" = None   # in-progress polyline
+        # Draw geometry (Sprint G)
+        self._draw_lines: list[LineItem] = []
+        self._draw_rects: list[RectangleItem] = []
+        self._draw_circles: list[CircleItem] = []
+        self._draw_line_anchor: "QPointF | None" = None       # first click for line
+        self._draw_rect_anchor: "QPointF | None" = None       # first click for rectangle
+        self._draw_circle_center: "QPointF | None" = None     # first click for circle
+        self._draw_rect_preview: "QGraphicsRectItem | None" = None
+        self._draw_circle_preview: "QGraphicsEllipseItem | None" = None
+        self._draw_color: str = "#ffffff"       # default white (dark theme)
+        self._draw_lineweight: float = 1.0      # cosmetic px
         # Undo/redo
         self._undo_stack: list[dict] = []
         self._undo_pos: int = -1
@@ -164,6 +177,9 @@ class Model_Space(QGraphicsScene):
         # --- Construction geometry ---
         clines_data = [cl.to_dict() for cl in self._construction_lines]
         polylines_data = [pl.to_dict() for pl in self._polylines]
+        draw_lines_data = [l.to_dict() for l in self._draw_lines]
+        draw_rects_data = [r.to_dict() for r in self._draw_rects]
+        draw_circles_data = [c.to_dict() for c in self._draw_circles]
 
         # --- Assemble and write ---
         payload = {
@@ -177,6 +193,9 @@ class Model_Space(QGraphicsScene):
             "water_supply":        ws_data,
             "construction_lines":  clines_data,
             "polylines":           polylines_data,
+            "draw_lines":          draw_lines_data,
+            "draw_rectangles":     draw_rects_data,
+            "draw_circles":        draw_circles_data,
         }
         with open(filename, "w") as f:
             json.dump(payload, f, indent=2)
@@ -284,6 +303,24 @@ class Model_Space(QGraphicsScene):
             self.addItem(pl)
             self._polylines.append(pl)
 
+        # --- Draw lines ---
+        for entry in payload.get("draw_lines", []):
+            item = LineItem.from_dict(entry)
+            self.addItem(item)
+            self._draw_lines.append(item)
+
+        # --- Draw rectangles ---
+        for entry in payload.get("draw_rectangles", []):
+            item = RectangleItem.from_dict(entry)
+            self.addItem(item)
+            self._draw_rects.append(item)
+
+        # --- Draw circles ---
+        for entry in payload.get("draw_circles", []):
+            item = CircleItem.from_dict(entry)
+            self.addItem(item)
+            self._draw_circles.append(item)
+
         # Start fresh undo history with the loaded state
         self._undo_stack = []
         self._undo_pos = -1
@@ -302,6 +339,14 @@ class Model_Space(QGraphicsScene):
         self._polylines = []
         self._cline_anchor = None
         self._polyline_active = None
+        self._draw_lines = []
+        self._draw_rects = []
+        self._draw_circles = []
+        self._draw_line_anchor = None
+        self._draw_rect_anchor = None
+        self._draw_circle_center = None
+        self._draw_rect_preview = None
+        self._draw_circle_preview = None
         self.clear()
         self.init_preview_node()
         self.init_preview_pipe()
@@ -356,6 +401,26 @@ class Model_Space(QGraphicsScene):
                 if self.water_supply_node is item:
                     self.water_supply_node = None
                     self.sprinkler_system.supply_node = None
+            elif isinstance(item, ConstructionLine):
+                if item in self._construction_lines:
+                    self._construction_lines.remove(item)
+                self.removeItem(item)
+            elif isinstance(item, PolylineItem):
+                if item in self._polylines:
+                    self._polylines.remove(item)
+                self.removeItem(item)
+            elif isinstance(item, LineItem):
+                if item in self._draw_lines:
+                    self._draw_lines.remove(item)
+                self.removeItem(item)
+            elif isinstance(item, RectangleItem):
+                if item in self._draw_rects:
+                    self._draw_rects.remove(item)
+                self.removeItem(item)
+            elif isinstance(item, CircleItem):
+                if item in self._draw_circles:
+                    self._draw_circles.remove(item)
+                self.removeItem(item)
         for item in self.selectedItems():
             if isinstance(item, Pipe):
                 self.delete_pipe(item)
@@ -399,6 +464,21 @@ class Model_Space(QGraphicsScene):
                 if self._polyline_active in self._polylines:
                     self._polylines.remove(self._polyline_active)
             self._polyline_active = None
+        # Cancel in-progress draw geometry
+        if mode != "draw_line":
+            self._draw_line_anchor = None
+        if mode != "draw_rectangle":
+            self._draw_rect_anchor = None
+            if self._draw_rect_preview is not None:
+                if self._draw_rect_preview.scene() is self:
+                    self.removeItem(self._draw_rect_preview)
+                self._draw_rect_preview = None
+        if mode != "draw_circle":
+            self._draw_circle_center = None
+            if self._draw_circle_preview is not None:
+                if self._draw_circle_preview.scene() is self:
+                    self.removeItem(self._draw_circle_preview)
+                self._draw_circle_preview = None
         if mode in ("sprinkler", "pipe", "set_scale"):
             self.current_template = template
             if template:
@@ -1048,6 +1128,16 @@ class Model_Space(QGraphicsScene):
         for node in self.sprinkler_system.nodes:
             node.update()
 
+    def _get_draw_color(self) -> str:
+        """Return the effective draw colour: explicit override, else active layer colour."""
+        if self._draw_color and self._draw_color != "#ffffff":
+            return self._draw_color
+        if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
+            ldef = self._user_layer_manager.get(self.active_user_layer)
+            if ldef:
+                return ldef.color
+        return self._draw_color
+
     # -------------------------------------------------------------------------
     # GEOMETRY HELPERS
 
@@ -1184,6 +1274,33 @@ class Model_Space(QGraphicsScene):
             self.preview_pipe.hide()
             if self._polyline_active is not None:
                 self._polyline_active.update_preview(snapped)
+
+        elif self.mode == "draw_line":
+            self.preview_node.hide()
+            if self._draw_line_anchor is not None:
+                self.preview_pipe.setLine(
+                    self._draw_line_anchor.x(), self._draw_line_anchor.y(),
+                    snapped.x(), snapped.y()
+                )
+                self.preview_pipe.show()
+            else:
+                self.preview_pipe.hide()
+
+        elif self.mode == "draw_rectangle":
+            self.preview_node.hide()
+            self.preview_pipe.hide()
+            if self._draw_rect_anchor is not None and self._draw_rect_preview is not None:
+                rect = QRectF(self._draw_rect_anchor, snapped).normalized()
+                self._draw_rect_preview.setRect(rect)
+
+        elif self.mode == "draw_circle":
+            self.preview_node.hide()
+            self.preview_pipe.hide()
+            if self._draw_circle_center is not None and self._draw_circle_preview is not None:
+                r = math.hypot(snapped.x() - self._draw_circle_center.x(),
+                               snapped.y() - self._draw_circle_center.y())
+                cx, cy = self._draw_circle_center.x(), self._draw_circle_center.y()
+                self._draw_circle_preview.setRect(cx - r, cy - r, 2 * r, 2 * r)
 
         elif self.mode in ("sprinkler", "dimension", "paste", "move", "water_supply"):
             self.update_preview_node(snapped)
@@ -1345,7 +1462,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "polyline":
             if self._polyline_active is None:
                 # First click — create the polyline item
-                color = "#ffffff"
+                color = self._draw_color
                 if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
                     ldef = self._user_layer_manager.get(self.active_user_layer)
                     if ldef:
@@ -1358,6 +1475,82 @@ class Model_Space(QGraphicsScene):
                 # Subsequent clicks — append vertex
                 self._polyline_active.append_point(snapped)
             return  # don't let super() deselect items mid-draw
+
+        elif self.mode == "draw_line":
+            if self._draw_line_anchor is None:
+                self._draw_line_anchor = snapped
+            else:
+                # Place the line
+                color = self._get_draw_color()
+                lw = self._draw_lineweight
+                item = LineItem(self._draw_line_anchor, snapped, color, lw)
+                item.user_layer = self.active_user_layer
+                self.addItem(item)
+                self._draw_lines.append(item)
+                self._draw_line_anchor = None
+                self.preview_pipe.hide()
+                self.push_undo_state()
+            return
+
+        elif self.mode == "draw_rectangle":
+            if self._draw_rect_anchor is None:
+                self._draw_rect_anchor = snapped
+                # Create preview rect
+                preview = QGraphicsRectItem(QRectF(snapped, snapped))
+                preview.setPen(QPen(QColor(self._draw_color), 1, Qt.PenStyle.DashLine))
+                preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                preview.setZValue(200)
+                self.addItem(preview)
+                self._draw_rect_preview = preview
+            else:
+                # Commit rectangle
+                rect = QRectF(self._draw_rect_anchor, snapped).normalized()
+                color = self._get_draw_color()
+                lw = self._draw_lineweight
+                item = RectangleItem(
+                    QPointF(rect.x(), rect.y()),
+                    QPointF(rect.x() + rect.width(), rect.y() + rect.height()),
+                    color, lw
+                )
+                item.user_layer = self.active_user_layer
+                self.addItem(item)
+                self._draw_rects.append(item)
+                # Remove preview
+                if self._draw_rect_preview is not None:
+                    self.removeItem(self._draw_rect_preview)
+                    self._draw_rect_preview = None
+                self._draw_rect_anchor = None
+                self.push_undo_state()
+            return
+
+        elif self.mode == "draw_circle":
+            if self._draw_circle_center is None:
+                self._draw_circle_center = snapped
+                # Create preview circle
+                preview = QGraphicsEllipseItem(snapped.x(), snapped.y(), 0, 0)
+                preview.setPen(QPen(QColor(self._draw_color), 1, Qt.PenStyle.DashLine))
+                preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                preview.setZValue(200)
+                self.addItem(preview)
+                self._draw_circle_preview = preview
+            else:
+                # Commit circle
+                r = math.hypot(snapped.x() - self._draw_circle_center.x(),
+                               snapped.y() - self._draw_circle_center.y())
+                if r > 0:
+                    color = self._get_draw_color()
+                    lw = self._draw_lineweight
+                    item = CircleItem(self._draw_circle_center, r, color, lw)
+                    item.user_layer = self.active_user_layer
+                    self.addItem(item)
+                    self._draw_circles.append(item)
+                # Remove preview
+                if self._draw_circle_preview is not None:
+                    self.removeItem(self._draw_circle_preview)
+                    self._draw_circle_preview = None
+                self._draw_circle_center = None
+                self.push_undo_state()
+            return
 
         elif self.mode is None:
             if isinstance(selection, Node):

@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import math
 
-from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsPathItem
-from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtWidgets import (
+    QGraphicsLineItem, QGraphicsPathItem,
+    QGraphicsRectItem, QGraphicsEllipseItem,
+)
+from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
 
 
@@ -185,3 +188,170 @@ class PolylineItem(QGraphicsPathItem):
         for p in self._points[1:]:
             path.lineTo(p)
         self.setPath(path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LineItem  — finite 2-point line (AutoCAD-style Line tool)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LineItem(QGraphicsLineItem):
+    """
+    A finite 2-point line with configurable colour and lineweight.
+
+    Parameters
+    ----------
+    pt1, pt2    : QPointF  — start and end points
+    color       : str | QColor — stroke colour (default white for dark theme)
+    lineweight  : float — cosmetic pixel width (default 1.0)
+    """
+
+    def __init__(self, pt1: QPointF, pt2: QPointF,
+                 color: str | QColor = "#ffffff", lineweight: float = 1.0):
+        super().__init__()
+        self._pt1 = pt1
+        self._pt2 = pt2
+        self.user_layer: str = "0"
+
+        pen = QPen(QColor(color) if isinstance(color, str) else color)
+        pen.setWidthF(lineweight)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+
+        self.setZValue(1)
+        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
+
+        self.setLine(pt1.x(), pt1.y(), pt2.x(), pt2.y())
+
+    # ── Serialisation ────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        return {
+            "type":        "draw_line",
+            "pt1":         [self._pt1.x(), self._pt1.y()],
+            "pt2":         [self._pt2.x(), self._pt2.y()],
+            "color":       self.pen().color().name(),
+            "lineweight":  self.pen().widthF(),
+            "user_layer":  self.user_layer,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LineItem":
+        pt1 = QPointF(data["pt1"][0], data["pt1"][1])
+        pt2 = QPointF(data["pt2"][0], data["pt2"][1])
+        obj = cls(pt1, pt2, data.get("color", "#ffffff"),
+                  data.get("lineweight", 1.0))
+        obj.user_layer = data.get("user_layer", "0")
+        return obj
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RectangleItem  — axis-aligned rectangle (two corner clicks)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RectangleItem(QGraphicsRectItem):
+    """
+    An axis-aligned rectangle defined by two opposite corners.
+
+    Parameters
+    ----------
+    pt1, pt2    : QPointF — opposite corners (order does not matter)
+    color       : str | QColor
+    lineweight  : float — cosmetic pixel width
+    """
+
+    def __init__(self, pt1: QPointF, pt2: QPointF,
+                 color: str | QColor = "#ffffff", lineweight: float = 1.0):
+        rect = QRectF(pt1, pt2).normalized()
+        super().__init__(rect)
+        self.user_layer: str = "0"
+
+        pen = QPen(QColor(color) if isinstance(color, str) else color)
+        pen.setWidthF(lineweight)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+        self.setZValue(1)
+        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
+
+    # ── Serialisation ────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        r = self.rect()
+        return {
+            "type":        "draw_rectangle",
+            "x":           r.x(),
+            "y":           r.y(),
+            "w":           r.width(),
+            "h":           r.height(),
+            "color":       self.pen().color().name(),
+            "lineweight":  self.pen().widthF(),
+            "user_layer":  self.user_layer,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RectangleItem":
+        pt1 = QPointF(data["x"], data["y"])
+        pt2 = QPointF(data["x"] + data["w"], data["y"] + data["h"])
+        obj = cls(pt1, pt2, data.get("color", "#ffffff"),
+                  data.get("lineweight", 1.0))
+        obj.user_layer = data.get("user_layer", "0")
+        return obj
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CircleItem  — circle defined by centre + edge point
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CircleItem(QGraphicsEllipseItem):
+    """
+    A circle defined by its centre and one point on the circumference.
+
+    Parameters
+    ----------
+    center  : QPointF — circle centre in scene coordinates
+    radius  : float   — radius in scene units
+    color   : str | QColor
+    lineweight : float — cosmetic pixel width
+    """
+
+    def __init__(self, center: QPointF, radius: float,
+                 color: str | QColor = "#ffffff", lineweight: float = 1.0):
+        self._center = center
+        self._radius = radius
+        r = radius
+        super().__init__(center.x() - r, center.y() - r, 2 * r, 2 * r)
+        self.user_layer: str = "0"
+
+        pen = QPen(QColor(color) if isinstance(color, str) else color)
+        pen.setWidthF(lineweight)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+        self.setZValue(1)
+        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
+
+    # ── Serialisation ────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        return {
+            "type":        "draw_circle",
+            "cx":          self._center.x(),
+            "cy":          self._center.y(),
+            "radius":      self._radius,
+            "color":       self.pen().color().name(),
+            "lineweight":  self.pen().widthF(),
+            "user_layer":  self.user_layer,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CircleItem":
+        center = QPointF(data["cx"], data["cy"])
+        obj = cls(center, data["radius"],
+                  data.get("color", "#ffffff"), data.get("lineweight", 1.0))
+        obj.user_layer = data.get("user_layer", "0")
+        return obj

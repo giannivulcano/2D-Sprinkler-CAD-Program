@@ -3,8 +3,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QMenuBar,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
-                              QTabWidget, QMenu, QStyle, QWidget)
-from PyQt6.QtGui import QAction, QPainter, QIcon
+                              QTabWidget, QMenu, QStyle, QWidget, QColorDialog)
+from PyQt6.QtGui import QAction, QPainter, QIcon, QColor, QPixmap
 from PyQt6.QtCore import Qt, QSettings, QSize
 from Model_Space import Model_Space
 from Model_View import Model_View
@@ -105,6 +105,13 @@ class MainWindow(QMainWindow):
         self.view.setMouseTracking(True)
         self.view.viewport().setMouseTracking(True)
         self.view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # Draw tool style defaults (white pen in dark theme, 1px cosmetic)
+        _t = th.detect()
+        self._draw_color: str = _t.text_primary        # "#ffffff" dark / "#000000" light
+        self._draw_lineweight: float = 1.0
+        self.scene._draw_color = self._draw_color
+        self.scene._draw_lineweight = self._draw_lineweight
 
         # User layer manager — shared between scene and UI
         self.user_layer_mgr = UserLayerManager()
@@ -429,16 +436,40 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
             self.refresh_underlays)
 
-        # --- Draw (reference geometry only — pipe lives in Sprinkler tab) ---
+        # --- Draw (reference geometry + basic drafting — pipe lives in Sprinkler tab) ---
         g_draw = ref_page.add_group("Draw")
+
+        # Row 1 — standard drawing tools (large buttons)
         g_draw.add_large_button(
-            "Construction\nLine",
+            "Line",
+            s.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+            lambda: self.scene.set_mode("draw_line"))
+        g_draw.add_large_button(
+            "Rectangle",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
-            lambda: self.scene.set_mode("construction_line"))
+            lambda: self.scene.set_mode("draw_rectangle"))
+        g_draw.add_large_button(
+            "Circle",
+            s.standardIcon(QStyle.StandardPixmap.SP_CommandLink),
+            lambda: self.scene.set_mode("draw_circle"))
         g_draw.add_large_button(
             "Polyline",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
             lambda: self.scene.set_mode("polyline"))
+        g_draw.add_large_button(
+            "Construction\nLine",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView),
+            lambda: self.scene.set_mode("construction_line"))
+
+        # Row 2 — colour and lineweight controls (small buttons)
+        self._draw_color_btn = g_draw.add_small_button(
+            "Colour",
+            self._make_color_icon(self._draw_color),
+            self._pick_draw_color)
+        self._draw_lw_btn = g_draw.add_small_menu_button(
+            "LW 1.00",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogListView),
+            self._build_lineweight_menu())
 
         # --- Grid ---
         g_grid = ref_page.add_group("Grid")
@@ -644,11 +675,45 @@ class MainWindow(QMainWindow):
         """Return a QMenu of common grid-size presets (scene units)."""
         m = QMenu(self)
         for size in (5, 10, 25, 50, 100):
-            m.addAction(f"{size} units",
-                        lambda _, v=size: self._set_grid_size(v))
+            act = m.addAction(f"{size} units")
+            # Use checked=False default so lambda works with 0-arg or 1-arg call
+            act.triggered.connect(lambda checked=False, s=size: self._set_grid_size(s))
         return m
 
     # ── Stub actions (filled in by later sprints) ─────────────────────────────
+
+    # ── Draw tool helpers ─────────────────────────────────────────────────────
+
+    def _make_color_icon(self, color: str, size: int = 16) -> QIcon:
+        """Return a solid-colour square icon for the colour picker button."""
+        pm = QPixmap(size, size)
+        pm.fill(QColor(color))
+        return QIcon(pm)
+
+    def _pick_draw_color(self):
+        """Open colour picker dialog and update draw colour."""
+        color = QColorDialog.getColor(QColor(self._draw_color), self,
+                                      "Select Draw Colour")
+        if color.isValid():
+            self._draw_color = color.name()
+            self.scene._draw_color = self._draw_color
+            if hasattr(self, "_draw_color_btn"):
+                self._draw_color_btn.setIcon(self._make_color_icon(self._draw_color))
+
+    def _set_draw_lineweight(self, lw: float):
+        """Update draw lineweight and sync to scene."""
+        self._draw_lineweight = lw
+        self.scene._draw_lineweight = lw
+        if hasattr(self, "_draw_lw_btn"):
+            self._draw_lw_btn.setText(f"LW {lw:.2f}")
+
+    def _build_lineweight_menu(self) -> QMenu:
+        """Return a QMenu of standard drawing pen lineweights (mm)."""
+        m = QMenu(self)
+        for lw in (0.18, 0.25, 0.35, 0.50, 0.70, 1.00, 1.40, 2.00):
+            act = m.addAction(f"{lw:.2f} mm")
+            act.triggered.connect(lambda checked=False, w=lw: self._set_draw_lineweight(w))
+        return m
 
     def open_import_dialog(self):
         """Open the unified PDF/DXF underlay import dialog."""
@@ -677,7 +742,10 @@ class MainWindow(QMainWindow):
     def _set_grid_size(self, size: int):
         """Update grid dot spacing and keep the toggle button checked."""
         self.view.set_grid(True, size)
+        # Block toggled signal to prevent cascading toggle_grid calls
+        self._grid_btn.blockSignals(True)
         self._grid_btn.setChecked(True)
+        self._grid_btn.blockSignals(False)
 
     def toggle_coverage_overlay(self, checked: bool):
         """Show/hide translucent sprinkler coverage circles."""

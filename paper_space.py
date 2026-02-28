@@ -14,15 +14,24 @@ PaperSpaceWidget — QWidget wrapping a view of PaperScene + paper-size/title co
 from __future__ import annotations
 
 import datetime
+import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGraphicsScene, QGraphicsView,
-    QGraphicsItem, QGraphicsRectItem, QComboBox, QPushButton, QLabel,
+    QGraphicsItem, QGraphicsRectItem, QGraphicsPixmapItem, QComboBox, QPushButton, QLabel,
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QGraphicsDropShadowEffect,
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF, QSizeF
+from PyQt6.QtCore import Qt, QRectF, QPointF, QSizeF, QSize
 from PyQt6.QtGui import (
-    QPen, QBrush, QColor, QPainter, QFont, QFontMetricsF, QTransform,
+    QPen, QBrush, QColor, QPainter, QFont, QFontMetricsF, QTransform, QPixmap,
 )
+try:
+    from PyQt6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
+    _PDF_AVAILABLE = True
+except ImportError:
+    _PDF_AVAILABLE = False
+
+# Base directory for default title block PDFs
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -30,13 +39,24 @@ from PyQt6.QtGui import (
 # ─────────────────────────────────────────────────────────────────────────────
 
 PAPER_SIZES: dict[str, tuple[float, float]] = {
+    # ISO A-series (portrait: width × height in mm)
     "A4":     (210.0,  297.0),
     "A3":     (297.0,  420.0),
     "A2":     (420.0,  594.0),
     "A1":     (594.0,  841.0),
     "A0":     (841.0, 1189.0),
+    # ANSI (landscape: width × height in mm)
+    "ANSI B": (431.8,  279.4),   # 17" × 11" landscape
+    "ANSI D": (863.6,  558.8),   # 34" × 22" landscape
+    # Legacy
     "Letter": (215.9,  279.4),
     "D-size": (558.8,  863.6),
+}
+
+# Map paper size name → PDF title block file (relative to project root)
+TITLE_BLOCK_PDFS: dict[str, str] = {
+    "ANSI B": os.path.join(_BASE_DIR, "default titleblocks", "CEL Titleblock (ANSI B) R0.pdf"),
+    "ANSI D": os.path.join(_BASE_DIR, "default titleblocks", "CEL Titleblock (ANSI D) R0.pdf"),
 }
 
 # Margins (mm)
@@ -46,7 +66,77 @@ TITLE_H       = 65.0    # title block height
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Title block
+# PDF-based title block background
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_titleblock_pdf(pdf_path: str, paper_w_mm: float, paper_h_mm: float,
+                            render_dpi: int = 150) -> "QPixmap | None":
+    """
+    Render page 0 of *pdf_path* to a QPixmap scaled to exactly
+    paper_w_mm × paper_h_mm scene units (1 unit = 1 mm).
+
+    Returns None if the PDF cannot be loaded or QPdf is unavailable.
+    """
+    if not _PDF_AVAILABLE:
+        return None
+    if not os.path.isfile(pdf_path):
+        return None
+    try:
+        doc = QPdfDocument(None)
+        status = doc.load(pdf_path)
+        # Status 0 == NoError
+        if int(status) != 0:
+            return None
+        if doc.pageCount() == 0:
+            return None
+        # Native page size in points (1/72 inch)
+        page_size_pt = doc.pagePointSize(0)
+        if not page_size_pt.isValid() or page_size_pt.width() == 0:
+            return None
+        # Convert pts → inches → px at render_dpi
+        w_px = int(page_size_pt.width()  / 72.0 * render_dpi)
+        h_px = int(page_size_pt.height() / 72.0 * render_dpi)
+        options = QPdfDocumentRenderOptions()
+        image = doc.render(0, QSize(w_px, h_px), options)
+        if image.isNull():
+            return None
+        pixmap = QPixmap.fromImage(image)
+        return pixmap
+    except Exception as e:
+        print(f"[TitleBlock] PDF render error: {e}")
+        return None
+
+
+class TitleBlockPdfItem(QGraphicsPixmapItem):
+    """
+    Renders a PDF title block as a full-paper background pixmap.
+
+    The pixmap is scaled (via QTransform) so it exactly covers the paper
+    rectangle (0, 0, paper_w_mm, paper_h_mm) in scene coordinates.
+    """
+
+    def __init__(self, pdf_path: str, paper_w: float, paper_h: float, parent=None):
+        super().__init__(parent)
+        self._paper_w = paper_w
+        self._paper_h = paper_h
+        self.setZValue(0.5)   # above paper background, below viewport/title items
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+
+        pixmap = _render_titleblock_pdf(pdf_path, paper_w, paper_h)
+        if pixmap and not pixmap.isNull():
+            self.setPixmap(pixmap)
+            # Scale to paper dimensions
+            sx = paper_w / pixmap.width()
+            sy = paper_h / pixmap.height()
+            self.setTransform(QTransform().scale(sx, sy))
+            self.setPos(0, 0)
+        else:
+            print(f"[TitleBlock] Could not load PDF: {pdf_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Programmatic title block (fallback / ISO sizes)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TitleBlockItem(QGraphicsItem):
@@ -289,23 +379,25 @@ class PaperScene(QGraphicsScene):
     The paper sits at (0, 0) with width × height in mm.
     """
 
-    def __init__(self, model_scene, paper_size: str = "A1"):
+    def __init__(self, model_scene, paper_size: str = "ANSI D"):
         super().__init__()
-        self._model_scene = model_scene
-        self._paper_size  = paper_size
-        self._bg_item     = None
-        self._border_item = None
-        self._title       = None
-        self._viewport    = None
+        self._model_scene  = model_scene
+        self._paper_size   = paper_size
+        self._bg_item      = None
+        self._border_item  = None
+        self._title        = None
+        self._title_pdf    = None   # TitleBlockPdfItem (ANSI sizes only)
+        self._viewport     = None
         self._setup()
 
     def _setup(self):
         """Build/rebuild all paper scene items."""
         self.clear()
+        self._title_pdf = None
 
         w, h = PAPER_SIZES[self._paper_size]
 
-        # White paper background with drop shadow
+        # White paper background
         self._bg_item = self.addRect(
             0, 0, w, h,
             QPen(Qt.GlobalColor.black, 0.3),
@@ -313,7 +405,18 @@ class PaperScene(QGraphicsScene):
         )
         self._bg_item.setZValue(0)
 
-        # Drawing border (inner margin)
+        # PDF title block (ANSI B / ANSI D) — covers full paper
+        pdf_path = TITLE_BLOCK_PDFS.get(self._paper_size)
+        use_pdf_title = False
+        if pdf_path:
+            tb_pdf = TitleBlockPdfItem(pdf_path, w, h)
+            self.addItem(tb_pdf)
+            self._title_pdf = tb_pdf
+            # Only suppress programmatic title block if PDF loaded successfully
+            use_pdf_title = (tb_pdf.pixmap() is not None
+                             and not tb_pdf.pixmap().isNull())
+
+        # Drawing border (inner margin) — always shown
         bx = MARGIN; by = MARGIN
         bw = w - 2 * MARGIN; bh = h - 2 * MARGIN
         border = self.addRect(
@@ -321,11 +424,13 @@ class PaperScene(QGraphicsScene):
             QPen(Qt.GlobalColor.black, 0.5),
             QBrush(Qt.BrushStyle.NoBrush),
         )
-        border.setZValue(1)
+        border.setZValue(2)
 
-        # Title block
+        # Programmatic title block — shown only when no PDF title block loaded
         self._title = TitleBlockItem(w, h)
         self.addItem(self._title)
+        if use_pdf_title:
+            self._title.hide()   # PDF title block takes precedence
 
         # Viewport — fills the area above the title block (inside border)
         vp_x = bx + INNER_MARGIN
@@ -411,7 +516,7 @@ class PaperSpaceWidget(QWidget):
         super().__init__(parent)
         self._model_scene = model_scene
 
-        self.paper_scene = PaperScene(model_scene, "A1")
+        self.paper_scene = PaperScene(model_scene, "ANSI D")
 
         self._build_ui()
 
@@ -427,7 +532,7 @@ class PaperSpaceWidget(QWidget):
         toolbar.addWidget(QLabel("Paper:"))
         self._size_combo = QComboBox()
         self._size_combo.addItems(list(PAPER_SIZES.keys()))
-        self._size_combo.setCurrentText("A1")
+        self._size_combo.setCurrentText("ANSI D")
         self._size_combo.currentTextChanged.connect(self._change_paper)
         toolbar.addWidget(self._size_combo)
 

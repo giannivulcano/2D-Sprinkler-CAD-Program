@@ -155,28 +155,69 @@ class UserLayerManager:
     # ── Apply to scene ───────────────────────────────────────────────────────
 
     def apply_to_scene(self, scene):
-        """Show/hide and lock/unlock drawing items according to their layer."""
+        """Show/hide, lock/unlock, and re-colour drawing items by layer."""
         from PyQt6.QtWidgets import QGraphicsItem
-        visibility = {l.name: l.visible for l in self._layers}
-        locked     = {l.name: l.locked  for l in self._layers}
+        from PyQt6.QtGui import QPen, QColor as _QColor
 
+        # Build lookup: layer name → UserLayer
+        lyr_map = {l.name: l for l in self._layers}
+
+        def _apply_item(item, lyr_name: str):
+            """Apply visibility, lock, colour and lineweight to a geometry item."""
+            ldef = lyr_map.get(lyr_name)
+            if ldef is None:
+                return
+            item.setVisible(ldef.visible)
+            item.setFlag(
+                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
+                ldef.visible and not ldef.locked,
+            )
+            # Apply layer colour + lineweight to items that have a pen
+            if callable(getattr(item, "pen", None)) and callable(getattr(item, "setPen", None)):
+                pen = QPen(item.pen())
+                pen.setColor(_QColor(ldef.color))
+                # lineweight: cosmetic items keep their device-pixel width;
+                # items with non-cosmetic pens have their width updated
+                if not pen.isCosmetic():
+                    pen.setWidthF(ldef.lineweight)
+                item.setPen(pen)
+
+        # ── Sprinkler system (nodes + pipes — visibility/lock only) ───────────
         for node in scene.sprinkler_system.nodes:
             lyr = getattr(node, "user_layer", "0")
-            vis = visibility.get(lyr, True)
-            node.setVisible(vis)
-            node.setFlag(
-                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                vis and not locked.get(lyr, False),
-            )
+            ldef = lyr_map.get(lyr)
+            if ldef:
+                node.setVisible(ldef.visible)
+                node.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
+                    ldef.visible and not ldef.locked,
+                )
 
         for pipe in scene.sprinkler_system.pipes:
             lyr = getattr(pipe, "user_layer", "0")
-            vis = visibility.get(lyr, True)
-            pipe.setVisible(vis)
-            pipe.setFlag(
-                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                vis and not locked.get(lyr, False),
-            )
+            ldef = lyr_map.get(lyr)
+            if ldef:
+                pipe.setVisible(ldef.visible)
+                pipe.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
+                    ldef.visible and not ldef.locked,
+                )
+
+        # ── Construction / draw geometry (colour + lineweight applied) ────────
+        for item in getattr(scene, "_construction_lines", []):
+            _apply_item(item, getattr(item, "user_layer", "0"))
+
+        for item in getattr(scene, "_polylines", []):
+            _apply_item(item, getattr(item, "user_layer", "0"))
+
+        for item in getattr(scene, "_draw_lines", []):
+            _apply_item(item, getattr(item, "user_layer", "0"))
+
+        for item in getattr(scene, "_draw_rects", []):
+            _apply_item(item, getattr(item, "user_layer", "0"))
+
+        for item in getattr(scene, "_draw_circles", []):
+            _apply_item(item, getattr(item, "user_layer", "0"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
