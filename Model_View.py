@@ -178,6 +178,23 @@ class Model_View(QGraphicsView):
             self._panning = True
             self._pan_start = event.pos()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif event.button() == Qt.MouseButton.LeftButton:
+            # When clicking on a grip handle the scene will consume the event.
+            # However, QGraphicsView starts rubber-band selection before the
+            # scene processes the click (grip handles are foreground overlays,
+            # not real scene items).  Detect the grip hit here and suppress
+            # rubber-band by temporarily switching to NoDrag for this press.
+            sc = self.scene()
+            if (sc is not None
+                    and getattr(sc, "mode", None) is None
+                    and hasattr(sc, "_find_grip_hit")):
+                scene_pos = self.mapToScene(event.pos())
+                if sc._find_grip_hit(scene_pos) is not None:
+                    self._grip_press_active = True
+                    self.setDragMode(QGraphicsView.DragMode.NoDrag)
+                    super().mousePressEvent(event)
+                    return
+            super().mousePressEvent(event)
         else:
             super().mousePressEvent(event)
 
@@ -195,4 +212,7 @@ class Model_View(QGraphicsView):
             self._panning = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
         else:
+            if getattr(self, "_grip_press_active", False):
+                self._grip_press_active = False
+                self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
             super().mouseReleaseEvent(event)

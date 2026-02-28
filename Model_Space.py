@@ -460,8 +460,13 @@ class Model_Space(QGraphicsScene):
                 if self._design_area_rect_item.scene() is self:
                     self.removeItem(self._design_area_rect_item)
                 self._design_area_rect_item = None
+        # Only remove node if we are truly holding an orphan Node (pipe mode).
+        # In paste/move mode node_start_pos is a QPointF — never call remove_node on it.
         if self.node_start_pos is not None:
-            self.remove_node(self.node_start_pos)
+            if isinstance(self.node_start_pos, Node):
+                self.remove_node(self.node_start_pos)
+            else:
+                self.node_start_pos = None
         # Cancel in-progress construction geometry
         if mode != "construction_line":
             self._cline_anchor = None
@@ -494,6 +499,10 @@ class Model_Space(QGraphicsScene):
                 self.requestPropertyUpdate.emit(template)
         else:
             self.current_template = None
+
+        # Capture current selection when entering move mode from ribbon/keyboard
+        if mode == "move" and not self._selected_items:
+            self._selected_items = list(self.selectedItems())
 
     # -------------------------------------------------------------------------
     # NODE / PIPE / SPRINKLER MANAGEMENT
@@ -1226,6 +1235,23 @@ class Model_Space(QGraphicsScene):
                 pts.append(item.mapToScene(QPointF(elem.x, elem.y)))
         return pts
 
+    @staticmethod
+    def _constrain_angle(anchor: QPointF, raw: QPointF) -> QPointF:
+        """
+        Return *raw* projected onto the nearest 0/45/90/135/180/225/270/315 °
+        ray from *anchor*.  Used when the user holds Ctrl while drawing a line.
+        """
+        dx = raw.x() - anchor.x()
+        dy = raw.y() - anchor.y()
+        dist = math.hypot(dx, dy)
+        if dist < 1e-6:
+            return anchor
+        angle = math.atan2(dy, dx)
+        # Snap angle to nearest multiple of π/4 (45°)
+        snapped = round(angle / (math.pi / 4)) * (math.pi / 4)
+        return QPointF(anchor.x() + dist * math.cos(snapped),
+                       anchor.y() + dist * math.sin(snapped))
+
     def project_point_onto_line(self, p1: QPointF, p2: QPointF, p: QPointF) -> QPointF:
         line_dx = p2.x() - p1.x()
         line_dy = p2.y() - p1.y()
@@ -1295,10 +1321,12 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "construction_line":
             self.preview_node.hide()
             if self._cline_anchor is not None:
-                # Show a preview line from anchor to current cursor
+                tip = snapped
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    tip = self._constrain_angle(self._cline_anchor, snapped)
                 self.preview_pipe.setLine(
                     self._cline_anchor.x(), self._cline_anchor.y(),
-                    snapped.x(), snapped.y()
+                    tip.x(), tip.y()
                 )
                 self.preview_pipe.show()
             else:
@@ -1308,14 +1336,23 @@ class Model_Space(QGraphicsScene):
             self.preview_node.hide()
             self.preview_pipe.hide()
             if self._polyline_active is not None:
-                self._polyline_active.update_preview(snapped)
+                tip = snapped
+                if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                        and len(self._polyline_active._points) >= 1):
+                    tip = self._constrain_angle(
+                        self._polyline_active._points[-1], snapped
+                    )
+                self._polyline_active.update_preview(tip)
 
         elif self.mode == "draw_line":
             self.preview_node.hide()
             if self._draw_line_anchor is not None:
+                tip = snapped
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    tip = self._constrain_angle(self._draw_line_anchor, snapped)
                 self.preview_pipe.setLine(
                     self._draw_line_anchor.x(), self._draw_line_anchor.y(),
-                    snapped.x(), snapped.y()
+                    tip.x(), tip.y()
                 )
                 self.preview_pipe.show()
             else:
@@ -1496,8 +1533,11 @@ class Model_Space(QGraphicsScene):
                 # First click — store anchor, show preview pipe
                 self._cline_anchor = snapped
             else:
-                # Second click — place the line
-                cl = ConstructionLine(self._cline_anchor, snapped)
+                # Second click — place the line (apply Ctrl constraint if held)
+                tip = snapped
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    tip = self._constrain_angle(self._cline_anchor, snapped)
+                cl = ConstructionLine(self._cline_anchor, tip)
                 self.addItem(cl)
                 self._construction_lines.append(cl)
                 self._cline_anchor = None   # ready for the next line immediately
@@ -1518,18 +1558,27 @@ class Model_Space(QGraphicsScene):
                 self._polylines.append(pl)
                 self._polyline_active = pl
             else:
-                # Subsequent clicks — append vertex
-                self._polyline_active.append_point(snapped)
+                # Subsequent clicks — append vertex (apply Ctrl constraint if held)
+                tip = snapped
+                if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                        and len(self._polyline_active._points) >= 1):
+                    tip = self._constrain_angle(
+                        self._polyline_active._points[-1], snapped
+                    )
+                self._polyline_active.append_point(tip)
             return  # don't let super() deselect items mid-draw
 
         elif self.mode == "draw_line":
             if self._draw_line_anchor is None:
                 self._draw_line_anchor = snapped
             else:
-                # Place the line
+                # Place the line (apply Ctrl constraint if held)
+                tip = snapped
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    tip = self._constrain_angle(self._draw_line_anchor, snapped)
                 color = self._get_draw_color()
                 lw = self._draw_lineweight
-                item = LineItem(self._draw_line_anchor, snapped, color, lw)
+                item = LineItem(self._draw_line_anchor, tip, color, lw)
                 item.user_layer = self.active_user_layer
                 self.addItem(item)
                 self._draw_lines.append(item)
@@ -1762,6 +1811,8 @@ class Model_Space(QGraphicsScene):
                 self._polylines.append(item)
 
     def move_items(self, offset):
+        if not self._selected_items:
+            return
         for item in self._selected_items:
             if isinstance(item, Node):
                 item.moveBy(offset.x(), offset.y())
@@ -1770,6 +1821,7 @@ class Model_Space(QGraphicsScene):
             elif hasattr(item, "translate"):
                 item.translate(offset.x(), offset.y())
                 item.setSelected(True)
+        self._selected_items = None   # clear after use
 
     def clipboard_data(self):
         text = QApplication.clipboard().text()
