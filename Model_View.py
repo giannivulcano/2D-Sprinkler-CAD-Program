@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView, QScrollBar,
     QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsRectItem,
 )
-from PyQt6.QtCore import Qt, QPoint, QPointF
+from PyQt6.QtCore import Qt, QPoint, QPointF, QLineF
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon, QFont
 import theme as th
 from snap_engine import SNAP_COLORS, SNAP_MARKERS
@@ -104,7 +104,9 @@ class Model_View(QGraphicsView):
 
             if isinstance(src, QGraphicsLineItem):
                 ln = src.line()
-                painter.drawLine(src.mapToScene(ln.p1()), src.mapToScene(ln.p2()))
+                p1 = src.mapToScene(ln.p1())
+                p2 = src.mapToScene(ln.p2())
+                painter.drawLine(QLineF(p1, p2))
             elif isinstance(src, QGraphicsEllipseItem):
                 painter.drawEllipse(src.mapRectToScene(src.rect()))
             elif isinstance(src, QGraphicsPathItem):
@@ -274,6 +276,21 @@ class Model_View(QGraphicsView):
     # -----------------------------
     # Tab — exact dimension input
     # -----------------------------
+
+    def focusNextPrevChild(self, next_child: bool) -> bool:
+        """Block Qt's built-in Tab focus-traversal when a draw mode is active.
+
+        Without this override Qt consumes Tab for widget focus cycling and it
+        never reaches keyPressEvent, so _handle_tab_input() would never fire.
+        """
+        sc = self.scene()
+        if sc is not None and getattr(sc, "mode", None) in (
+            "draw_line", "draw_rectangle", "draw_circle",
+            "construction_line", "polyline",
+        ):
+            return False   # let Tab fall through to keyPressEvent
+        return super().focusNextPrevChild(next_child)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Tab:
             sc = self.scene()

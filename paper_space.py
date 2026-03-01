@@ -84,8 +84,9 @@ def _render_titleblock_pdf(pdf_path: str, paper_w_mm: float, paper_h_mm: float,
     try:
         doc = QPdfDocument(None)
         status = doc.load(pdf_path)
-        # Status 0 == NoError
-        if int(status) != 0:
+        # QPdfDocument.Status is a strict enum in PyQt6 — compare by identity,
+        # not by int(), which raises TypeError on non-IntEnum members.
+        if status != QPdfDocument.Status.NoError:
             return None
         if doc.pageCount() == 0:
             return None
