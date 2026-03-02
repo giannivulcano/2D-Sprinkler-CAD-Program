@@ -11,6 +11,7 @@ from Model_View import Model_View
 from sprinkler import Sprinkler
 from pipe import Pipe
 from dxf_import_dialog import DxfImportDialog
+from dxf_preview_dialog import DxfPreviewDialog
 from property_manager import PropertyManager
 from scale_manager import DisplayUnit
 from layer_manager import LayerManager
@@ -19,6 +20,7 @@ from user_layer_manager import UserLayerManager, UserLayerWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
 from ribbon_bar import RibbonBar
 from array_dialog import ArrayDialog
+from project_browser import ProjectBrowser
 from grid_lines_dialog import GridLinesDialog
 import theme as th
 
@@ -183,6 +185,25 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.user_layer_dock)
         self.tabifyDockWidget(self.layer_dock, self.user_layer_dock)
         self.user_layer_dock.setMinimumWidth(200)
+
+        # Project Browser dock
+        self.project_browser = ProjectBrowser()
+        self.project_browser_dock = QDockWidget("Project Browser", self)
+        self.project_browser_dock.setObjectName("ProjectBrowserDock")
+        self.project_browser_dock.setWidget(self.project_browser)
+        self.project_browser_dock.setAllowedAreas(
+            Qt.DockWidgetArea.RightDockWidgetArea |
+            Qt.DockWidgetArea.LeftDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.project_browser_dock)
+        self.project_browser_dock.setMinimumWidth(180)
+        # Wire signals
+        self.project_browser.activateModelSpace.connect(
+            lambda: self.central_tabs.setCurrentWidget(self.view)
+        )
+        self.project_browser.activatePaperSheet.connect(
+            self._activate_paper_sheet
+        )
 
         # Hydraulic report dock (tabbed: Summary | Pipe Results | Schedules)
         self.hydro_report = HydraulicReportWidget()
@@ -385,6 +406,15 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(model_action)
 
+    def _activate_paper_sheet(self, name: str):
+        """Switch the central area to the paper space tab matching *name*."""
+        for i in range(self.central_tabs.count()):
+            if self.central_tabs.tabText(i) == name:
+                self.central_tabs.setCurrentIndex(i)
+                return
+        # Sheet not found — switch to the first paper space tab as fallback
+        self.central_tabs.setCurrentWidget(self.paper_space_widget)
+
     def _add_dock_toggles(self):
         """Append dock visibility toggles to the View menu.
 
@@ -395,6 +425,7 @@ class MainWindow(QMainWindow):
         self._view_menu.addAction(self.dock.toggleViewAction())
         self._view_menu.addAction(self.layer_dock.toggleViewAction())
         self._view_menu.addAction(self.user_layer_dock.toggleViewAction())
+        self._view_menu.addAction(self.project_browser_dock.toggleViewAction())
         self._view_menu.addAction(self.hydro_dock.toggleViewAction())
 
     def init_help_menu(self, menu_bar):
@@ -459,13 +490,13 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
             lambda: self.scene.set_mode("polyline"))
         g_draw.add_large_button(
-            "Construction\nLine",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView),
-            lambda: self.scene.set_mode("construction_line"))
-        g_draw.add_large_button(
             "Grid\nLines",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             self._place_grid_lines)
+        g_draw.add_large_button(
+            "Offset",
+            s.standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            lambda: self.scene.set_mode("offset"))
 
         # Row 2 — colour and lineweight controls (small buttons)
         self._draw_color_btn = g_draw.add_small_button(
@@ -879,20 +910,15 @@ class MainWindow(QMainWindow):
                 )
 
     def open_dxf_import_dialog(self):
-        dialog = DxfImportDialog(self)
+        """Open the preview-first DXF import dialog."""
+        dialog = DxfPreviewDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            file_path = dialog.get_file_path()
-            if not file_path:
+            params = dialog.get_import_params()
+            if not params.geom_list:
                 return
-            colour = dialog.get_colour()
-            line_weight = dialog.get_line_weight()
-            layers = dialog.get_selected_layers()
-            self.scene.import_dxf(
-                file_path,
-                color=colour,
-                line_weight=line_weight,
-                layers=layers,
-            )
+            # Switch to model space and enter place_import mode
+            self.central_tabs.setCurrentWidget(self.view)
+            self.scene.begin_place_import(params)
 
     def refresh_underlays(self):
         self.scene.refresh_all_underlays()

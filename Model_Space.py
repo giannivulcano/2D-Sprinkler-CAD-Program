@@ -77,6 +77,14 @@ class Model_Space(QGraphicsScene):
         self._grip_item = None                  # item currently being grip-dragged
         self._grip_index: int = -1              # grip handle index
         self._grip_dragging: bool = False
+        # Offset command (Sprint L)
+        self._offset_source = None              # entity selected for offset
+        self._offset_dist: float = 0.0          # distance entered by user
+        self._offset_preview = None             # preview item shown during side-pick
+        # Place-import mode (Sprint L)
+        self._place_import_params = None
+        self._place_import_ghost = None
+        self._place_import_bounds = QRectF(-50, -50, 100, 100)
         # Undo/redo
         self._undo_stack: list[dict] = []
         self._undo_pos: int = -1
@@ -469,8 +477,7 @@ class Model_Space(QGraphicsScene):
             else:
                 self.node_start_pos = None
         # Cancel in-progress construction geometry
-        if mode != "construction_line":
-            self._cline_anchor = None
+        self._cline_anchor = None
         if mode != "polyline" and self._polyline_active is not None:
             # Discard the partial polyline (fewer than 2 committed points)
             if len(self._polyline_active._points) < 2:
@@ -501,9 +508,26 @@ class Model_Space(QGraphicsScene):
         else:
             self.current_template = None
 
+        # Clean up offset preview whenever leaving offset modes
+        if mode not in ("offset", "offset_side"):
+            self._clear_offset_preview()
+            self._offset_source = None
+
+        # Clean up place_import ghost
+        if mode != "place_import":
+            if self._place_import_ghost is not None:
+                if self._place_import_ghost.scene() is self:
+                    self.removeItem(self._place_import_ghost)
+                self._place_import_ghost = None
+
         # Capture current selection when entering move mode from ribbon/keyboard
         if mode == "move" and not self._selected_items:
             self._selected_items = list(self.selectedItems())
+
+        # Clear OSNAP snap trace whenever mode changes
+        self._snap_result = None
+        for v in self.views():
+            v.viewport().update()
 
     # -------------------------------------------------------------------------
     # NODE / PIPE / SPRINKLER MANAGEMENT
@@ -597,6 +621,164 @@ class Model_Space(QGraphicsScene):
 
     # -------------------------------------------------------------------------
     # UNDERLAYS — IMPORT
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PREVIEW-FIRST IMPORT (place_import mode)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def begin_place_import(self, params):
+        """
+        Start the interactive placement of a DXF block after the preview dialog.
+
+        The scene enters 'place_import' mode.  A ghost bounding-box preview
+        follows the cursor.  Clicking commits the placement.
+
+        Parameters
+        ----------
+        params : ImportParams
+            Result from DxfPreviewDialog.get_import_params()
+        """
+        self._place_import_params = params
+        self._place_import_ghost = None
+
+        # Build a bounding rect for the (scaled, base-point-adjusted) geometry
+        if params.geom_list:
+            xs, ys = [], []
+            s = params.scale
+            bx, by = params.base_x, params.base_y
+            for g in params.geom_list:
+                kind = g.get("kind")
+                if kind == "line":
+                    xs += [(g["x1"] - bx) * s, (g["x2"] - bx) * s]
+                    ys += [(g["y1"] - by) * s, (g["y2"] - by) * s]
+                elif kind in ("circle", "arc"):
+                    x0 = (g.get("x", g.get("rx", 0)) - bx) * s
+                    y0 = (g.get("y", g.get("ry", 0)) - by) * s
+                    xs += [x0, x0 + g.get("w", g.get("rw", 0)) * s]
+                    ys += [y0, y0 + g.get("h", g.get("rh", 0)) * s]
+                elif kind == "path_points":
+                    for pt in g.get("points", []):
+                        xs.append((pt[0] - bx) * s)
+                        ys.append((pt[1] - by) * s)
+            if xs and ys:
+                self._place_import_bounds = QRectF(
+                    min(xs), min(ys),
+                    max(xs) - min(xs), max(ys) - min(ys)
+                )
+            else:
+                self._place_import_bounds = QRectF(-50, -50, 100, 100)
+        else:
+            self._place_import_bounds = QRectF(-50, -50, 100, 100)
+
+        self.set_mode("place_import")
+
+    def _update_place_import_ghost(self, pos: QPointF):
+        """Reposition the ghost bounding rect at cursor position."""
+        if self._place_import_ghost is not None:
+            if self._place_import_ghost.scene() is self:
+                self.removeItem(self._place_import_ghost)
+            self._place_import_ghost = None
+
+        r = self._place_import_bounds
+        ghost = QGraphicsRectItem(
+            pos.x() + r.x(), pos.y() + r.y(), r.width(), r.height()
+        )
+        pen = QPen(QColor("#4fa3e0"), 1, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        ghost.setPen(pen)
+        ghost.setBrush(QBrush(QColor(79, 163, 224, 20)))
+        ghost.setZValue(200)
+        self.addItem(ghost)
+        self._place_import_ghost = ghost
+
+    def _commit_place_import(self, insert_pt: QPointF):
+        """Finalize placement: create the underlay group at insert_pt."""
+        if self._place_import_ghost is not None:
+            if self._place_import_ghost.scene() is self:
+                self.removeItem(self._place_import_ghost)
+            self._place_import_ghost = None
+
+        params = self._place_import_params
+        if not params or not params.geom_list:
+            self.set_mode(None)
+            return
+
+        s = params.scale
+        bx, by = params.base_x, params.base_y
+
+        # Transform geometry: shift by base point and apply scale
+        transformed = []
+        for g in params.geom_list:
+            kind = g.get("kind")
+            t = dict(g)
+            if kind == "line":
+                t["x1"] = (g["x1"] - bx) * s
+                t["y1"] = (g["y1"] - by) * s
+                t["x2"] = (g["x2"] - bx) * s
+                t["y2"] = (g["y2"] - by) * s
+            elif kind in ("circle", "arc"):
+                xk = "x" if kind == "circle" else "rx"
+                yk = "y" if kind == "circle" else "ry"
+                wk = "w" if kind == "circle" else "rw"
+                hk = "h" if kind == "circle" else "rh"
+                t[xk] = (g[xk] - bx) * s
+                t[yk] = (g[yk] - by) * s
+                t[wk] = g[wk] * s
+                t[hk] = g[hk] * s
+            elif kind == "ellipse_full":
+                t["pos_cx"] = (g["pos_cx"] - bx) * s
+                t["pos_cy"] = (g["pos_cy"] - by) * s
+                t["x"] = g["x"] * s; t["y"] = g["y"] * s
+                t["w"] = g["w"] * s; t["h"] = g["h"] * s
+            elif kind == "path_points":
+                t["points"] = [((p[0] - bx) * s, (p[1] - by) * s)
+                               for p in g["points"]]
+            elif kind == "text":
+                t["x"] = (g["x"] - bx) * s
+                t["y"] = (g["y"] - by) * s
+            transformed.append(t)
+
+        # Build scene items and group them
+        color = params.color
+        pen = QPen(color, params.line_weight)
+
+        items = []
+        for geom in transformed:
+            item = self._geom_to_item(geom, pen, color)
+            if item is not None:
+                items.append(item)
+
+        if not items:
+            self.set_mode(None)
+            return
+
+        old_method = self.itemIndexMethod()
+        self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
+        for item in items:
+            self.addItem(item)
+        group = self.createItemGroup(items)
+        group.setZValue(-100)
+        group.setPos(insert_pt)
+        group.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        )
+        group.setData(0, "DXF Underlay")
+        all_layers = sorted({g.get("layer", "0") for g in transformed})
+        group.setData(2, all_layers)
+        self.setItemIndexMethod(old_method)
+
+        record = Underlay(
+            type="dxf", path=params.file_path,
+            x=insert_pt.x(), y=insert_pt.y(),
+            colour=color.name(),
+            line_weight=params.line_weight,
+        )
+        self._apply_underlay_display(group, record)
+        self.underlays.append((record, group))
+        self.underlaysChanged.emit()
+        self.push_undo_state()
+        self.set_mode(None)
 
     def import_dxf(self, file_path, color=QColor("white"), line_weight=0,
                    x=0.0, y=0.0, layers=None, _record: Underlay = None):
@@ -1330,12 +1512,9 @@ class Model_Space(QGraphicsScene):
 
         sm = self.scale_manager
 
-        # ── Line / Construction Line ──────────────────────────────────────
-        if self.mode in ("draw_line", "construction_line"):
-            anchor = (self._draw_line_anchor if self.mode == "draw_line"
-                      else self._cline_anchor)
-            if anchor is None:
-                return
+        # ── Line ──────────────────────────────────────────────────────────
+        if self.mode == "draw_line" and self._draw_line_anchor is not None:
+            anchor = self._draw_line_anchor
 
             dlg = QDialog()
             dlg.setWindowTitle("Exact Length & Angle")
@@ -1370,21 +1549,13 @@ class Model_Space(QGraphicsScene):
                 anchor.x() + length * math.cos(angle_rad),
                 anchor.y() + length * math.sin(angle_rad),
             )
-
-            if self.mode == "draw_line":
-                color = self._get_draw_color()
-                item = LineItem(anchor, tip, color, self._draw_lineweight)
-                item.user_layer = self.active_user_layer
-                self.addItem(item)
-                self._draw_lines.append(item)
-                self._draw_line_anchor = None
-                self.preview_pipe.hide()
-            else:   # construction_line
-                cl = ConstructionLine(anchor, tip)
-                self.addItem(cl)
-                self._construction_lines.append(cl)
-                self._cline_anchor = None
-                self.preview_pipe.hide()
+            color = self._get_draw_color()
+            item = LineItem(anchor, tip, color, self._draw_lineweight)
+            item.user_layer = self.active_user_layer
+            self.addItem(item)
+            self._draw_lines.append(item)
+            self._draw_line_anchor = None
+            self.preview_pipe.hide()
             self.push_undo_state()
 
         # ── Rectangle ────────────────────────────────────────────────────
@@ -1430,6 +1601,46 @@ class Model_Space(QGraphicsScene):
                 self.removeItem(self._draw_rect_preview)
                 self._draw_rect_preview = None
             self._draw_rect_anchor = None
+            self.push_undo_state()
+
+        # ── Polyline ─────────────────────────────────────────────────────
+        elif self.mode == "polyline" and self._polyline_active is not None:
+            anchor = self._polyline_active._points[-1]
+
+            dlg = QDialog()
+            dlg.setWindowTitle("Exact Segment Length & Angle")
+            form = QFormLayout()
+            l_spin = QDoubleSpinBox()
+            l_spin.setRange(0.01, 1_000_000)
+            l_spin.setDecimals(3)
+            l_spin.setValue(100)
+            l_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            a_spin = QDoubleSpinBox()
+            a_spin.setRange(-360, 360)
+            a_spin.setDecimals(2)
+            a_spin.setValue(0)
+            a_spin.setSuffix("  °")
+            form.addRow("Length:", l_spin)
+            form.addRow("Angle:", a_spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            outer = QVBoxLayout(dlg)
+            outer.addLayout(form)
+            outer.addWidget(buttons)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            length = l_spin.value()
+            angle_rad = math.radians(a_spin.value())
+            tip = QPointF(
+                anchor.x() + length * math.cos(angle_rad),
+                anchor.y() + length * math.sin(angle_rad),
+            )
+            self._polyline_active.append_point(tip)
             self.push_undo_state()
 
         # ── Circle ───────────────────────────────────────────────────────
@@ -1508,6 +1719,168 @@ class Model_Space(QGraphicsScene):
         if h_count > 0 or v_count > 0:
             self.push_undo_state()
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # OFFSET COMMAND helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _offset_line_intersection(
+        self, p1: QPointF, d1: QPointF, p2: QPointF, d2: QPointF
+    ) -> "QPointF | None":
+        """Return intersection of two infinite lines (p1+t*d1) and (p2+s*d2), or None."""
+        denom = d1.x() * d2.y() - d1.y() * d2.x()
+        if abs(denom) < 1e-10:
+            return None  # parallel
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        t = (dx * d2.y() - dy * d2.x()) / denom
+        return QPointF(p1.x() + t * d1.x(), p1.y() + t * d1.y())
+
+    def _offset_polyline_pts(
+        self, pts: list, signed_dist: float
+    ) -> list:
+        """Return offset polyline points (miter join at corners)."""
+        n = len(pts)
+        if n < 2:
+            return list(pts)
+        # Per-segment left-side unit normals
+        normals = []
+        for i in range(n - 1):
+            dx = pts[i + 1].x() - pts[i].x()
+            dy = pts[i + 1].y() - pts[i].y()
+            seg_len = math.hypot(dx, dy)
+            if seg_len < 1e-10:
+                normals.append(None)
+            else:
+                normals.append((-dy / seg_len, dx / seg_len))
+
+        result = []
+        for i in range(n):
+            if i == 0:
+                nx, ny = normals[0] if normals[0] else (0.0, 0.0)
+                result.append(QPointF(pts[0].x() + signed_dist * nx,
+                                      pts[0].y() + signed_dist * ny))
+            elif i == n - 1:
+                nx, ny = normals[-1] if normals[-1] else (0.0, 0.0)
+                result.append(QPointF(pts[-1].x() + signed_dist * nx,
+                                      pts[-1].y() + signed_dist * ny))
+            else:
+                n1 = normals[i - 1]
+                n2 = normals[i]
+                if n1 is None:
+                    n1 = n2
+                if n2 is None:
+                    n2 = n1
+                # Offset lines: p_prev + t*(pts[i]-pts[i-1]) + d*n1
+                #               pts[i] + s*(pts[i+1]-pts[i]) + d*n2
+                op1 = QPointF(pts[i - 1].x() + signed_dist * n1[0],
+                              pts[i - 1].y() + signed_dist * n1[1])
+                op2 = QPointF(pts[i].x() + signed_dist * n1[0],
+                              pts[i].y() + signed_dist * n1[1])
+                op3 = QPointF(pts[i].x() + signed_dist * n2[0],
+                              pts[i].y() + signed_dist * n2[1])
+                op4 = QPointF(pts[i + 1].x() + signed_dist * n2[0],
+                              pts[i + 1].y() + signed_dist * n2[1])
+                d1 = QPointF(op2.x() - op1.x(), op2.y() - op1.y())
+                d2 = QPointF(op4.x() - op3.x(), op4.y() - op3.y())
+                inter = self._offset_line_intersection(op1, d1, op3, d2)
+                if inter is not None:
+                    result.append(inter)
+                else:
+                    result.append(op2)  # fallback: parallel segments
+        return result
+
+    def _offset_signed_dist(self, source, dist: float, side_pt: QPointF) -> float:
+        """Return +dist or -dist depending on which side of source the cursor is on."""
+        if isinstance(source, LineItem):
+            line = source.line()
+            p1 = source.mapToScene(line.p1())
+            p2 = source.mapToScene(line.p2())
+            dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
+            # Cross product with cursor vector: positive → left of line
+            cross = dx * (side_pt.y() - p1.y()) - dy * (side_pt.x() - p1.x())
+            return dist if cross >= 0 else -dist
+        if isinstance(source, PolylineItem):
+            pts = source._points
+            if len(pts) < 2:
+                return dist
+            p1, p2 = pts[0], pts[1]
+            dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
+            cross = dx * (side_pt.y() - p1.y()) - dy * (side_pt.x() - p1.x())
+            return dist if cross >= 0 else -dist
+        if isinstance(source, CircleItem):
+            cx = source.x() + source.boundingRect().center().x()
+            cy = source.y() + source.boundingRect().center().y()
+            d = math.hypot(side_pt.x() - cx, side_pt.y() - cy)
+            r = source.boundingRect().width() / 2
+            return dist if d >= r else -dist
+        if isinstance(source, RectangleItem):
+            # cursor outside → grow, cursor inside → shrink
+            r = source.mapRectToScene(source.rect())
+            if r.contains(side_pt):
+                return -dist
+            return dist
+        return dist
+
+    def _make_offset_item(self, source, signed_dist: float):
+        """Create and return a new item that is the offset of source, or None."""
+        color = source.pen().color()
+        lw = source.pen().widthF()
+
+        if isinstance(source, LineItem):
+            line = source.line()
+            p1 = source.mapToScene(line.p1())
+            p2 = source.mapToScene(line.p2())
+            dx, dy = p2.x() - p1.x(), p2.y() - p1.y()
+            seg_len = math.hypot(dx, dy)
+            if seg_len < 1e-10:
+                return None
+            nx, ny = -dy / seg_len, dx / seg_len
+            new_p1 = QPointF(p1.x() + signed_dist * nx, p1.y() + signed_dist * ny)
+            new_p2 = QPointF(p2.x() + signed_dist * nx, p2.y() + signed_dist * ny)
+            item = LineItem(new_p1, new_p2, color, lw)
+            item.user_layer = getattr(source, "user_layer", self.active_user_layer)
+            return item
+
+        if isinstance(source, PolylineItem):
+            pts = source._points
+            new_pts = self._offset_polyline_pts(pts, signed_dist)
+            if len(new_pts) < 2:
+                return None
+            item = PolylineItem(new_pts[0], color, lw)
+            for p in new_pts[1:]:
+                item.append_point(p)
+            item.user_layer = getattr(source, "user_layer", self.active_user_layer)
+            return item
+
+        if isinstance(source, CircleItem):
+            r = source.boundingRect().width() / 2
+            new_r = r + signed_dist
+            if new_r <= 0:
+                return None
+            # CircleItem stores center as scene position of its bounding rect centre
+            scene_rect = source.mapRectToScene(source.rect())
+            cx = scene_rect.center().x()
+            cy = scene_rect.center().y()
+            item = CircleItem(QPointF(cx, cy), new_r, color, lw)
+            item.user_layer = getattr(source, "user_layer", self.active_user_layer)
+            return item
+
+        if isinstance(source, RectangleItem):
+            r = source.mapRectToScene(source.rect())
+            new_r = r.adjusted(-signed_dist, -signed_dist, signed_dist, signed_dist)
+            if new_r.width() <= 0 or new_r.height() <= 0:
+                return None
+            item = RectangleItem(new_r.topLeft(), new_r.bottomRight(), color, lw)
+            item.user_layer = getattr(source, "user_layer", self.active_user_layer)
+            return item
+        return None
+
+    def _clear_offset_preview(self):
+        if self._offset_preview is not None:
+            if self._offset_preview.scene() is self:
+                self.removeItem(self._offset_preview)
+            self._offset_preview = None
+
     def project_point_onto_line(self, p1: QPointF, p2: QPointF, p: QPointF) -> QPointF:
         line_dx = p2.x() - p1.x()
         line_dy = p2.y() - p1.y()
@@ -1574,29 +1947,6 @@ class Model_Space(QGraphicsScene):
                 c1 = self._design_area_corner1
                 rect = QRectF(c1, snapped).normalized()
                 self._design_area_rect_item.setRect(rect)
-
-        elif self.mode == "construction_line":
-            self.preview_node.hide()
-            if self._cline_anchor is not None:
-                tip = snapped
-                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                    tip = self._constrain_angle(self._cline_anchor, snapped)
-                self.preview_pipe.setLine(
-                    self._cline_anchor.x(), self._cline_anchor.y(),
-                    tip.x(), tip.y()
-                )
-                self.preview_pipe.show()
-                _dx = tip.x() - self._cline_anchor.x()
-                _dy = tip.y() - self._cline_anchor.y()
-                _len = math.hypot(_dx, _dy)
-                _ang = math.degrees(math.atan2(_dy, _dx))
-                self._draw_dim_hint = (
-                    f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
-                    if sm.is_calibrated else
-                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
-                )
-            else:
-                self.preview_pipe.hide()
 
         elif self.mode == "polyline":
             self.preview_node.hide()
@@ -1668,6 +2018,30 @@ class Model_Space(QGraphicsScene):
                     if sm.is_calibrated else
                     f"R: {r:.0f}px"
                 )
+
+        elif self.mode == "place_import":
+            self.preview_node.hide()
+            self.preview_pipe.hide()
+            self._update_place_import_ghost(snapped)
+
+        elif self.mode == "offset":
+            self.preview_node.hide()
+            self.preview_pipe.hide()
+
+        elif self.mode == "offset_side":
+            self.preview_node.hide()
+            self.preview_pipe.hide()
+            if self._offset_source is not None and self._offset_dist > 0:
+                sd = self._offset_signed_dist(self._offset_source, self._offset_dist, snapped)
+                self._clear_offset_preview()
+                preview = self._make_offset_item(self._offset_source, sd)
+                if preview is not None:
+                    pen = preview.pen()
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                    preview.setPen(pen)
+                    preview.setZValue(10)
+                    self.addItem(preview)
+                    self._offset_preview = preview
 
         elif self.mode in ("sprinkler", "dimension", "paste", "move", "water_supply"):
             self.update_preview_node(snapped)
@@ -1823,32 +2197,80 @@ class Model_Space(QGraphicsScene):
                 self.set_mode(None)
                 return
 
-        elif self.mode == "construction_line":
-            if self._cline_anchor is None:
-                # First click — store anchor, show preview pipe
-                self._cline_anchor = snapped
-            else:
-                # Second click — place the line (apply Ctrl constraint if held)
-                tip = snapped
-                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                    tip = self._constrain_angle(self._cline_anchor, snapped)
-                cl = ConstructionLine(self._cline_anchor, tip)
-                self.addItem(cl)
-                self._construction_lines.append(cl)
-                self._cline_anchor = None   # ready for the next line immediately
-                self.preview_pipe.hide()
-                self.push_undo_state()
-            return  # don't let super() deselect items mid-draw
+        elif self.mode == "place_import":
+            self._commit_place_import(snapped)
+            return
+
+        elif self.mode == "offset":
+            # Select entity to offset
+            from construction_geometry import LineItem, PolylineItem, CircleItem, RectangleItem
+            hit = [i for i in self.items(scene_pos)
+                   if isinstance(i, (LineItem, PolylineItem, CircleItem, RectangleItem))]
+            if not hit:
+                return
+            self._offset_source = hit[0]
+            # Ask for offset distance
+            from PyQt6.QtWidgets import (
+                QDialog, QVBoxLayout, QFormLayout,
+                QDoubleSpinBox, QDialogButtonBox,
+            )
+            dlg = QDialog()
+            dlg.setWindowTitle("Offset Distance")
+            form = QFormLayout()
+            d_spin = QDoubleSpinBox()
+            d_spin.setRange(0.01, 1_000_000)
+            d_spin.setDecimals(3)
+            d_spin.setValue(self._offset_dist if self._offset_dist > 0 else 10.0)
+            sm = self.scale_manager
+            d_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            form.addRow("Distance:", d_spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            outer = QVBoxLayout(dlg)
+            outer.addLayout(form)
+            outer.addWidget(buttons)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self._offset_source = None
+                return
+            self._offset_dist = d_spin.value()
+            self.set_mode("offset_side")
+            return
+
+        elif self.mode == "offset_side":
+            # Click determines which side — commit the offset
+            if self._offset_source is not None and self._offset_dist > 0:
+                sd = self._offset_signed_dist(self._offset_source, self._offset_dist, snapped)
+                self._clear_offset_preview()
+                new_item = self._make_offset_item(self._offset_source, sd)
+                if new_item is not None:
+                    if isinstance(new_item, LineItem):
+                        self.addItem(new_item)
+                        self._draw_lines.append(new_item)
+                    elif isinstance(new_item, PolylineItem):
+                        self.addItem(new_item)
+                        self._polylines.append(new_item)
+                    elif isinstance(new_item, CircleItem):
+                        self.addItem(new_item)
+                        self._draw_circles.append(new_item)
+                    elif isinstance(new_item, RectangleItem):
+                        self.addItem(new_item)
+                        self._draw_rects.append(new_item)
+                    self.push_undo_state()
+            # Stay in offset mode ready for next entity
+            self._offset_source = None
+            self.set_mode("offset")
+            return
 
         elif self.mode == "polyline":
             if self._polyline_active is None:
                 # First click — create the polyline item
-                color = self._draw_color
-                if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
-                    ldef = self._user_layer_manager.get(self.active_user_layer)
-                    if ldef:
-                        color = ldef.color
-                pl = PolylineItem(snapped, color)
+                color = self._get_draw_color()
+                pl = PolylineItem(snapped, color, self._draw_lineweight)
+                pl.user_layer = self.active_user_layer
                 self.addItem(pl)
                 self._polylines.append(pl)
                 self._polyline_active = pl
