@@ -32,6 +32,7 @@ class Model_Space(QGraphicsScene):
     requestPropertyUpdate = pyqtSignal(object)
     cursorMoved = pyqtSignal(str)      # emits formatted "X: …  Y: …" string
     underlaysChanged = pyqtSignal()    # emitted when underlays list changes (for LayerManager)
+    modeChanged = pyqtSignal(str)      # emits mode name for status bar instructions
 
     def __init__(self):
         super().__init__()
@@ -69,6 +70,7 @@ class Model_Space(QGraphicsScene):
         self._draw_circle_preview: "QGraphicsEllipseItem | None" = None
         self._draw_color: str = "#ffffff"       # default white (dark theme)
         self._draw_lineweight: float = 1.0      # cosmetic px
+        self._last_scene_pos: "QPointF | None" = None  # last cursor position for Tab defaults
         # OSNAP (Sprint H)
         self._snap_engine: SnapEngine = SnapEngine()
         self._snap_result: "OsnapResult | None" = None
@@ -442,16 +444,16 @@ class Model_Space(QGraphicsScene):
                 if item in self._draw_circles:
                     self._draw_circles.remove(item)
                 self.removeItem(item)
-        for item in self.selectedItems():
+        for item in selected:
             if isinstance(item, Pipe):
                 self.delete_pipe(item)
-        for item in self.selectedItems():
+        for item in selected:
             if isinstance(item, Node):
                 if item.has_sprinkler():
                     self.remove_sprinkler(item)
                 for pipe in list(item.pipes):
                     self.delete_pipe(pipe)
-        for item in self.selectedItems():
+        for item in selected:
             if isinstance(item, Node):
                 self.remove_node(item)
         self.push_undo_state()
@@ -461,7 +463,7 @@ class Model_Space(QGraphicsScene):
 
     def set_mode(self, mode, template=None):
         self.mode = mode
-        print(f"Mode set to: {self.mode}")
+        self.modeChanged.emit(mode)
         self.preview_node.hide()
         self.preview_pipe.hide()
         self._cal_point1 = None
@@ -1507,6 +1509,10 @@ class Model_Space(QGraphicsScene):
         Open a small dialog to let the user type exact dimensions for the
         current drawing operation (line length+angle, rect W+H, circle radius).
         Called by Model_View.keyPressEvent when Tab is pressed.
+
+        Defaults are computed from the current cursor position relative to
+        the anchor point.  Values are always in mm (1 scene unit = 1 mm
+        when uncalibrated).  Angles follow Y-up convention (0°=right, 90°=up).
         """
         from PyQt6.QtWidgets import (
             QDialog, QVBoxLayout, QFormLayout,
@@ -1514,10 +1520,23 @@ class Model_Space(QGraphicsScene):
         )
 
         sm = self.scale_manager
+        suf = "  mm"   # always mm — 1 scene unit = 1 mm (uncalibrated default)
+        cursor = self._last_scene_pos   # may be None on startup
+
+        def _defaults_from(anchor):
+            """Return (length_mm, angle_deg) from anchor to cursor."""
+            if cursor is None:
+                return 100.0, 0.0
+            dx = cursor.x() - anchor.x()
+            dy = cursor.y() - anchor.y()
+            length = math.hypot(dx, dy)
+            angle = math.degrees(math.atan2(-dy, dx))   # Y-up convention
+            return max(length, 0.01), angle
 
         # ── Line ──────────────────────────────────────────────────────────
         if self.mode == "draw_line" and self._draw_line_anchor is not None:
             anchor = self._draw_line_anchor
+            def_len, def_ang = _defaults_from(anchor)
 
             dlg = QDialog()
             dlg.setWindowTitle("Exact Length & Angle")
@@ -1525,12 +1544,12 @@ class Model_Space(QGraphicsScene):
             l_spin = QDoubleSpinBox()
             l_spin.setRange(0.01, 1_000_000)
             l_spin.setDecimals(3)
-            l_spin.setValue(100)
-            l_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            l_spin.setValue(def_len)
+            l_spin.setSuffix(suf)
             a_spin = QDoubleSpinBox()
             a_spin.setRange(-360, 360)
             a_spin.setDecimals(2)
-            a_spin.setValue(0)
+            a_spin.setValue(def_ang)
             a_spin.setSuffix("  °")
             form.addRow("Length:", l_spin)
             form.addRow("Angle:", a_spin)
@@ -1550,7 +1569,7 @@ class Model_Space(QGraphicsScene):
             angle_rad = math.radians(a_spin.value())
             tip = QPointF(
                 anchor.x() + length * math.cos(angle_rad),
-                anchor.y() + length * math.sin(angle_rad),
+                anchor.y() - length * math.sin(angle_rad),  # Y-up → scene Y-down
             )
             color = self._get_draw_color()
             item = LineItem(anchor, tip, color, self._draw_lineweight)
@@ -1563,19 +1582,24 @@ class Model_Space(QGraphicsScene):
 
         # ── Rectangle ────────────────────────────────────────────────────
         elif self.mode == "draw_rectangle" and self._draw_rect_anchor is not None:
+            anc = self._draw_rect_anchor
+            def_w = abs(cursor.x() - anc.x()) if cursor else 100.0
+            def_h = abs(cursor.y() - anc.y()) if cursor else 100.0
+            def_w = max(def_w, 0.01)
+            def_h = max(def_h, 0.01)
+
             dlg = QDialog()
             dlg.setWindowTitle("Exact Width & Height")
             form = QFormLayout()
-            suf = "" if not sm.is_calibrated else ""
             w_spin = QDoubleSpinBox()
             w_spin.setRange(0.01, 1_000_000)
             w_spin.setDecimals(3)
-            w_spin.setValue(100)
+            w_spin.setValue(def_w)
             w_spin.setSuffix(suf)
             h_spin = QDoubleSpinBox()
             h_spin.setRange(0.01, 1_000_000)
             h_spin.setDecimals(3)
-            h_spin.setValue(100)
+            h_spin.setValue(def_h)
             h_spin.setSuffix(suf)
             form.addRow("Width:", w_spin)
             form.addRow("Height:", h_spin)
@@ -1609,6 +1633,7 @@ class Model_Space(QGraphicsScene):
         # ── Polyline ─────────────────────────────────────────────────────
         elif self.mode == "polyline" and self._polyline_active is not None:
             anchor = self._polyline_active._points[-1]
+            def_len, def_ang = _defaults_from(anchor)
 
             dlg = QDialog()
             dlg.setWindowTitle("Exact Segment Length & Angle")
@@ -1616,12 +1641,12 @@ class Model_Space(QGraphicsScene):
             l_spin = QDoubleSpinBox()
             l_spin.setRange(0.01, 1_000_000)
             l_spin.setDecimals(3)
-            l_spin.setValue(100)
-            l_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            l_spin.setValue(def_len)
+            l_spin.setSuffix(suf)
             a_spin = QDoubleSpinBox()
             a_spin.setRange(-360, 360)
             a_spin.setDecimals(2)
-            a_spin.setValue(0)
+            a_spin.setValue(def_ang)
             a_spin.setSuffix("  °")
             form.addRow("Length:", l_spin)
             form.addRow("Angle:", a_spin)
@@ -1641,20 +1666,27 @@ class Model_Space(QGraphicsScene):
             angle_rad = math.radians(a_spin.value())
             tip = QPointF(
                 anchor.x() + length * math.cos(angle_rad),
-                anchor.y() + length * math.sin(angle_rad),
+                anchor.y() - length * math.sin(angle_rad),  # Y-up → scene Y-down
             )
             self._polyline_active.append_point(tip)
             self.push_undo_state()
 
         # ── Circle ───────────────────────────────────────────────────────
         elif self.mode == "draw_circle" and self._draw_circle_center is not None:
+            center = self._draw_circle_center
+            def_r = 50.0
+            if cursor is not None:
+                def_r = max(math.hypot(cursor.x() - center.x(),
+                                       cursor.y() - center.y()), 0.01)
+
             dlg = QDialog()
             dlg.setWindowTitle("Exact Radius")
             form = QFormLayout()
             r_spin = QDoubleSpinBox()
             r_spin.setRange(0.01, 1_000_000)
             r_spin.setDecimals(3)
-            r_spin.setValue(50)
+            r_spin.setValue(def_r)
+            r_spin.setSuffix(suf)
             form.addRow("Radius:", r_spin)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Ok |
@@ -1910,12 +1942,13 @@ class Model_Space(QGraphicsScene):
 
     def mouseMoveEvent(self, event):
         scene_pos = event.scenePos()
+        self._last_scene_pos = scene_pos
         sm = self.scale_manager
         if sm.is_calibrated:
             coord_str = (f"X: {sm.scene_to_display(scene_pos.x())}  "
-                         f"Y: {sm.scene_to_display(scene_pos.y())}")
+                         f"Y: {sm.scene_to_display(-scene_pos.y())}")
         else:
-            coord_str = f"X: {scene_pos.x():.0f} px  Y: {scene_pos.y():.0f} px"
+            coord_str = f"X: {scene_pos.x():.0f} mm  Y: {-scene_pos.y():.0f} mm"
         self.cursorMoved.emit(coord_str)
 
         snapped = self.get_effective_position(scene_pos)
@@ -1966,11 +1999,11 @@ class Model_Space(QGraphicsScene):
                 _dx = tip.x() - _last.x()
                 _dy = tip.y() - _last.y()
                 _len = math.hypot(_dx, _dy)
-                _ang = math.degrees(math.atan2(_dy, _dx))
+                _ang = math.degrees(math.atan2(-_dy, _dx))
                 self._draw_dim_hint = (
                     f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
                     if sm.is_calibrated else
-                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
+                    f"L: {_len:.0f}mm  A: {_ang:.1f}°"
                 )
 
         elif self.mode == "draw_line":
@@ -1987,11 +2020,11 @@ class Model_Space(QGraphicsScene):
                 _dx = tip.x() - self._draw_line_anchor.x()
                 _dy = tip.y() - self._draw_line_anchor.y()
                 _len = math.hypot(_dx, _dy)
-                _ang = math.degrees(math.atan2(_dy, _dx))
+                _ang = math.degrees(math.atan2(-_dy, _dx))
                 self._draw_dim_hint = (
                     f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
                     if sm.is_calibrated else
-                    f"L: {_len:.0f}px  A: {_ang:.1f}°"
+                    f"L: {_len:.0f}mm  A: {_ang:.1f}°"
                 )
             else:
                 self.preview_pipe.hide()
@@ -2005,7 +2038,7 @@ class Model_Space(QGraphicsScene):
                 self._draw_dim_hint = (
                     f"W: {sm.scene_to_display(rect.width())}  H: {sm.scene_to_display(rect.height())}"
                     if sm.is_calibrated else
-                    f"W: {rect.width():.0f}px  H: {rect.height():.0f}px"
+                    f"W: {rect.width():.0f}mm  H: {rect.height():.0f}mm"
                 )
 
         elif self.mode == "draw_circle":
@@ -2019,7 +2052,7 @@ class Model_Space(QGraphicsScene):
                 self._draw_dim_hint = (
                     f"R: {sm.scene_to_display(r)}"
                     if sm.is_calibrated else
-                    f"R: {r:.0f}px"
+                    f"R: {r:.0f}mm"
                 )
 
         elif self.mode == "place_import":
@@ -2224,7 +2257,7 @@ class Model_Space(QGraphicsScene):
             d_spin.setDecimals(3)
             d_spin.setValue(self._offset_dist if self._offset_dist > 0 else 10.0)
             sm = self.scale_manager
-            d_spin.setSuffix("  px" if not sm.is_calibrated else "")
+            d_spin.setSuffix("  mm")
             form.addRow("Distance:", d_spin)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Ok |
@@ -2276,6 +2309,7 @@ class Model_Space(QGraphicsScene):
                 self.addItem(pl)
                 self._polylines.append(pl)
                 self._polyline_active = pl
+                self.update_preview_node(snapped)
             else:
                 # Subsequent clicks — append vertex (apply Ctrl constraint if held)
                 tip = snapped
@@ -2290,6 +2324,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "draw_line":
             if self._draw_line_anchor is None:
                 self._draw_line_anchor = snapped
+                self.update_preview_node(snapped)
             else:
                 # Place the line (apply Ctrl constraint if held)
                 tip = snapped
@@ -2309,6 +2344,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "draw_rectangle":
             if self._draw_rect_anchor is None:
                 self._draw_rect_anchor = snapped
+                self.update_preview_node(snapped)
                 # Create preview rect
                 preview = QGraphicsRectItem(QRectF(snapped, snapped))
                 preview.setPen(QPen(QColor(self._draw_color), 1, Qt.PenStyle.DashLine))
@@ -2340,6 +2376,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "draw_circle":
             if self._draw_circle_center is None:
                 self._draw_circle_center = snapped
+                self.update_preview_node(snapped)
                 # Create preview circle
                 preview = QGraphicsEllipseItem(snapped.x(), snapped.y(), 0, 0)
                 preview.setPen(QPen(QColor(self._draw_color), 1, Qt.PenStyle.DashLine))

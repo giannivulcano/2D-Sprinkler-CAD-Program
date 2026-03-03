@@ -140,7 +140,7 @@ class ScaleManager:
     def scene_to_display(self, scene_length: float) -> str:
         """Convert a scene distance to a formatted display string."""
         if not self._calibrated:
-            return f"{scene_length:.0f} px"
+            return f"{scene_length:.0f} mm"
         mm = self.scene_to_mm(scene_length)
         return self.format_length(mm)
 

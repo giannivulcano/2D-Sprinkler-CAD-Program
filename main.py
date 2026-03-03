@@ -199,6 +199,7 @@ class MainWindow(QMainWindow):
         self.mode_label = QLabel("Mode: —")
         status_bar.addWidget(self.mode_label)
         self.scene.cursorMoved.connect(self.coord_label.setText)
+        self.scene.modeChanged.connect(self._update_mode_label)
 
         self.init_ribbon()
 
@@ -206,8 +207,19 @@ class MainWindow(QMainWindow):
         self.restore_settings()
 
     def restore_settings(self):
-        self.restoreGeometry(self.settings.value("geometry", b""))
-        self.restoreState(self.settings.value("windowState", b""))
+        geom = self.settings.value("geometry", b"")
+        if geom:
+            self.restoreGeometry(geom)
+        state = self.settings.value("windowState", b"")
+        if state:
+            self.restoreState(state, self._STATE_VERSION)
+        # Restore dock visibility (only if settings exist, otherwise keep defaults)
+        if self.settings.contains("dock/properties"):
+            self.dock.setVisible(self.settings.value("dock/properties", True, type=bool))
+        if self.settings.contains("dock/browser"):
+            self.browser_dock.setVisible(self.settings.value("dock/browser", True, type=bool))
+        if self.settings.contains("dock/hydraulics"):
+            self.hydro_dock.setVisible(self.settings.value("dock/hydraulics", False, type=bool))
 
     def _activate_paper_sheet(self, name: str):
         """Switch the central area to the paper space tab matching *name*."""
@@ -229,9 +241,9 @@ class MainWindow(QMainWindow):
           1. Manage   — file I/O, import, settings, grid, undo/redo, panels
           2. Draw     — geometry tools, style, snap, annotations
           3. Build    — pipe/sprinkler placement, system, library
-          4. Analyze  — hydraulics, export
-          5. Draft    — workspace switching, page setup
-          6. Modify   — edit/transform tools (hidden until items selected)
+          4. Modify   — edit/transform/scale tools (auto-switches on selection)
+          5. Analyze  — hydraulics, export
+          6. Draft    — workspace switching, page setup
 
         Must be called *after* all dock widgets are created so that dock
         visibility toggles can be wired correctly.
@@ -262,8 +274,6 @@ class MainWindow(QMainWindow):
 
         # --- Settings ---
         g_set = manage_page.add_group("Settings")
-        g_set.add_large_button(
-            "Set Scale", _I("scale_icon.svg"), self.set_scale_dialog)
         g_set.add_small_menu_button(
             "Units", _I("info_icon.svg"), self._build_units_menu())
         g_set.add_small_menu_button(
@@ -393,53 +403,7 @@ class MainWindow(QMainWindow):
             "Sprinkler\nManager", _I("sprinkler_icon.svg"),
             self.open_sprinkler_manager)
 
-        # ── Tab 4: Analyze ───────────────────────────────────────────────────
-        analyze_page = self.ribbon.add_page("Analyze")
-
-        # --- Hydraulics ---
-        g_hyd = analyze_page.add_group("Hydraulics")
-        g_hyd.add_large_button(
-            "Run\nHydraulics", _I("hydraulics_icon.svg"),
-            self.run_hydraulics, shortcut="F5")
-        g_hyd.add_large_button(
-            "Clear\nResults", _I("clear_icon.svg"),
-            self.clear_hydraulics)
-
-        # --- Export ---
-        g_exp = analyze_page.add_group("Export")
-        g_exp.add_large_button(
-            "Export PDF", _I("export_icon.svg"),
-            self.hydro_report._export_pdf)
-        g_exp.add_large_button(
-            "Export CSV", _I("report_icon.svg"),
-            self.hydro_report._export_csv)
-
-        # ── Tab 5: Draft ─────────────────────────────────────────────────────
-        draft_page = self.ribbon.add_page("Draft")
-
-        # --- Workspace ---
-        g_ws = draft_page.add_group("Workspace")
-        g_ws.add_large_button(
-            "Model\nSpace",
-            s.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
-            lambda: self.central_tabs.setCurrentIndex(0))
-        g_ws.add_large_button(
-            "Layout 1\nPaper",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
-            lambda: self.central_tabs.setCurrentIndex(1))
-
-        # --- Page ---
-        g_pg = draft_page.add_group("Page")
-        g_pg.add_large_menu_button(
-            "Paper Size",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
-            self._build_paper_size_menu())
-        g_pg.add_large_button(
-            "Title Block",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
-            self.paper_space_widget.edit_title_block)
-
-        # ── Tab 6: Modify (hidden until items are selected) ──────────────────
+        # ── Tab 4: Modify (always visible, auto-switches on selection) ────────
         modify_page = self.ribbon.add_page("Modify")
         self._modify_tab_idx = self.ribbon._tab_bar.count() - 1
 
@@ -471,6 +435,9 @@ class MainWindow(QMainWindow):
         g_xform.add_small_button(
             "Rotate", _I("rotate_icon.svg"),
             lambda: self.scene.rotate_selected_items())
+        g_xform.add_small_button(
+            "Scale", _I("scale_icon.svg"),
+            self.set_scale_dialog)
 
         # --- Delete ---
         g_del = modify_page.add_group("Delete")
@@ -478,9 +445,54 @@ class MainWindow(QMainWindow):
             "Delete", _I("delete_icon.svg"),
             lambda: self.scene.delete_selected_items())
 
-        # Hide the Modify tab by default; show when items are selected
-        self.ribbon._tab_bar.setTabVisible(self._modify_tab_idx, False)
+        # Auto-switch to Modify tab when items are selected
         self.scene.selectionChanged.connect(self._on_selection_changed_modify)
+
+        # ── Tab 5: Analyze ───────────────────────────────────────────────────
+        analyze_page = self.ribbon.add_page("Analyze")
+
+        # --- Hydraulics ---
+        g_hyd = analyze_page.add_group("Hydraulics")
+        g_hyd.add_large_button(
+            "Run\nHydraulics", _I("hydraulics_icon.svg"),
+            self.run_hydraulics, shortcut="F5")
+        g_hyd.add_large_button(
+            "Clear\nResults", _I("clear_icon.svg"),
+            self.clear_hydraulics)
+
+        # --- Export ---
+        g_exp = analyze_page.add_group("Export")
+        g_exp.add_large_button(
+            "Export PDF", _I("export_icon.svg"),
+            self.hydro_report._export_pdf)
+        g_exp.add_large_button(
+            "Export CSV", _I("report_icon.svg"),
+            self.hydro_report._export_csv)
+
+        # ── Tab 6: Draft ─────────────────────────────────────────────────────
+        draft_page = self.ribbon.add_page("Draft")
+
+        # --- Workspace ---
+        g_ws = draft_page.add_group("Workspace")
+        g_ws.add_large_button(
+            "Model\nSpace",
+            s.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
+            lambda: self.central_tabs.setCurrentIndex(0))
+        g_ws.add_large_button(
+            "Layout 1\nPaper",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
+            lambda: self.central_tabs.setCurrentIndex(1))
+
+        # --- Page ---
+        g_pg = draft_page.add_group("Page")
+        g_pg.add_large_menu_button(
+            "Paper Size",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            self._build_paper_size_menu())
+        g_pg.add_large_button(
+            "Title Block",
+            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+            self.paper_space_widget.edit_title_block)
 
     # ── Ribbon helper menu builders ───────────────────────────────────────────
 
@@ -558,12 +570,37 @@ class MainWindow(QMainWindow):
         """Called when the OSNAP ribbon button is toggled (or F3 pressed)."""
         self.scene.toggle_osnap(checked)
 
-    # ── Modify tab visibility (Sprint M) ─────────────────────────────────────
+    # ── Mode label (Sprint N) ────────────────────────────────────────────────
+
+    _MODE_INSTRUCTIONS = {
+        "select":         "Select items to edit",
+        "pipe":           "Click to place first node, then second node",
+        "sprinkler":      "Click a node or pipe to place sprinkler",
+        "draw_line":      "Click first point, then second point (Tab for exact input)",
+        "draw_rectangle": "Click first corner, then opposite corner (Tab for exact input)",
+        "draw_circle":    "Click center, then radius point (Tab for exact input)",
+        "polyline":       "Click to add points, right-click to finish (Tab for exact input)",
+        "dimension":      "Click first point, then second point to place dimension",
+        "text":           "Click to place text",
+        "set_scale":      "Click two known points, then enter real-world distance",
+        "move":           "Click base point, then destination",
+        "offset":         "Click geometry to offset, then enter distance",
+        "offset_side":    "Click the side to offset towards",
+        "design_area":    "Click two corners to define design area",
+        "water_supply":   "Click to place water supply",
+        "paste":          "Click to place pasted items",
+    }
+
+    def _update_mode_label(self, mode: str):
+        text = self._MODE_INSTRUCTIONS.get(mode, mode.replace("_", " ").title())
+        self.mode_label.setText(text)
+
+    # ── Modify tab auto-switch (Sprint N) ──────────────────────────────────
 
     def _on_selection_changed_modify(self):
-        """Show the Modify tab when items are selected, hide otherwise."""
-        has_sel = bool(self.scene.selectedItems())
-        self.ribbon._tab_bar.setTabVisible(self._modify_tab_idx, has_sel)
+        """Auto-switch to the Modify tab when items are selected."""
+        if self.scene.selectedItems():
+            self.ribbon._tab_bar.setCurrentIndex(self._modify_tab_idx)
 
     # ── Array / Multiply (Sprint J) ──────────────────────────────────────────
 
@@ -728,13 +765,14 @@ class MainWindow(QMainWindow):
         self.save_settings()
         super().closeEvent(event)
 
+    _STATE_VERSION = 2  # bump when dock layout changes between sprints
+
     def save_settings(self):
         self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("windowState", self.saveState())
-
-    def restore_settings(self):
-        self.restoreGeometry(self.settings.value("geometry", b""))
-        self.restoreState(self.settings.value("windowState", b""))
+        self.settings.setValue("windowState", self.saveState(self._STATE_VERSION))
+        self.settings.setValue("dock/properties", self.dock.isVisible())
+        self.settings.setValue("dock/browser", self.browser_dock.isVisible())
+        self.settings.setValue("dock/hydraulics", self.hydro_dock.isVisible())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
