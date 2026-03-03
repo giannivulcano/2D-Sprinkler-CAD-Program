@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         g_layer = modify_page.add_group("Layer")
         self._modify_layer_combo = QComboBox()
         self._modify_layer_combo.setMinimumWidth(120)
-        self._modify_layer_combo.addItems(self.user_layer_mgr.layer_names())
+        self._modify_layer_combo.addItems([l.name for l in self.user_layer_mgr.layers])
         self._modify_layer_combo.currentTextChanged.connect(self._assign_layer_to_selection)
         g_layer.layout().addWidget(self._modify_layer_combo)
 
