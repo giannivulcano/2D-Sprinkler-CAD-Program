@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QWidget, QSizePolicy, QScrollArea,
     QMessageBox, QInputDialog,
 )
-from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QFont, QCursor
+from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QFont, QCursor, QPainter
 from PyQt6.QtCore import Qt, QPointF, QRectF, QSizeF, pyqtSignal
 
 try:
@@ -83,7 +83,7 @@ class _PreviewView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent=None):
         super().__init__(scene, parent)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.setRenderHint(self.RenderHint.Antialiasing, False)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
         self.setInteractive(False)
@@ -127,7 +127,8 @@ class _PreviewView(QGraphicsView):
                 self.scene().addItem(self._rb_item)
             elif self._mode == "pick_point":
                 self.point_picked.emit(scene_pos)
-                self.set_mode("pan")
+                # Don't auto-switch to "pan" here — let the signal handler
+                # decide (it may re-enter pick_point for multi-pick flows).
 
     def mouseMoveEvent(self, event):
         if self._pan_start is not None:
@@ -675,7 +676,8 @@ class DxfPreviewDialog(QDialog):
         self._preview_view.point_picked.disconnect()
         self._preview_view.point_picked.connect(self._on_pick2_pt)
 
-    def _on_pick2_pt(self, pt: QPointF):
+    def _on_pick2_pt(self, raw_pt: QPointF):
+        pt = self._snap_to_nearest(raw_pt)
         pen = QPen(QColor("#ff0000"), 2)
         pen.setCosmetic(True)
         s = 8
@@ -706,9 +708,10 @@ class DxfPreviewDialog(QDialog):
                 self._pick_pts[1].x() - self._pick_pts[0].x(),
                 self._pick_pts[1].y() - self._pick_pts[0].y()
             )
-            # Reconnect to base picker
+            # Reconnect to base picker and return to pan
             self._preview_view.point_picked.disconnect()
             self._preview_view.point_picked.connect(self._on_point_picked)
+            self._preview_view.set_mode("pan")
 
             if px_dist < 1.0:
                 self._status_lbl.setText("Points too close — try again.")
@@ -732,6 +735,51 @@ class DxfPreviewDialog(QDialog):
             else:
                 self._status_lbl.setText("Scale pick cancelled.")
 
+    # ── Snap to nearest geometry vertex ──────────────────────────────────────
+
+    def _snap_to_nearest(self, pt: QPointF, tolerance: float = 0.0) -> QPointF:
+        """Snap *pt* to the nearest geometry vertex within tolerance.
+
+        If tolerance is 0, it auto-calculates from the current zoom level.
+        Returns the snapped point, or the original if nothing is close enough.
+        """
+        if tolerance <= 0:
+            # ~15 pixels in scene coordinates
+            vp = self._preview_view
+            p0 = vp.mapToScene(0, 0)
+            p1 = vp.mapToScene(15, 0)
+            tolerance = abs(p1.x() - p0.x())
+            if tolerance < 1e-6:
+                tolerance = 20.0
+
+        best_dist = tolerance
+        best_pt = pt
+
+        for g in self._all_geoms:
+            candidates: list[tuple[float, float]] = []
+            kind = g.get("kind")
+            if kind == "line":
+                candidates.append((g["x1"], g["y1"]))
+                candidates.append((g["x2"], g["y2"]))
+            elif kind in ("circle", "arc"):
+                cx = g.get("x", g.get("rx", 0)) + g.get("w", g.get("rw", 0)) / 2
+                cy = g.get("y", g.get("ry", 0)) + g.get("h", g.get("rh", 0)) / 2
+                candidates.append((cx, cy))
+            elif kind == "path_points":
+                for p in g.get("points", []):
+                    if len(p) >= 2:
+                        candidates.append((p[0], p[1]))
+            elif kind == "text":
+                candidates.append((g.get("x", 0), g.get("y", 0)))
+
+            for cx, cy in candidates:
+                d = math.hypot(cx - pt.x(), cy - pt.y())
+                if d < best_dist:
+                    best_dist = d
+                    best_pt = QPointF(cx, cy)
+
+        return best_pt
+
     # ── Base point ────────────────────────────────────────────────────────────
 
     def _start_pick_base(self):
@@ -740,8 +788,9 @@ class DxfPreviewDialog(QDialog):
         self._preview_view.set_mode("pick_point")
         self._status_lbl.setText("Click the base / insertion point on the preview…")
 
-    def _on_point_picked(self, pt: QPointF):
+    def _on_point_picked(self, raw_pt: QPointF):
         """Store the picked point as the DXF base point."""
+        pt = self._snap_to_nearest(raw_pt)
         # The preview is in the same coordinate space as the raw DXF geometry
         self._base_x_spin.blockSignals(True)
         self._base_y_spin.blockSignals(True)

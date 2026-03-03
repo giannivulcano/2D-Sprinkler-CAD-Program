@@ -101,7 +101,7 @@ class Model_Space(QGraphicsScene):
         self.preview_pipe = QGraphicsLineItem()
         pen = QPen(Qt.GlobalColor.darkGray, 2, Qt.PenStyle.DashLine)
         self.preview_pipe.setPen(pen)
-        self.preview_pipe.setZValue(5)
+        self.preview_pipe.setZValue(200)
         self.addItem(self.preview_pipe)
         self.preview_pipe.hide()
 
@@ -109,7 +109,7 @@ class Model_Space(QGraphicsScene):
         self.preview_node = QGraphicsEllipseItem(0, 0, 10, 10)
         self.preview_node.setBrush(QBrush(QColor(0, 0, 255, 100)))
         self.preview_node.setPen(QPen(Qt.GlobalColor.blue))
-        self.preview_node.setZValue(10)
+        self.preview_node.setZValue(200)
         self.addItem(self.preview_node)
         bounds = self.preview_node.boundingRect()
         self.preview_node.setTransformOriginPoint(bounds.center())
@@ -2039,7 +2039,7 @@ class Model_Space(QGraphicsScene):
                     pen = preview.pen()
                     pen.setStyle(Qt.PenStyle.DashLine)
                     preview.setPen(pen)
-                    preview.setZValue(10)
+                    preview.setZValue(200)
                     self.addItem(preview)
                     self._offset_preview = preview
 
@@ -2203,7 +2203,6 @@ class Model_Space(QGraphicsScene):
 
         elif self.mode == "offset":
             # Select entity to offset
-            from construction_geometry import LineItem, PolylineItem, CircleItem, RectangleItem
             hit = [i for i in self.items(scene_pos)
                    if isinstance(i, (LineItem, PolylineItem, CircleItem, RectangleItem))]
             if not hit:
