@@ -635,3 +635,106 @@ class CircleItem(QGraphicsEllipseItem):
         stroker = QPainterPathStroker()
         stroker.setWidth(_scene_hit_width(self))
         return stroker.createStroke(path)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ArcItem
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ArcItem(QGraphicsPathItem):
+    """
+    A circular arc defined by centre, radius, start angle and span angle.
+    Angles are in degrees, measured counter-clockwise from the +X axis
+    (Qt convention: positive span = CCW, angles in 1/16ths internally but
+    we use QPainterPath.arcTo which takes plain degrees).
+    """
+
+    def __init__(self, center: QPointF, radius: float,
+                 start_deg: float, span_deg: float,
+                 color: str = "#ffffff", lineweight: float = 1.0):
+        super().__init__()
+        self._center = QPointF(center)
+        self._radius = max(radius, 0.01)
+        self._start_deg = start_deg
+        self._span_deg = span_deg
+        self.user_layer: str = "0"
+        pen = QPen(QColor(color), lineweight)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.setFlags(
+            self.GraphicsItemFlag.ItemIsSelectable |
+            self.GraphicsItemFlag.ItemIsMovable
+        )
+        self._rebuild_path()
+
+    def _rebuild_path(self):
+        cx, cy, r = self._center.x(), self._center.y(), self._radius
+        path = QPainterPath()
+        rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+        path.arcMoveTo(rect, self._start_deg)
+        path.arcTo(rect, self._start_deg, self._span_deg)
+        self.setPath(path)
+
+    # ── Serialisation ─────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        return {
+            "type":       "arc",
+            "cx":         self._center.x(),
+            "cy":         self._center.y(),
+            "radius":     self._radius,
+            "start_deg":  self._start_deg,
+            "span_deg":   self._span_deg,
+            "color":      self.pen().color().name(),
+            "lineweight": self.pen().widthF(),
+            "user_layer": self.user_layer,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ArcItem":
+        center = QPointF(data["cx"], data["cy"])
+        obj = cls(center, data["radius"], data["start_deg"], data["span_deg"],
+                  data.get("color", "#ffffff"), data.get("lineweight", 1.0))
+        obj.user_layer = data.get("user_layer", "0")
+        return obj
+
+    # ── Grip protocol ─────────────────────────────────────────────────────────
+
+    def grip_points(self) -> list[QPointF]:
+        cx, cy, r = self._center.x(), self._center.y(), self._radius
+        sa = math.radians(self._start_deg)
+        ea = math.radians(self._start_deg + self._span_deg)
+        return [
+            QPointF(cx, cy),                                    # 0 centre
+            QPointF(cx + r * math.cos(sa), cy - r * math.sin(sa)),  # 1 start
+            QPointF(cx + r * math.cos(ea), cy - r * math.sin(ea)),  # 2 end
+        ]
+
+    def apply_grip(self, index: int, pos: QPointF):
+        if index == 0:
+            self._center = pos
+        elif index == 1:
+            # Move start point — change radius and start angle
+            dx = pos.x() - self._center.x()
+            dy = pos.y() - self._center.y()
+            self._radius = max(math.hypot(dx, dy), 0.01)
+            self._start_deg = math.degrees(math.atan2(-dy, dx))
+        elif index == 2:
+            # Move end point — change span angle
+            dx = pos.x() - self._center.x()
+            dy = pos.y() - self._center.y()
+            end_deg = math.degrees(math.atan2(-dy, dx))
+            self._span_deg = (end_deg - self._start_deg) % 360
+            if self._span_deg == 0:
+                self._span_deg = 360
+        self._rebuild_path()
+
+    def translate(self, dx: float, dy: float):
+        self._center = QPointF(self._center.x() + dx, self._center.y() + dy)
+        self._rebuild_path()
+
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker()
+        stroker.setWidth(_scene_hit_width(self))
+        return stroker.createStroke(self.path())

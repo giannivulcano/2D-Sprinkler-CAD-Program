@@ -166,7 +166,7 @@ class RibbonGroup(QWidget):
         self._small_count = 0
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(4, 3, 8, 0)
+        outer.setContentsMargins(4, 2, 4, 0)
         outer.setSpacing(0)
 
         # Row that holds large buttons and small-button column stacks
@@ -191,7 +191,7 @@ class RibbonGroup(QWidget):
         f = QFont()
         f.setPointSizeF(9.0)
         lbl.setFont(f)
-        lbl.setStyleSheet(f"color: {_t.text_primary}; padding: 1px 0 2px 0;")
+        lbl.setStyleSheet(f"color: {_t.text_primary}; padding: 1px 0 1px 0;")
         outer.addWidget(lbl)
 
     # ── Internal helpers ─────────────────────────────────────────────────────

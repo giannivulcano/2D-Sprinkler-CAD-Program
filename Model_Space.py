@@ -19,7 +19,7 @@ from underlay_context_menu import UnderlayContextMenu
 from dxf_import_worker import DxfImportWorker
 from water_supply import WaterSupply
 from construction_geometry import (
-    ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem,
+    ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem, ArcItem,
 )
 from snap_engine import SnapEngine, OsnapResult
 import os
@@ -71,6 +71,14 @@ class Model_Space(QGraphicsScene):
         self._draw_color: str = "#ffffff"       # default white (dark theme)
         self._draw_lineweight: float = 1.0      # cosmetic px
         self._last_scene_pos: "QPointF | None" = None  # last cursor position for Tab defaults
+        # Arc drawing (3-click: centre, start point, end point)
+        self._draw_arcs: list[ArcItem] = []
+        self._draw_arc_center: "QPointF | None" = None
+        self._draw_arc_radius: float = 0.0
+        self._draw_arc_start_deg: float = 0.0
+        self._draw_arc_step: int = 0  # 0=awaiting centre, 1=awaiting start, 2=awaiting end
+        self._draw_arc_radius_line: "QGraphicsLineItem | None" = None
+        self._draw_arc_preview: "QGraphicsPathItem | None" = None
         # OSNAP (Sprint H)
         self._snap_engine: SnapEngine = SnapEngine()
         self._snap_result: "OsnapResult | None" = None
@@ -201,6 +209,7 @@ class Model_Space(QGraphicsScene):
         draw_lines_data = [l.to_dict() for l in self._draw_lines]
         draw_rects_data = [r.to_dict() for r in self._draw_rects]
         draw_circles_data = [c.to_dict() for c in self._draw_circles]
+        draw_arcs_data = [a.to_dict() for a in self._draw_arcs]
 
         # --- Assemble and write ---
         payload = {
@@ -217,6 +226,7 @@ class Model_Space(QGraphicsScene):
             "draw_lines":          draw_lines_data,
             "draw_rectangles":     draw_rects_data,
             "draw_circles":        draw_circles_data,
+            "draw_arcs":           draw_arcs_data,
         }
         try:
             with open(filename, "w") as f:
@@ -345,6 +355,12 @@ class Model_Space(QGraphicsScene):
             self.addItem(item)
             self._draw_circles.append(item)
 
+        # --- Draw arcs ---
+        for entry in payload.get("draw_arcs", []):
+            item = ArcItem.from_dict(entry)
+            self.addItem(item)
+            self._draw_arcs.append(item)
+
         # Start fresh undo history with the loaded state
         self._undo_stack = []
         self._undo_pos = -1
@@ -366,11 +382,18 @@ class Model_Space(QGraphicsScene):
         self._draw_lines = []
         self._draw_rects = []
         self._draw_circles = []
+        self._draw_arcs = []
         self._draw_line_anchor = None
         self._draw_rect_anchor = None
         self._draw_circle_center = None
         self._draw_rect_preview = None
         self._draw_circle_preview = None
+        self._draw_arc_center = None
+        self._draw_arc_radius = 0.0
+        self._draw_arc_start_deg = 0.0
+        self._draw_arc_step = 0
+        self._draw_arc_radius_line = None
+        self._draw_arc_preview = None
         self.clear()
         self.init_preview_node()
         self.init_preview_pipe()
@@ -445,6 +468,10 @@ class Model_Space(QGraphicsScene):
                 if item in self._draw_circles:
                     self._draw_circles.remove(item)
                 self.removeItem(item)
+            elif isinstance(item, ArcItem):
+                if item in self._draw_arcs:
+                    self._draw_arcs.remove(item)
+                self.removeItem(item)
         for item in selected:
             if isinstance(item, Pipe):
                 self.delete_pipe(item)
@@ -507,6 +534,19 @@ class Model_Space(QGraphicsScene):
                 if self._draw_circle_preview.scene() is self:
                     self.removeItem(self._draw_circle_preview)
                 self._draw_circle_preview = None
+        if mode != "draw_arc":
+            self._draw_arc_center = None
+            self._draw_arc_radius = 0.0
+            self._draw_arc_start_deg = 0.0
+            self._draw_arc_step = 0
+            if self._draw_arc_radius_line is not None:
+                if self._draw_arc_radius_line.scene() is self:
+                    self.removeItem(self._draw_arc_radius_line)
+                self._draw_arc_radius_line = None
+            if self._draw_arc_preview is not None:
+                if self._draw_arc_preview.scene() is self:
+                    self.removeItem(self._draw_arc_preview)
+                self._draw_arc_preview = None
         if mode in ("sprinkler", "pipe", "set_scale"):
             self.current_template = template
             if template:
@@ -1166,6 +1206,7 @@ class Model_Space(QGraphicsScene):
             "draw_lines":         [l.to_dict()  for l in self._draw_lines],
             "draw_rectangles":    [r.to_dict()  for r in self._draw_rects],
             "draw_circles":       [c.to_dict()  for c in self._draw_circles],
+            "draw_arcs":          [a.to_dict()  for a in self._draw_arcs],
         }
 
     def _restore_network(self, state: dict):
@@ -1275,6 +1316,11 @@ class Model_Space(QGraphicsScene):
                     self.removeItem(item)
             self._draw_circles.clear()
 
+            for item in list(self._draw_arcs):
+                if item.scene() is self:
+                    self.removeItem(item)
+            self._draw_arcs.clear()
+
             # Restore from snapshot
             for d in state.get("construction_lines", []):
                 cl = ConstructionLine.from_dict(d)
@@ -1300,6 +1346,11 @@ class Model_Space(QGraphicsScene):
                 ci = CircleItem.from_dict(d)
                 self.addItem(ci)
                 self._draw_circles.append(ci)
+
+            for d in state.get("draw_arcs", []):
+                ai = ArcItem.from_dict(d)
+                self.addItem(ai)
+                self._draw_arcs.append(ai)
 
         finally:
             self._in_undo_restore = False
@@ -1855,6 +1906,10 @@ class Model_Space(QGraphicsScene):
             if r.contains(side_pt):
                 return -dist
             return dist
+        if isinstance(source, ArcItem):
+            cx, cy = source._center.x(), source._center.y()
+            d = math.hypot(side_pt.x() - cx, side_pt.y() - cy)
+            return dist if d >= source._radius else -dist
         return dist
 
     def _make_offset_item(self, source, signed_dist: float):
@@ -1907,6 +1962,15 @@ class Model_Space(QGraphicsScene):
             if new_r.width() <= 0 or new_r.height() <= 0:
                 return None
             item = RectangleItem(new_r.topLeft(), new_r.bottomRight(), color, lw)
+            item.user_layer = getattr(source, "user_layer", self.active_user_layer)
+            return item
+
+        if isinstance(source, ArcItem):
+            new_r = source._radius + signed_dist
+            if new_r <= 0:
+                return None
+            item = ArcItem(source._center, new_r,
+                           source._start_deg, source._span_deg, color, lw)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
             return item
         return None
@@ -1986,7 +2050,10 @@ class Model_Space(QGraphicsScene):
                 self._design_area_rect_item.setRect(rect)
 
         elif self.mode == "polyline":
-            self.preview_node.hide()
+            if self._polyline_active is None:
+                self.update_preview_node(snapped)   # cursor preview before first click
+            else:
+                self.preview_node.hide()
             self.preview_pipe.hide()
             if self._polyline_active is not None:
                 tip = snapped
@@ -2008,7 +2075,8 @@ class Model_Space(QGraphicsScene):
                 )
 
         elif self.mode == "draw_line":
-            self.preview_node.hide()
+            if self._draw_line_anchor is None:
+                self.update_preview_node(snapped)   # cursor preview before first click
             if self._draw_line_anchor is not None:
                 tip = snapped
                 if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -2031,7 +2099,10 @@ class Model_Space(QGraphicsScene):
                 self.preview_pipe.hide()
 
         elif self.mode == "draw_rectangle":
-            self.preview_node.hide()
+            if self._draw_rect_anchor is None:
+                self.update_preview_node(snapped)   # cursor preview before first click
+            else:
+                self.preview_node.hide()
             self.preview_pipe.hide()
             if self._draw_rect_anchor is not None and self._draw_rect_preview is not None:
                 rect = QRectF(self._draw_rect_anchor, snapped).normalized()
@@ -2043,7 +2114,10 @@ class Model_Space(QGraphicsScene):
                 )
 
         elif self.mode == "draw_circle":
-            self.preview_node.hide()
+            if self._draw_circle_center is None:
+                self.update_preview_node(snapped)   # cursor preview before first click
+            else:
+                self.preview_node.hide()
             self.preview_pipe.hide()
             if self._draw_circle_center is not None and self._draw_circle_preview is not None:
                 r = math.hypot(snapped.x() - self._draw_circle_center.x(),
@@ -2055,6 +2129,49 @@ class Model_Space(QGraphicsScene):
                     if sm.is_calibrated else
                     f"R: {r:.0f}mm"
                 )
+
+        elif self.mode == "draw_arc":
+            self.preview_pipe.hide()
+            if self._draw_arc_step == 0:
+                # Before first click — show cursor preview
+                self.update_preview_node(snapped)
+            elif self._draw_arc_step == 1:
+                # After centre click — update radius line to cursor
+                self.preview_node.hide()
+                if self._draw_arc_radius_line is not None:
+                    cx = self._draw_arc_center.x()
+                    cy = self._draw_arc_center.y()
+                    self._draw_arc_radius_line.setLine(cx, cy,
+                                                        snapped.x(), snapped.y())
+                    r = math.hypot(snapped.x() - cx, snapped.y() - cy)
+                    self._draw_dim_hint = (
+                        f"R: {sm.scene_to_display(r)}"
+                        if sm.is_calibrated else
+                        f"R: {r:.0f}mm"
+                    )
+            elif self._draw_arc_step == 2:
+                # After start click — update arc preview to cursor angle
+                self.preview_node.hide()
+                if self._draw_arc_preview is not None:
+                    cx = self._draw_arc_center.x()
+                    cy = self._draw_arc_center.y()
+                    r = self._draw_arc_radius
+                    end_deg = math.degrees(
+                        math.atan2(-(snapped.y() - cy), snapped.x() - cx)
+                    )
+                    span = end_deg - self._draw_arc_start_deg
+                    if span <= 0:
+                        span += 360.0
+                    path = QPainterPath()
+                    rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+                    path.arcMoveTo(rect, self._draw_arc_start_deg)
+                    path.arcTo(rect, self._draw_arc_start_deg, span)
+                    self._draw_arc_preview.setPath(path)
+                    self._draw_dim_hint = f"Span: {span:.1f}\u00b0"
+
+        elif self.mode == "text":
+            self.update_preview_node(snapped)
+            self.preview_pipe.hide()
 
         elif self.mode == "place_import":
             self.preview_node.hide()
@@ -2188,6 +2305,80 @@ class Model_Space(QGraphicsScene):
                 self.dimension_start = None
                 self.push_undo_state()
 
+        elif self.mode == "text":
+            note = NoteAnnotation(text="Text", x=snapped.x(), y=snapped.y())
+            note.user_layer = self.active_user_layer
+            note.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextEditorInteraction)
+            self.addItem(note)
+            self.annotations.notes.append(note)
+            self.requestPropertyUpdate.emit(note)
+            self.push_undo_state()
+
+        elif self.mode == "draw_arc":
+            if self._draw_arc_step == 0:
+                # Click 1 — set centre
+                self._draw_arc_center = snapped
+                self._draw_arc_step = 1
+                self.update_preview_node(snapped)
+                # Create radius preview line (centre → cursor)
+                line = QGraphicsLineItem(snapped.x(), snapped.y(),
+                                         snapped.x(), snapped.y())
+                line.setPen(QPen(QColor(self._draw_color), 1,
+                                 Qt.PenStyle.DashLine))
+                line.setZValue(200)
+                self.addItem(line)
+                self._draw_arc_radius_line = line
+            elif self._draw_arc_step == 1:
+                # Click 2 — set start point (defines radius + start angle)
+                cx, cy = self._draw_arc_center.x(), self._draw_arc_center.y()
+                r = math.hypot(snapped.x() - cx, snapped.y() - cy)
+                if r < 0.01:
+                    return
+                self._draw_arc_radius = r
+                self._draw_arc_start_deg = math.degrees(
+                    math.atan2(-(snapped.y() - cy), snapped.x() - cx)
+                )
+                self._draw_arc_step = 2
+                # Remove radius line, create arc preview path
+                if self._draw_arc_radius_line is not None:
+                    self.removeItem(self._draw_arc_radius_line)
+                    self._draw_arc_radius_line = None
+                preview = QGraphicsPathItem()
+                preview.setPen(QPen(QColor(self._draw_color), 1,
+                                    Qt.PenStyle.DashLine))
+                preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                preview.setZValue(200)
+                self.addItem(preview)
+                self._draw_arc_preview = preview
+            elif self._draw_arc_step == 2:
+                # Click 3 — set end point → commit arc
+                cx, cy = self._draw_arc_center.x(), self._draw_arc_center.y()
+                end_deg = math.degrees(
+                    math.atan2(-(snapped.y() - cy), snapped.x() - cx)
+                )
+                span = end_deg - self._draw_arc_start_deg
+                # Normalise span to positive CCW direction
+                if span <= 0:
+                    span += 360.0
+                color = self._get_draw_color()
+                lw = self._draw_lineweight
+                item = ArcItem(self._draw_arc_center, self._draw_arc_radius,
+                               self._draw_arc_start_deg, span, color, lw)
+                item.user_layer = self.active_user_layer
+                self.addItem(item)
+                self._draw_arcs.append(item)
+                # Clean up previews
+                if self._draw_arc_preview is not None:
+                    self.removeItem(self._draw_arc_preview)
+                    self._draw_arc_preview = None
+                self._draw_arc_center = None
+                self._draw_arc_radius = 0.0
+                self._draw_arc_start_deg = 0.0
+                self._draw_arc_step = 0
+                self.push_undo_state()
+            return
+
         elif self.mode == "water_supply":
             # Place (or replace) the water supply node at the clicked position
             if self.water_supply_node is not None:
@@ -2248,7 +2439,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "offset":
             # Select entity to offset
             hit = [i for i in self.items(scene_pos)
-                   if isinstance(i, (LineItem, PolylineItem, CircleItem, RectangleItem))]
+                   if isinstance(i, (LineItem, PolylineItem, CircleItem, RectangleItem, ArcItem))]
             if not hit:
                 return
             self._offset_source = hit[0]
@@ -2302,6 +2493,9 @@ class Model_Space(QGraphicsScene):
                     elif isinstance(new_item, RectangleItem):
                         self.addItem(new_item)
                         self._draw_rects.append(new_item)
+                    elif isinstance(new_item, ArcItem):
+                        self.addItem(new_item)
+                        self._draw_arcs.append(new_item)
                     self.push_undo_state()
             # Stay in offset mode ready for next entity
             self._offset_source = None
@@ -2567,6 +2761,13 @@ class Model_Space(QGraphicsScene):
                 self.addItem(item)
                 self._draw_circles.append(item)
 
+            elif obj_type == "arc":
+                item = ArcItem.from_dict(obj)
+                item.translate(offset.x(), offset.y())
+                item.user_layer = self.active_user_layer
+                self.addItem(item)
+                self._draw_arcs.append(item)
+
             elif obj_type == "polyline":
                 item = PolylineItem.from_dict(obj)
                 item.translate(offset.x(), offset.y())
@@ -2592,6 +2793,8 @@ class Model_Space(QGraphicsScene):
                         return CircleItem.from_dict(d)
                     elif t == "polyline":
                         return PolylineItem.from_dict(d)
+                    elif t == "arc":
+                        return ArcItem.from_dict(d)
                     elif t == "construction_line":
                         return ConstructionLine.from_dict(d)
                     elif t == "block_item":
@@ -2828,7 +3031,7 @@ class Model_Space(QGraphicsScene):
                 item.setPos(nx, ny)
                 item.fitting.update()
             elif isinstance(item, (LineItem, PolylineItem, RectangleItem,
-                                   CircleItem, ConstructionLine)):
+                                   CircleItem, ArcItem, ConstructionLine)):
                 if hasattr(item, '_pt1') and hasattr(item, '_pt2'):
                     # LineItem or ConstructionLine
                     for attr in ('_pt1', '_pt2'):
@@ -2878,6 +3081,14 @@ class Model_Space(QGraphicsScene):
                     item.setRect(QRectF(
                         QPointF(min(xs_r), min(ys_r)),
                         QPointF(max(xs_r), max(ys_r))))
+                elif isinstance(item, ArcItem):
+                    ox = item._center.x() - cx
+                    oy = item._center.y() - cy
+                    item._center = QPointF(
+                        cx + ox * cos_a - oy * sin_a,
+                        cy + ox * sin_a + oy * cos_a)
+                    item._start_deg += angle  # rotate the arc angles too
+                    item._rebuild_path()
         self.push_undo_state()
 
     # -------------------------------------------------------------------------

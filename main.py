@@ -3,7 +3,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
-                              QTabWidget, QMenu, QStyle, QWidget, QColorDialog)
+                              QTabWidget, QMenu, QStyle, QWidget, QColorDialog,
+                              QComboBox)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap
 from PyQt6.QtCore import Qt, QSettings, QSize
 from Model_Space import Model_Space
@@ -330,7 +331,10 @@ class MainWindow(QMainWindow):
             "Polyline", _I("polyline_icon.svg"),
             lambda: self.scene.set_mode("polyline"))
         g_geom.add_large_button(
-            "Grid\nLines", _I("gridline_icon.svg"),
+            "Arc", _I("arc_icon.svg"),
+            lambda: self.scene.set_mode("draw_arc"))
+        g_geom.add_large_button(
+            "Gridlines", _I("gridline_icon.svg"),
             self._place_grid_lines)
 
         # --- Style ---
@@ -342,6 +346,21 @@ class MainWindow(QMainWindow):
             "LW 1.00",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogListView),
             self._build_lineweight_menu())
+
+        # --- Constraints (placeholder — geometric constraints like AutoCAD) ---
+        g_const = draw_page.add_group("Constraints")
+        g_const.add_small_button(
+            "Parallel",
+            s.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+            None)
+        g_const.add_small_button(
+            "Perpendicular",
+            s.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
+            None)
+        g_const.add_small_button(
+            "Coincident",
+            s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
+            None)
 
         # --- Snap ---
         g_snap = draw_page.add_group("Snap")
@@ -408,6 +427,9 @@ class MainWindow(QMainWindow):
         g_medit = modify_page.add_group("Edit")
         g_medit.add_large_button("Undo", _I("undo_icon.svg"), self.scene.undo)
         g_medit.add_large_button("Redo", _I("redo_icon.svg"), self.scene.redo)
+        g_medit.add_large_button(
+            "Delete", _I("delete_icon.svg"),
+            lambda: self.scene.delete_selected_items())
         g_medit.add_small_button(
             "Cut", _I("cut_icon.svg"),
             lambda: (self.scene.copy_selected_items(), self.scene.delete_selected_items()))
@@ -417,9 +439,14 @@ class MainWindow(QMainWindow):
         g_medit.add_small_button(
             "Paste", _I("paste_icon.svg"),
             lambda: self.scene.paste_items())
-        g_medit.add_small_button(
-            "Delete", _I("delete_icon.svg"),
-            lambda: self.scene.delete_selected_items())
+
+        # --- Layer ---
+        g_layer = modify_page.add_group("Layer")
+        self._modify_layer_combo = QComboBox()
+        self._modify_layer_combo.setMinimumWidth(120)
+        self._modify_layer_combo.addItems(self.user_layer_mgr.layer_names())
+        self._modify_layer_combo.currentTextChanged.connect(self._assign_layer_to_selection)
+        g_layer.layout().addWidget(self._modify_layer_combo)
 
         # --- Transform ---
         g_xform = modify_page.add_group("Transform")
@@ -585,6 +612,7 @@ class MainWindow(QMainWindow):
         "draw_line":      "Click first point, then second point (Tab for exact input)",
         "draw_rectangle": "Click first corner, then opposite corner (Tab for exact input)",
         "draw_circle":    "Click center, then radius point (Tab for exact input)",
+        "draw_arc":       "Click center, then start angle, then end angle",
         "polyline":       "Click to add points, right-click to finish (Tab for exact input)",
         "dimension":      "Click first point, then second point to place dimension",
         "text":           "Click to place text",
@@ -603,14 +631,30 @@ class MainWindow(QMainWindow):
 
     # ── Modify tab auto-switch (Sprint N) ──────────────────────────────────
 
-    _DRAW_MODES = {"draw_line", "draw_rectangle", "draw_circle", "polyline",
-                    "dimension", "text", "pipe", "sprinkler", "water_supply",
-                    "design_area", "set_scale", "offset", "offset_side"}
+    _DRAW_MODES = {"draw_line", "draw_rectangle", "draw_circle", "draw_arc",
+                    "polyline", "dimension", "text", "pipe", "sprinkler",
+                    "water_supply", "design_area", "set_scale", "offset",
+                    "offset_side"}
 
     def _on_selection_changed_modify(self):
         """Auto-switch to Modify tab when items are selected (unless drawing)."""
         if self.scene.selectedItems() and self.scene.mode not in self._DRAW_MODES:
             self.ribbon._tab_bar.setCurrentIndex(self._modify_tab_idx)
+            # Update layer combo to show selected item's layer
+            sel = self.scene.selectedItems()
+            if sel and hasattr(sel[0], "user_layer"):
+                layer = getattr(sel[0], "user_layer", "0")
+                idx = self._modify_layer_combo.findText(layer)
+                if idx >= 0:
+                    self._modify_layer_combo.blockSignals(True)
+                    self._modify_layer_combo.setCurrentIndex(idx)
+                    self._modify_layer_combo.blockSignals(False)
+
+    def _assign_layer_to_selection(self, layer_name: str):
+        """Assign a user layer to all selected items."""
+        for item in self.scene.selectedItems():
+            if hasattr(item, "user_layer"):
+                item.user_layer = layer_name
 
     # ── Array / Multiply (Sprint J) ──────────────────────────────────────────
 
