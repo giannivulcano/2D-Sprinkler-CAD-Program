@@ -87,6 +87,7 @@ class Model_Space(QGraphicsScene):
         self._snap_result: "OsnapResult | None" = None
         self._osnap_enabled: bool = True
         self._snap_angle_deg: float = 45.0       # Ctrl-snap angle increment (degrees)
+        self._project_info: dict = {}            # project metadata (name, address, etc.)
         # Grip editing (Sprint I)
         self._grip_item = None                  # item currently being grip-dragged
         self._grip_index: int = -1              # grip handle index
@@ -219,6 +220,7 @@ class Model_Space(QGraphicsScene):
         # --- Assemble and write ---
         payload = {
             "version":             self.SAVE_VERSION,
+            "project_info":        self._project_info,
             "scale":               self.scale_manager.to_dict(),
             "user_layers":         layers_data,
             "nodes":               nodes_data,
@@ -250,6 +252,7 @@ class Model_Space(QGraphicsScene):
 
         # --- Scale ---
         if "scale" in payload:
+            self._project_info = payload.get("project_info", {})
             self.scale_manager = ScaleManager.from_dict(payload["scale"])
         else:
             self.scale_manager = ScaleManager()
@@ -420,25 +423,23 @@ class Model_Space(QGraphicsScene):
     # SCENE MANAGEMENT
 
     def draw_origin(self):
-        pen = QPen(Qt.GlobalColor.black)
-        pen.setWidth(1)
-        size = 10
+        """Draw a small white cross at the origin — non-selectable, non-movable."""
+        pen = QPen(QColor("#ffffff"))
+        pen.setWidthF(1.5)
+        pen.setCosmetic(True)
+        size = 12
         h_line = QGraphicsLineItem(-size, 0, size, 0)
         v_line = QGraphicsLineItem(0, -size, 0, size)
         h_line.setPen(pen)
         v_line.setPen(pen)
+        # Non-interactive — purely decorative
+        for item in (h_line, v_line):
+            item.setFlag(item.GraphicsItemFlag.ItemIsSelectable, False)
+            item.setFlag(item.GraphicsItemFlag.ItemIsMovable, False)
+            item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            item.setZValue(-100)
         self.addItem(h_line)
         self.addItem(v_line)
-
-        axis_pen = QPen(Qt.GlobalColor.gray)
-        axis_pen.setWidth(0)
-        axis_pen.setStyle(Qt.PenStyle.DashLine)
-        x_axis = QGraphicsLineItem(-1000, 0, 1000, 0)
-        y_axis = QGraphicsLineItem(0, -1000, 0, 1000)
-        x_axis.setPen(axis_pen)
-        y_axis.setPen(axis_pen)
-        self.addItem(x_axis)
-        self.addItem(y_axis)
 
     # -------------------------------------------------------------------------
     # DELETE

@@ -138,17 +138,21 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self._perp_angle = 0.0     # stored by update_arrows_and_witness
         self._updating = False     # recursion guard
 
-        # Styling
+        # Styling — cosmetic pen so dimension lines stay visible at any zoom
         self._dim_pen = QPen(QColor(self._properties["Colour"]["value"]),
                         float(self._properties["Line Weight"]["value"]),
                         Qt.PenStyle.SolidLine)
+        self._dim_pen.setCosmetic(True)
         self.setPen(self._dim_pen)
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
         self.setZValue(0)
 
-        # Label
+        # Label — 12pt so it's always readable
         self.label = QGraphicsTextItem(parent=self)
         self.label.setZValue(100)
+        label_font = QFont("Consolas", 12)
+        self.label.setFont(label_font)
+        self.label.setDefaultTextColor(QColor(self._properties["Colour"]["value"]))
 
         # Tick marks (45-degree slashes at each end of dimension line)
         self.tick1 = QGraphicsLineItem(self)
@@ -197,7 +201,9 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
             _color_map = {"Black": "#000000", "Red": "#ff0000", "Blue": "#0000ff", "White": "#ffffff"}
             c = _color_map.get(value, value.lower())
             self._dim_pen = QPen(QColor(c), float(self._properties["Line Weight"]["value"]))
+            self._dim_pen.setCosmetic(True)
             self.setPen(self._dim_pen)
+            self.label.setDefaultTextColor(QColor(c))
             self.tick1.setPen(self._dim_pen)
             self.tick2.setPen(self._dim_pen)
             self.witness1.setPen(self._dim_pen)
@@ -291,9 +297,11 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         if sm and sm.is_calibrated:
             tick_size = sm.paper_to_scene(1.5)    # 1.5mm tick on paper
             offset_gap = sm.paper_to_scene(1.0)   # 1mm gap at measurement point
+            witness_ext = sm.paper_to_scene(2.0)  # 2mm extension past dimension line
         else:
             tick_size = 6
             offset_gap = 3
+            witness_ext = 6  # extend witness lines past dimension line
 
         # Measurement endpoints from handles
         start = QPointF(self.handle1.x(), self.handle1.y())
@@ -311,14 +319,15 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         # Dimension line offset from measurement baseline
         offset = self._offset_dist
 
-        # Witness lines: from near measurement point to dimension line
-        # Start at a small gap from the point, end past the dimension line
+        # Witness lines: from near measurement point to past the dimension line
         w1_start = start + QPointF(dx_perp * offset_gap, dy_perp * offset_gap)
-        w1_end   = start + QPointF(dx_perp * (offset + offset_gap), dy_perp * (offset + offset_gap))
+        w1_end   = start + QPointF(dx_perp * (offset + offset_gap + witness_ext),
+                                    dy_perp * (offset + offset_gap + witness_ext))
         self.witness1.setLine(w1_start.x(), w1_start.y(), w1_end.x(), w1_end.y())
 
         w2_start = end + QPointF(dx_perp * offset_gap, dy_perp * offset_gap)
-        w2_end   = end + QPointF(dx_perp * (offset + offset_gap), dy_perp * (offset + offset_gap))
+        w2_end   = end + QPointF(dx_perp * (offset + offset_gap + witness_ext),
+                                  dy_perp * (offset + offset_gap + witness_ext))
         self.witness2.setLine(w2_start.x(), w2_start.y(), w2_end.x(), w2_end.y())
 
         # Dimension line endpoints (at offset distance from measurement points)

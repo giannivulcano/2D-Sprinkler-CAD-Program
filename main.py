@@ -198,6 +198,7 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.mode_label)
         self.scene.cursorMoved.connect(self.coord_label.setText)
         self.scene.modeChanged.connect(self._update_mode_label)
+        self.scene.modeChanged.connect(self._sync_mode_buttons)
 
         self.init_ribbon()
 
@@ -270,6 +271,12 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
             self.refresh_underlays)
 
+        # --- Project ---
+        g_proj = manage_page.add_group("Project")
+        g_proj.add_large_button(
+            "Project\nInfo", _I("info_icon.svg"),
+            self._open_project_info)
+
         # --- Settings ---
         g_set = manage_page.add_group("Settings")
         g_set.add_small_menu_button(
@@ -319,21 +326,22 @@ class MainWindow(QMainWindow):
 
         # --- Geometry ---
         g_geom = draw_page.add_group("Geometry")
-        g_geom.add_large_button(
-            "Line", _I("line_icon.svg"),
-            lambda: self.scene.set_mode("draw_line"))
-        g_geom.add_large_button(
-            "Rectangle", _I("rectangle_icon.svg"),
-            lambda: self.scene.set_mode("draw_rectangle"))
-        g_geom.add_large_button(
-            "Circle", _I("circle_icon.svg"),
-            lambda: self.scene.set_mode("draw_circle"))
-        g_geom.add_large_button(
-            "Polyline", _I("polyline_icon.svg"),
-            lambda: self.scene.set_mode("polyline"))
-        g_geom.add_large_button(
-            "Arc", _I("arc_icon.svg"),
-            lambda: self.scene.set_mode("draw_arc"))
+        # Draw-mode buttons are checkable so the active tool stays highlighted
+        self._mode_buttons = {}  # mode_name → QToolButton
+        def _mode_btn(group, label, icon, mode_name, large=True):
+            """Create a checkable draw-mode button."""
+            cb = lambda: self.scene.set_mode(mode_name)
+            if large:
+                btn = group.add_large_button(label, icon, cb, checkable=True)
+            else:
+                btn = group.add_small_button(label, icon, cb, checkable=True)
+            self._mode_buttons[mode_name] = btn
+            return btn
+        _mode_btn(g_geom, "Line", _I("line_icon.svg"), "draw_line")
+        _mode_btn(g_geom, "Rectangle", _I("rectangle_icon.svg"), "draw_rectangle")
+        _mode_btn(g_geom, "Circle", _I("circle_icon.svg"), "draw_circle")
+        _mode_btn(g_geom, "Polyline", _I("polyline_icon.svg"), "polyline")
+        _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc")
         g_geom.add_large_button(
             "Gridlines", _I("gridline_icon.svg"),
             self._place_grid_lines)
@@ -383,12 +391,8 @@ class MainWindow(QMainWindow):
 
         # --- Annotations ---
         g_ann = draw_page.add_group("Annotations")
-        g_ann.add_large_button(
-            "Dimension", _I("dimension_icon.svg"),
-            lambda: self.scene.set_mode("dimension"))
-        g_ann.add_large_button(
-            "Text", _I("text_icon.svg"),
-            lambda: self.scene.set_mode("text"))
+        _mode_btn(g_ann, "Dimension", _I("dimension_icon.svg"), "dimension")
+        _mode_btn(g_ann, "Text", _I("text_icon.svg"), "text")
 
         # ── Tab 3: Build ─────────────────────────────────────────────────────
         build_page = self.ribbon.add_page("Build")
@@ -447,7 +451,7 @@ class MainWindow(QMainWindow):
         self._modify_layer_combo.setMinimumWidth(120)
         self._modify_layer_combo.addItems([l.name for l in self.user_layer_mgr.layers])
         self._modify_layer_combo.currentTextChanged.connect(self._assign_layer_to_selection)
-        g_layer.layout().addWidget(self._modify_layer_combo)
+        g_layer._btn_row.addWidget(self._modify_layer_combo)
 
         # --- Transform ---
         g_xform = modify_page.add_group("Transform")
@@ -566,6 +570,46 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             self.paper_space_widget.edit_title_block)
 
+    # ── Project Information dialog ────────────────────────────────────────────
+
+    def _open_project_info(self):
+        """Open a dialog to view/edit project metadata."""
+        info = getattr(self.scene, "_project_info", {})
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Project Information")
+        dlg.setMinimumWidth(400)
+        form = QVBoxLayout(dlg)
+
+        fields = [
+            ("Project Name", "name"),
+            ("Project Number", "number"),
+            ("Address", "address"),
+            ("City", "city"),
+            ("State / Province", "state"),
+            ("Client", "client"),
+            ("Designer", "designer"),
+            ("Description", "description"),
+        ]
+        editors = {}
+        for label, key in fields:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"{label}:"))
+            le = QLineEdit(info.get(key, ""))
+            editors[key] = le
+            row.addWidget(le)
+            form.addLayout(row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        form.addWidget(buttons)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_info = {k: le.text() for k, le in editors.items()}
+            self.scene._project_info = new_info
+
     # ── Ribbon helper menu builders ───────────────────────────────────────────
 
     def _build_units_menu(self) -> QMenu:
@@ -676,6 +720,13 @@ class MainWindow(QMainWindow):
     def _update_mode_label(self, mode: str):
         text = self._MODE_INSTRUCTIONS.get(mode, mode.replace("_", " ").title())
         self.mode_label.setText(text)
+
+    def _sync_mode_buttons(self, mode: str):
+        """Keep draw-mode buttons checked/unchecked to match the active mode."""
+        for m, btn in self._mode_buttons.items():
+            btn.blockSignals(True)
+            btn.setChecked(m == mode)
+            btn.blockSignals(False)
 
     # ── Modify tab auto-switch (Sprint N) ──────────────────────────────────
 

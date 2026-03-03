@@ -298,4 +298,29 @@ class Model_View(QGraphicsView):
                 sc._handle_tab_input()
                 event.accept()
                 return
+        if event.key() == Qt.Key.Key_F:
+            self.fit_to_screen()
+            event.accept()
+            return
         super().keyPressEvent(event)
+
+    # ── Fit to screen ─────────────────────────────────────────────────────
+
+    def fit_to_screen(self):
+        """Zoom to fit all scene content within the viewport."""
+        sc = self.scene()
+        if sc is None:
+            return
+        rect = sc.itemsBoundingRect()
+        if rect.isNull() or rect.isEmpty():
+            return
+        # Add 5% margin
+        margin = max(rect.width(), rect.height()) * 0.05
+        rect.adjust(-margin, -margin, margin, margin)
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            self.fit_to_screen()
+            return
+        super().mouseDoubleClickEvent(event)
