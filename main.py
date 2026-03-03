@@ -11,6 +11,7 @@ from Model_View import Model_View
 from sprinkler import Sprinkler
 from pipe import Pipe
 from dxf_import_dialog import DxfImportDialog
+from dxf_preview_dialog import DxfPreviewDialog
 from property_manager import PropertyManager
 from scale_manager import DisplayUnit
 from layer_manager import LayerManager
@@ -19,6 +20,7 @@ from user_layer_manager import UserLayerManager, UserLayerWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
 from ribbon_bar import RibbonBar
 from array_dialog import ArrayDialog
+from project_browser import ProjectBrowser
 from grid_lines_dialog import GridLinesDialog
 import theme as th
 
@@ -142,7 +144,6 @@ class MainWindow(QMainWindow):
         self.init_project_menu(menu_bar)
         self.init_edit_menu(menu_bar)
         self.init_hydraulics_menu(menu_bar)
-        self.init_view_menu(menu_bar)
         self.init_help_menu(menu_bar)
 
         # Property manager dock
@@ -151,19 +152,8 @@ class MainWindow(QMainWindow):
         self.dock = QDockWidget("Properties", self)
         self.init_property_manager_dock()
 
-        # DXF layer manager dock
+        # Combined left-side dock: DXF Layers | User Layers | Project Browser
         self.layer_manager = LayerManager(self.scene)
-        self.layer_dock = QDockWidget("DXF Layers", self)
-        self.layer_dock.setObjectName("LayersDock")
-        self.layer_dock.setWidget(self.layer_manager)
-        self.layer_dock.setAllowedAreas(
-            Qt.DockWidgetArea.RightDockWidgetArea |
-            Qt.DockWidgetArea.LeftDockWidgetArea
-        )
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.layer_dock)
-        self.layer_dock.setMinimumWidth(160)
-
-        # User layer dock
         self.user_layer_widget = UserLayerWidget(
             self.user_layer_mgr, scene=self.scene
         )
@@ -173,16 +163,28 @@ class MainWindow(QMainWindow):
         self.user_layer_widget.layersChanged.connect(
             lambda: self.user_layer_mgr.apply_to_scene(self.scene)
         )
-        self.user_layer_dock = QDockWidget("User Layers", self)
-        self.user_layer_dock.setObjectName("UserLayersDock")
-        self.user_layer_dock.setWidget(self.user_layer_widget)
-        self.user_layer_dock.setAllowedAreas(
+        self.project_browser = ProjectBrowser()
+        self.project_browser.activateModelSpace.connect(
+            lambda: self.central_tabs.setCurrentWidget(self.view)
+        )
+        self.project_browser.activatePaperSheet.connect(
+            self._activate_paper_sheet
+        )
+
+        self._left_tabs = QTabWidget()
+        self._left_tabs.addTab(self.layer_manager, "DXF Layers")
+        self._left_tabs.addTab(self.user_layer_widget, "User Layers")
+        self._left_tabs.addTab(self.project_browser, "Project Browser")
+
+        self.browser_dock = QDockWidget("Browser", self)
+        self.browser_dock.setObjectName("BrowserDock")
+        self.browser_dock.setWidget(self._left_tabs)
+        self.browser_dock.setAllowedAreas(
             Qt.DockWidgetArea.RightDockWidgetArea |
             Qt.DockWidgetArea.LeftDockWidgetArea
         )
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.user_layer_dock)
-        self.tabifyDockWidget(self.layer_dock, self.user_layer_dock)
-        self.user_layer_dock.setMinimumWidth(200)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.browser_dock)
+        self.browser_dock.setMinimumWidth(200)
 
         # Hydraulic report dock (tabbed: Summary | Pipe Results | Schedules)
         self.hydro_report = HydraulicReportWidget()
@@ -207,8 +209,6 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.mode_label)
         self.scene.cursorMoved.connect(self.coord_label.setText)
 
-        # Now all docks exist — wire their toggles into the View menu and ribbon
-        self._add_dock_toggles()
         self.init_ribbon()
 
         # Restore settings
@@ -356,46 +356,14 @@ class MainWindow(QMainWindow):
         redo_action.triggered.connect(self.scene.redo)
         edit_menu.addAction(redo_action)
 
-    def init_view_menu(self, menu_bar):
-        view_menu = menu_bar.addMenu("View")
-        self._view_menu = view_menu   # saved so _add_dock_toggles() can populate it later
-
-        # Snap to underlay toggle
-        self._snap_action = QAction("Snap to Underlay", self)
-        self._snap_action.setCheckable(True)
-        self._snap_action.setChecked(False)
-        self._snap_action.toggled.connect(
-            lambda checked: setattr(self.scene, "_snap_to_underlay", checked))
-        view_menu.addAction(self._snap_action)
-
-        view_menu.addSeparator()
-
-        # Dock toggles are added later in _add_dock_toggles() once the docks exist.
-
-        # Paper space shortcuts
-        paper_action = QAction("Switch to Layout 1 (Paper Space)", self)
-        paper_action.triggered.connect(
-            lambda: self.central_tabs.setCurrentIndex(1)
-        )
-        view_menu.addAction(paper_action)
-
-        model_action = QAction("Switch to Model Space", self)
-        model_action.triggered.connect(
-            lambda: self.central_tabs.setCurrentIndex(0)
-        )
-        view_menu.addAction(model_action)
-
-    def _add_dock_toggles(self):
-        """Append dock visibility toggles to the View menu.
-
-        Must be called *after* all dock widgets have been created so that
-        toggleViewAction() is available on each dock.
-        """
-        self._view_menu.addSeparator()
-        self._view_menu.addAction(self.dock.toggleViewAction())
-        self._view_menu.addAction(self.layer_dock.toggleViewAction())
-        self._view_menu.addAction(self.user_layer_dock.toggleViewAction())
-        self._view_menu.addAction(self.hydro_dock.toggleViewAction())
+    def _activate_paper_sheet(self, name: str):
+        """Switch the central area to the paper space tab matching *name*."""
+        for i in range(self.central_tabs.count()):
+            if self.central_tabs.tabText(i) == name:
+                self.central_tabs.setCurrentIndex(i)
+                return
+        # Sheet not found — switch to the first paper space tab as fallback
+        self.central_tabs.setCurrentWidget(self.paper_space_widget)
 
     def init_help_menu(self, menu_bar):
         help_menu = menu_bar.addMenu("Help")
@@ -459,13 +427,13 @@ class MainWindow(QMainWindow):
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
             lambda: self.scene.set_mode("polyline"))
         g_draw.add_large_button(
-            "Construction\nLine",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView),
-            lambda: self.scene.set_mode("construction_line"))
-        g_draw.add_large_button(
             "Grid\nLines",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             self._place_grid_lines)
+        g_draw.add_large_button(
+            "Offset",
+            s.standardIcon(QStyle.StandardPixmap.SP_ArrowForward),
+            lambda: self.scene.set_mode("offset"))
 
         # Row 2 — colour and lineweight controls (small buttons)
         self._draw_color_btn = g_draw.add_small_button(
@@ -602,14 +570,11 @@ class MainWindow(QMainWindow):
 
         # --- View ---
         g_view = spr_page.add_group("View")
-        snap_btn = g_view.add_large_button(
+        g_view.add_large_button(
             "Snap to\nUnderlay",
             s.standardIcon(QStyle.StandardPixmap.SP_CommandLink),
             lambda checked: setattr(self.scene, "_snap_to_underlay", checked),
             checkable=True)
-        # Keep ribbon button and menu action in sync
-        self._snap_action.toggled.connect(snap_btn.setChecked)
-        snap_btn.toggled.connect(self._snap_action.setChecked)
 
         # ── Tab 3: Draft ─────────────────────────────────────────────────────
         draft_page = self.ribbon.add_page("Draft")
@@ -651,19 +616,12 @@ class MainWindow(QMainWindow):
         prop_btn.toggled.connect(self.dock.setVisible)
         self.dock.visibilityChanged.connect(prop_btn.setChecked)
 
-        dxf_btn = g_pan.add_small_button(
-            "DXF Layers",
+        browser_btn = g_pan.add_small_button(
+            "Browser",
             s.standardIcon(QStyle.StandardPixmap.SP_DirIcon),
             None, checkable=True)
-        dxf_btn.toggled.connect(self.layer_dock.setVisible)
-        self.layer_dock.visibilityChanged.connect(dxf_btn.setChecked)
-
-        ul_btn = g_pan.add_small_button(
-            "User Layers",
-            s.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon),
-            None, checkable=True)
-        ul_btn.toggled.connect(self.user_layer_dock.setVisible)
-        self.user_layer_dock.visibilityChanged.connect(ul_btn.setChecked)
+        browser_btn.toggled.connect(self.browser_dock.setVisible)
+        self.browser_dock.visibilityChanged.connect(browser_btn.setChecked)
 
         report_btn = g_pan.add_small_button(
             "Report Panel",
@@ -879,20 +837,15 @@ class MainWindow(QMainWindow):
                 )
 
     def open_dxf_import_dialog(self):
-        dialog = DxfImportDialog(self)
+        """Open the preview-first DXF import dialog."""
+        dialog = DxfPreviewDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            file_path = dialog.get_file_path()
-            if not file_path:
+            params = dialog.get_import_params()
+            if not params.geom_list:
                 return
-            colour = dialog.get_colour()
-            line_weight = dialog.get_line_weight()
-            layers = dialog.get_selected_layers()
-            self.scene.import_dxf(
-                file_path,
-                color=colour,
-                line_weight=line_weight,
-                layers=layers,
-            )
+            # Switch to model space and enter place_import mode
+            self.central_tabs.setCurrentWidget(self.view)
+            self.scene.begin_place_import(params)
 
     def refresh_underlays(self):
         self.scene.refresh_all_underlays()

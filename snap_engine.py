@@ -83,7 +83,7 @@ class SnapEngine:
         self.snap_midpoint:  bool = True
         self.snap_center:    bool = True
         self.snap_quadrant:  bool = True
-        self.snap_nearest:   bool = True
+        self.snap_nearest:   bool = False
 
     # ── Public ───────────────────────────────────────────────────────────────
 

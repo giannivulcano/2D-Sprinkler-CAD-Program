@@ -151,14 +151,17 @@ class PolylineItem(QGraphicsPathItem):
     ----------
     color : str | QColor
         Stroke color, typically derived from the active user layer.
+    lineweight : float
+        Cosmetic pixel width (default 1.0).
     """
 
-    def __init__(self, start: QPointF, color: str | QColor = "#ffffff"):
+    def __init__(self, start: QPointF, color: str | QColor = "#ffffff",
+                 lineweight: float = 1.0):
         super().__init__()
         self._points: list[QPointF] = [start]
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
-        pen.setWidth(1)
+        pen.setWidthF(lineweight)
         pen.setCosmetic(True)
         self.setPen(pen)
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -211,16 +214,18 @@ class PolylineItem(QGraphicsPathItem):
     def to_dict(self) -> dict:
         pen_color = self.pen().color().name()
         return {
-            "type":   "polyline",
-            "color":  pen_color,
-            "points": [[p.x(), p.y()] for p in self._points],
+            "type":       "polyline",
+            "color":      pen_color,
+            "lineweight": self.pen().widthF(),
+            "points":     [[p.x(), p.y()] for p in self._points],
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "PolylineItem":
         pts = [QPointF(p[0], p[1]) for p in data["points"]]
         color = data.get("color", "#ffffff")
-        obj = cls(pts[0], color)
+        lw = data.get("lineweight", 1.0)
+        obj = cls(pts[0], color, lw)
         for p in pts[1:]:
             obj.append_point(p)
         return obj

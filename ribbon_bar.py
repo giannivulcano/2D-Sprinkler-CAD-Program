@@ -38,14 +38,14 @@ QTabBar {
 QTabBar::tab {
     background: #dcdcdc;
     color: #333333;
-    padding: 5px 20px;
+    padding: 6px 24px;
     border: 1px solid #b8b8b8;
     border-bottom: none;
     border-top-left-radius: 3px;
     border-top-right-radius: 3px;
-    font-size: 9pt;
+    font-size: 10pt;
     font-weight: bold;
-    min-width: 76px;
+    min-width: 90px;
 }
 QTabBar::tab:selected {
     background: #f0f0f0;
@@ -59,8 +59,8 @@ RibbonButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 3px;
-    padding: 2px 4px;
-    font-size: 8pt;
+    padding: 3px 6px;
+    font-size: 9pt;
     color: #222222;
     text-align: center;
 }
@@ -82,8 +82,8 @@ RibbonSmallButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 2px;
-    padding: 1px 4px;
-    font-size: 8pt;
+    padding: 2px 6px;
+    font-size: 9pt;
     color: #222222;
     text-align: left;
 }
@@ -109,32 +109,32 @@ RibbonSmallButton:disabled {
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RibbonButton(QToolButton):
-    """Large ribbon button: 36×36 px icon with text label beneath."""
+    """Large ribbon button: 54×54 px icon with text label beneath."""
 
     def __init__(self, text: str, icon: QIcon | None = None, parent=None):
         super().__init__(parent)
         self.setText(text)
         if icon:
             self.setIcon(icon)
-        self.setIconSize(QSize(36, 36))
+        self.setIconSize(QSize(54, 54))
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        self.setFixedHeight(74)
-        self.setMinimumWidth(54)
+        self.setFixedHeight(111)
+        self.setMinimumWidth(81)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
 
 class RibbonSmallButton(QToolButton):
-    """Compact ribbon button: 18×18 px icon with text beside it."""
+    """Compact ribbon button: 27×27 px icon with text beside it."""
 
     def __init__(self, text: str, icon: QIcon | None = None, parent=None):
         super().__init__(parent)
         self.setText(text)
         if icon:
             self.setIcon(icon)
-        self.setIconSize(QSize(18, 18))
+        self.setIconSize(QSize(27, 27))
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.setFixedHeight(22)
-        self.setMinimumWidth(80)
+        self.setFixedHeight(33)
+        self.setMinimumWidth(120)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
 
@@ -189,7 +189,7 @@ class RibbonGroup(QWidget):
         lbl = QLabel(title)
         lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         f = QFont()
-        f.setPointSizeF(7.5)
+        f.setPointSizeF(9.0)
         lbl.setFont(f)
         lbl.setStyleSheet(f"color: {_t.text_primary}; padding: 1px 0 2px 0;")
         outer.addWidget(lbl)
@@ -362,7 +362,7 @@ class RibbonBar(QWidget):
         # Stacked pages (one per tab)
         self._stack = QStackedWidget(self)
         self._stack.setStyleSheet(f"background: {_t.bg_raised};")
-        self._stack.setFixedHeight(100)
+        self._stack.setFixedHeight(150)
         outer.addWidget(self._stack)
 
     def _on_tab_changed(self, index: int):
