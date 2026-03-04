@@ -51,7 +51,7 @@ class Pipe(QGraphicsLineItem):
         self.node2 = node2
         self.colour = None
         self.length = 0.0
-        self.user_layer: str = "0"   # user-defined layer name
+        self.user_layer: str = "Default"   # user-defined layer name
 
 
         self.label = QGraphicsTextItem("", self)  # Child of pipe
@@ -104,15 +104,13 @@ class Pipe(QGraphicsLineItem):
             q = result.pipe_flows.get(self)
             hf = result.pipe_friction_loss.get(self)
             if q is not None:
-                hr_line = f"<br><span style='color:#00aaff'>{q:.1f} gpm</span>"
+                hr_line = f" | <span style='color:#00aaff'>{q:.1f} gpm</span>"
             if hf is not None:
                 hr_line += f"<span style='color:#ffaa00'> | {hf:.2f} psi</span>"
 
-        html = f"<div style='text-align:center'>{diameter}<br>{length}{hr_line}</div>"
+        html = f"<span style='white-space:nowrap'>{diameter} | {length}{hr_line}</span>"
         self.label.setHtml(html)
-
-        # Adjust width to match content for proper centering
-        self.label.setTextWidth(self.label.boundingRect().width())
+        self.label.setTextWidth(-1)  # no wrapping
 
         self.set_label_position()
 
@@ -224,12 +222,10 @@ class Pipe(QGraphicsLineItem):
     def paint(self, painter, option, widget=None):
         colour = QColor(self._properties["Colour"]["value"])
         lw_key = self._properties["Line Weight"]["value"]
-        sm = getattr(self.scene(), "scale_manager", None)
-        if sm and sm.is_calibrated:
-            line_weight = sm.paper_to_scene(self.LINE_WEIGHT_MM.get(lw_key, 0.5))
-        else:
-            line_weight = self.LINE_WEIGHT_PX_FALLBACK.get(lw_key, 6.0)
+        # Always use cosmetic (zoom-independent) pen widths
+        line_weight = self.LINE_WEIGHT_PX_FALLBACK.get(lw_key, 6.0)
         base_pen = QPen(colour, line_weight)
+        base_pen.setCosmetic(True)
 
         # Velocity color-coding when hydraulic results are available
         scene = self.scene()
@@ -243,6 +239,7 @@ class Pipe(QGraphicsLineItem):
                 else:
                     colour = QColor(0, 200, 80)     # green: OK
                 base_pen = QPen(colour, line_weight)
+                base_pen.setCosmetic(True)
 
         # normal draw
         painter.setPen(base_pen)
@@ -251,11 +248,15 @@ class Pipe(QGraphicsLineItem):
         # highlight if selected
         if self.isSelected():
             highlight_pen = QPen(colour, line_weight * 1.6)
+            highlight_pen.setCosmetic(True)
             painter.setPen(highlight_pen)
             painter.drawLine(self.line())
 
-            # also show node endpoints — scale-aware radius
-            radius = sm.paper_to_scene(0.75) if sm and sm.is_calibrated else 6
+            # also show node endpoints — zoom-independent fixed screen size
+            sc = self.scene()
+            views = sc.views() if sc else []
+            view_scale = abs(views[0].transform().m11()) if views else 1.0
+            radius = 6.0 / max(view_scale, 1e-6)  # 6 screen pixels
             brush = QBrush(QColor("white"))
             painter.setBrush(brush)
             painter.setPen(Qt.PenStyle.NoPen)

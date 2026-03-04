@@ -1,11 +1,14 @@
 import math
 from CAD_Math import CAD_Math
 from PyQt6.QtCore import QPointF
+from PyQt6.QtWidgets import QGraphicsItem
+from PyQt6.QtGui import QTransform
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
 class Fitting():
     SIZE = 1
     TARGET_PAPER_MM = 6.0   # desired fitting symbol size in paper mm
+    TARGET_SCREEN_PX = 20.0 # zoom-independent screen-pixel size
     SYMBOLS = {
         "no fitting": {
             "path": r"graphics/fitting_symbols/no_fitting.svg"
@@ -101,6 +104,7 @@ class Fitting():
         # Build new symbol as child of node
         path = self.SYMBOLS[self.type]["path"]
         self.symbol = QGraphicsSvgItem(path, self.node)
+        self.symbol.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
 
         # Rotation origin at the center of its bounding box
         self.symbol.setTransformOriginPoint(self.symbol.boundingRect().center())
@@ -184,20 +188,30 @@ class Fitting():
         bounds = self.symbol.boundingRect()
         center = bounds.center()
         self.symbol.setTransformOriginPoint(center)
-        transform.scale(self.symbol_scale, self.symbol_scale)
-        self.symbol.setTransform(transform)
-        # After transform, move the item so its **center aligns with node position**
-        # Use the transformed bounding rect
-        transformed_bounds = self.symbol.mapRectToParent(bounds)
-        self.symbol.setPos(-transformed_bounds.center())
 
-    def rescale(self, sm) -> None:
-        """Re-apply symbol_scale using ScaleManager, then redraw (called after calibration)."""
+        # Compute zoom-independent scale (fixed screen-pixel size)
+        svg_natural = max(bounds.width(), bounds.height())
+        if svg_natural > 0:
+            self.symbol_scale = self.TARGET_SCREEN_PX / svg_natural
+        else:
+            self.symbol_scale = 0.5
+
+        transform.scale(self.symbol_scale, self.symbol_scale)
+
+        # With ItemIgnoresTransformations the symbol renders in screen pixels.
+        # Adjust the transform's translation so the SVG centre maps to (0,0),
+        # then pos(0,0) anchors that centre on the parent node.
+        cx, cy = center.x(), center.y()
+        mc_x = transform.m11() * cx + transform.m21() * cy + transform.dx()
+        mc_y = transform.m12() * cx + transform.m22() * cy + transform.dy()
+        final = QTransform(transform.m11(), transform.m12(),
+                           transform.m21(), transform.m22(),
+                           transform.dx() - mc_x, transform.dy() - mc_y)
+        self.symbol.setTransform(final)
+        self.symbol.setPos(0, 0)
+
+    def rescale(self, sm=None) -> None:
+        """Re-draw fitting (zoom-independent, so no ScaleManager needed)."""
         if self.symbol is None:
             return
-        svg_natural = max(self.symbol.boundingRect().width(),
-                          self.symbol.boundingRect().height())
-        if svg_natural > 0 and sm and sm.is_calibrated:
-            self.symbol_scale = sm.paper_to_scene(self.TARGET_PAPER_MM) / svg_natural
-        # else: keep existing symbol_scale
         self.update()

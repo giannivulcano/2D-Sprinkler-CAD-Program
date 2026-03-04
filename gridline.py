@@ -142,7 +142,7 @@ class GridlineItem(QGraphicsLineItem):
         self._update_bubble_positions()
 
         # User layer
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
 
     # ── Bubble positioning ────────────────────────────────────────────────
 

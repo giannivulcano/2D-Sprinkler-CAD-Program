@@ -31,7 +31,7 @@ class Node(QGraphicsEllipseItem):
         self.sprinkler = None
         self.fitting = Fitting(self)
         self.pipes = []
-        self.user_layer: str = "0"   # user-defined layer name
+        self.user_layer: str = "Default"   # user-defined layer name
 
         # Property panel support — shown for plain (non-sprinkler) nodes
         self._properties: dict = {
@@ -161,14 +161,14 @@ class Node(QGraphicsEllipseItem):
         painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
 
         if self.isSelected():
-            sm = getattr(self.scene(), "scale_manager", None) if self.scene() else None
-            if sm and sm.is_calibrated:
-                # 4.5mm circle for sprinkler nodes, 1.5mm for plain nodes
-                radius = sm.paper_to_scene(4.5) if self.has_sprinkler() else sm.paper_to_scene(1.5)
-            else:
-                radius = self.RADIUS if self.has_sprinkler() else self.RADIUS / 2
+            # Zoom-independent selection highlight
+            views = self.scene().views() if self.scene() else []
+            view_scale = abs(views[0].transform().m11()) if views else 1.0
+            screen_radius = 13.0 if self.has_sprinkler() else 8.0
+            radius = screen_radius / max(view_scale, 1e-6)
 
-            highlight_pen = QPen(QColor("red"), 3)
+            highlight_pen = QPen(QColor("red"), 2)
+            highlight_pen.setCosmetic(True)
             painter.setPen(highlight_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QPointF(0, 0), radius, radius)
@@ -178,9 +178,11 @@ class Node(QGraphicsEllipseItem):
         if scene and hasattr(scene, "hydraulic_result") and scene.hydraulic_result is not None:
             p = scene.hydraulic_result.node_pressures.get(self)
             if p is not None:
-                sm = getattr(scene, "scale_manager", None)
-                badge_r = sm.paper_to_scene(3.0) if (sm and sm.is_calibrated) else 14
-                font_pt = max(5, int(badge_r * 0.55))
+                # Zoom-independent badge
+                views = scene.views() if scene else []
+                view_scale = abs(views[0].transform().m11()) if views else 1.0
+                badge_r = 14.0 / max(view_scale, 1e-6)
+                font_pt = max(5, int(14.0 * 0.55))
 
                 # Pick badge color based on pressure vs. minimum
                 p_min = 7.0

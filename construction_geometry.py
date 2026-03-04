@@ -192,7 +192,7 @@ class PolylineItem(QGraphicsPathItem):
                  lineweight: float = 1.0):
         super().__init__()
         self._points: list[QPointF] = [start]
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -331,7 +331,7 @@ class LineItem(QGraphicsLineItem):
         super().__init__()
         self._pt1 = pt1
         self._pt2 = pt2
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -451,7 +451,7 @@ class RectangleItem(QGraphicsRectItem):
                  color: str | QColor = "#ffffff", lineweight: float = 1.0):
         rect = QRectF(pt1, pt2).normalized()
         super().__init__(rect)
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -591,7 +591,7 @@ class CircleItem(QGraphicsEllipseItem):
         self._radius = radius
         r = radius
         super().__init__(center.x() - r, center.y() - r, 2 * r, 2 * r)
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -715,7 +715,7 @@ class ArcItem(QGraphicsPathItem):
         self._radius = max(radius, 0.01)
         self._start_deg = start_deg
         self._span_deg = span_deg
-        self.user_layer: str = "0"
+        self.user_layer: str = "Default"
         pen = QPen(QColor(color), lineweight)
         pen.setCosmetic(True)
         self.setPen(pen)

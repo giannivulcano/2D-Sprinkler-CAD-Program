@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
-                              QTabWidget, QMenu, QStyle, QWidget, QColorDialog,
+                              QTabWidget, QMenu, QStyle, QWidget,
                               QComboBox)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF
@@ -114,10 +114,8 @@ class MainWindow(QMainWindow):
 
         # Draw tool style defaults (white pen in dark theme, 1px cosmetic)
         _t = th.detect()
-        self._draw_color: str = _t.text_primary        # "#ffffff" dark / "#000000" light
-        self._draw_lineweight: float = 1.0
-        self.scene._draw_color = self._draw_color
-        self.scene._draw_lineweight = self._draw_lineweight
+        # Draw colour / lineweight now driven entirely by the active layer
+        # (no per-item overrides — see Fix 2 Sprint V)
 
         # User layer manager — shared between scene and UI
         self.user_layer_mgr = UserLayerManager()
@@ -153,6 +151,9 @@ class MainWindow(QMainWindow):
         )
         self.user_layer_widget.layersChanged.connect(
             self._refresh_modify_layer_combo
+        )
+        self.user_layer_widget.layersChanged.connect(
+            self._refresh_draw_layer_combo
         )
         self.project_browser = ProjectBrowser()
         self.project_browser.activateModelSpace.connect(
@@ -357,15 +358,16 @@ class MainWindow(QMainWindow):
         _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc")
         _mode_btn(g_geom, "Gridlines", _I("gridline_icon.svg"), "gridline")
 
-        # --- Style ---
-        g_style = draw_page.add_group("Style")
-        self._draw_color_btn = g_style.add_small_button(
-            "Colour", self._make_color_icon(self._draw_color),
-            self._pick_draw_color)
-        self._draw_lw_btn = g_style.add_small_menu_button(
-            "LW 1.00",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogListView),
-            self._build_lineweight_menu())
+        # --- Layer (assigns new geometry to selected layer) ---
+        g_draw_layer = draw_page.add_group("Layer")
+        self._draw_layer_combo = QComboBox()
+        self._draw_layer_combo.setMinimumWidth(130)
+        self._draw_layer_combo.addItems([l.name for l in self.user_layer_mgr.layers])
+        idx = self._draw_layer_combo.findText(self.scene.active_user_layer)
+        if idx >= 0:
+            self._draw_layer_combo.setCurrentIndex(idx)
+        self._draw_layer_combo.currentTextChanged.connect(self._set_active_draw_layer)
+        g_draw_layer._btn_row.addWidget(self._draw_layer_combo)
 
         # --- Constraints (placeholder — geometric constraints like AutoCAD) ---
         g_const = draw_page.add_group("Constraints")
@@ -677,36 +679,23 @@ class MainWindow(QMainWindow):
 
     # ── Draw tool helpers ─────────────────────────────────────────────────────
 
-    def _make_color_icon(self, color: str, size: int = 16) -> QIcon:
-        """Return a solid-colour square icon for the colour picker button."""
-        pm = QPixmap(size, size)
-        pm.fill(QColor(color))
-        return QIcon(pm)
+    def _set_active_draw_layer(self, layer_name: str):
+        """Set the active layer for new geometry from the Draw tab combo."""
+        self.scene.active_user_layer = layer_name
 
-    def _pick_draw_color(self):
-        """Open colour picker dialog and update draw colour."""
-        color = QColorDialog.getColor(QColor(self._draw_color), self,
-                                      "Select Draw Colour")
-        if color.isValid():
-            self._draw_color = color.name()
-            self.scene._draw_color = self._draw_color
-            if hasattr(self, "_draw_color_btn"):
-                self._draw_color_btn.setIcon(self._make_color_icon(self._draw_color))
-
-    def _set_draw_lineweight(self, lw: float):
-        """Update draw lineweight and sync to scene."""
-        self._draw_lineweight = lw
-        self.scene._draw_lineweight = lw
-        if hasattr(self, "_draw_lw_btn"):
-            self._draw_lw_btn.setText(f"LW {lw:.2f}")
-
-    def _build_lineweight_menu(self) -> QMenu:
-        """Return a QMenu of standard drawing pen lineweights (mm)."""
-        m = QMenu(self)
-        for lw in (0.18, 0.25, 0.35, 0.50, 0.70, 1.00, 1.40, 2.00):
-            act = m.addAction(f"{lw:.2f} mm")
-            act.triggered.connect(lambda checked=False, w=lw: self._set_draw_lineweight(w))
-        return m
+    def _refresh_draw_layer_combo(self):
+        """Re-populate the Draw ribbon's layer dropdown after layers change."""
+        combo = self._draw_layer_combo
+        combo.blockSignals(True)
+        current = combo.currentText()
+        combo.clear()
+        combo.addItems([l.name for l in self.user_layer_mgr.layers])
+        idx = combo.findText(current)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
 
     # ── OSNAP toggle (Sprint H) ───────────────────────────────────────────────
 

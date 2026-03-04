@@ -62,14 +62,10 @@ class UserLayer:
 
 # Defaults shipped with every new document
 DEFAULT_LAYERS: list[UserLayer] = [
-    UserLayer("0",            "#000000", 0.35, True,  False, True),
-    UserLayer("Sprinklers",   "#cc0000", 0.50, True,  False, True),
-    UserLayer("Branch Lines", "#0055cc", 0.35, True,  False, True),
-    UserLayer("Mains",        "#001f7a", 0.70, True,  False, True),
-    UserLayer("Fittings",     "#007700", 0.35, True,  False, True),
-    UserLayer("Valves",       "#880088", 0.35, True,  False, True),
-    UserLayer("Annotations",  "#333333", 0.25, True,  False, True),
+    UserLayer("Default",      "#ffffff", 0.35, True,  False, True),
     UserLayer("Underlay",     "#aaaaaa", 0.18, True,  False, False),
+    UserLayer("Annotations",  "#cccccc", 0.25, True,  False, True),
+    UserLayer("Gridlines",    "#888888", 0.25, True,  False, True),
 ]
 
 
@@ -116,7 +112,7 @@ class UserLayerManager:
         self._layers: list[UserLayer] = [
             UserLayer(**vars(l)) for l in DEFAULT_LAYERS
         ]
-        self._active: str = "0"
+        self._active: str = "Default"
 
     # ── Layer list API ───────────────────────────────────────────────────────
 
@@ -150,16 +146,16 @@ class UserLayerManager:
         return lyr
 
     def remove_layer(self, name: str):
-        """Delete a layer.  Layer '0' cannot be deleted."""
-        if name == "0":
+        """Delete a layer.  The first layer cannot be deleted."""
+        if name == self._layers[0].name:
             return
         self._layers = [l for l in self._layers if l.name != name]
         if self._active == name:
-            self._active = "0"
+            self._active = self._layers[0].name
 
     def rename_layer(self, old_name: str, new_name: str, items) -> bool:
         """Rename a layer and update all items that referenced the old name."""
-        if old_name == "0":
+        if old_name == self._layers[0].name:
             return False
         if not new_name or (self.get(new_name) is not None and new_name != old_name):
             return False
@@ -463,6 +459,9 @@ class UserLayerWidget(QWidget):
                 else:
                     self._highlight_active()
                     self.layersChanged.emit()
+                    # Sync scene active_user_layer if the renamed layer was active
+                    if self.manager.active_layer == new_name:
+                        self.activeLayerChanged.emit(new_name)
 
     def _on_lw_combo_changed(self, row: int, idx: int):
         """Handle lineweight combo selection in a table row."""
@@ -529,7 +528,7 @@ class UserLayerWidget(QWidget):
             return
         for item in self._all_scene_items():
             if getattr(item, "user_layer", None) == lyr.name:
-                item.user_layer = "0"
+                item.user_layer = self.manager._layers[0].name
         self.manager.remove_layer(lyr.name)
         self.populate()
         self.layersChanged.emit()

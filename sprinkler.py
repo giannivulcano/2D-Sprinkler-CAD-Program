@@ -1,3 +1,5 @@
+from PyQt6.QtWidgets import QGraphicsItem
+from PyQt6.QtGui import QTransform
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -32,6 +34,7 @@ class Sprinkler(QGraphicsSvgItem):
         if node is not None:
             self.setParentItem(node)
             self.setZValue(100)
+            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
             self._load_graphic(self.GRAPHICS[self._properties["Graphic"]["value"]])
 
     # -------------------------------------------------------------------------
@@ -42,31 +45,27 @@ class Sprinkler(QGraphicsSvgItem):
         renderer = QSvgRenderer(svg_path)
         self.setSharedRenderer(renderer)
         self._renderer = renderer  # prevent garbage collection
-        # Use scale_manager if already in scene; fall back to SCALE constant
-        sm = getattr(self.node.scene() if self.node else None, "scale_manager", None)
-        if sm and sm.is_calibrated:
-            new_scale = sm.paper_to_scene(self.TARGET_PAPER_MM) / self.SVG_NATURAL_PX
-            self.setScale(new_scale)
-        else:
-            self.setScale(self.SCALE)
+        # Zoom-independent: always use fixed screen-pixel scale
         self._centre_on_node()
 
-    def rescale(self, sm) -> None:
-        """Re-apply scale using the current ScaleManager (called after calibration)."""
-        if sm and sm.is_calibrated:
-            new_scale = sm.paper_to_scene(self.TARGET_PAPER_MM) / self.SVG_NATURAL_PX
-        else:
-            new_scale = self.SCALE
-        self.setScale(new_scale)
+    def rescale(self, sm=None) -> None:
+        """Re-centre (zoom-independent, so no ScaleManager needed)."""
         self._centre_on_node()
 
     def _centre_on_node(self):
-        """Centre the scaled item on the parent node's origin (0, 0)."""
-        bounds = self.boundingRect()          # unscaled local rect
-        current_scale = self.scale()          # actual applied scale (not the constant)
-        scaled_w = bounds.width()  * current_scale
-        scaled_h = bounds.height() * current_scale
-        self.setPos(-scaled_w / 2, -scaled_h / 2)
+        """Centre the item on the parent node's origin (0, 0).
+
+        Uses a QTransform that scales then translates so the SVG centre
+        maps to local (0, 0).  With ItemIgnoresTransformations this keeps
+        the symbol at a fixed screen-pixel size, centred on the node.
+        """
+        bounds = self.boundingRect()
+        center = bounds.center()
+        s = self.SCALE
+        # Build affine: scale about origin, then translate so centre → (0,0)
+        t = QTransform(s, 0, 0, s, -s * center.x(), -s * center.y())
+        self.setTransform(t)
+        self.setPos(0, 0)
 
     # -------------------------------------------------------------------------
     # Public property API

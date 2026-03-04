@@ -10,7 +10,7 @@ import math
 from CAD_Math import CAD_Math
 from PyQt6.QtWidgets import (
     QGraphicsTextItem, QGraphicsLineItem,
-    QGraphicsPolygonItem, QGraphicsEllipseItem,
+    QGraphicsPolygonItem,
     QStyle,
 )
 from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption
@@ -134,6 +134,10 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
             "Offset": {"type": "string", "value": "10"},
         }
 
+        # Measurement endpoints (plain QPointF — no child Handle objects)
+        self._p1 = QPointF(p1)
+        self._p2 = QPointF(p2)
+
         # Draggable perpendicular offset distance (scene units)
         self._offset_dist = float(self._properties["Offset"]["value"])
         self._perp_angle = 0.0     # stored by update_arrows_and_witness
@@ -149,10 +153,6 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
         self.setZValue(0)
-
-        # Manual drag state (avoids ItemIsMovable feedback loop with child handles)
-        self._dragging = False
-        self._drag_start: QPointF | None = None
 
         # Label — 12pt, zoom-independent so it's always readable
         self.label = QGraphicsTextItem(parent=self)
@@ -178,29 +178,7 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self.witness2.setPen(self._dim_pen)
         self.witness2.setZValue(0)
 
-        # Handles — hidden by default, shown when dimension is selected
-        self.handle1 = Handle(self, p1.x(), p1.y())
-        self.handle1.setTransformOriginPoint(self.handle1.boundingRect().center())
-        self.handle1.setVisible(False)
-        self.handle2 = Handle(self, p2.x(), p2.y())
-        self.handle2.setTransformOriginPoint(self.handle2.boundingRect().center())
-        self.handle2.setVisible(False)
-        center_point = self.line().center()
-        self.handle3 = Handle(self, center_point.x(), center_point.y())
-        self.handle3.setVisible(False)
-        self.handle3.setTransformOriginPoint(self.handle3.boundingRect().center())
-
         self.update_geometry()
-
-    # ── Selection → handle visibility ─────────────────────────────────────
-
-    def itemChange(self, change, value):
-        if change == self.GraphicsItemChange.ItemSelectedHasChanged:
-            vis = bool(value)
-            self.handle1.setVisible(vis)
-            self.handle2.setVisible(vis)
-            self.handle3.setVisible(vis)
-        return super().itemChange(change, value)
 
     # ── Paint override — suppress Qt's dashed selection rectangle ─────────
 
@@ -208,36 +186,28 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         option.state &= ~QStyle.StateFlag.State_Selected
         super().paint(painter, option, widget)
 
-    # ── Manual whole-dimension drag ───────────────────────────────────────
+    # ── Grip protocol (integrates with Model_View grip squares) ──────────
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.isSelected():
-            self._dragging = True
-            self._drag_start = event.scenePos()
-            event.accept()
-            return
-        super().mousePressEvent(event)
+    def grip_points(self) -> list[QPointF]:
+        """Return [p1, midpoint, p2] for the grip system."""
+        mid = QPointF((self._p1.x() + self._p2.x()) / 2,
+                      (self._p1.y() + self._p2.y()) / 2)
+        return [QPointF(self._p1), mid, QPointF(self._p2)]
 
-    def mouseMoveEvent(self, event):
-        if self._dragging and self._drag_start is not None:
-            delta = event.scenePos() - self._drag_start
-            self._drag_start = event.scenePos()
-            # Translate all three handles by the delta
-            self.handle1.setPos(self.handle1.pos() + delta)
-            self.handle2.setPos(self.handle2.pos() + delta)
-            self.handle3.setPos(self.handle3.pos() + delta)
-            self.update_geometry()
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if self._dragging:
-            self._dragging = False
-            self._drag_start = None
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
+    def apply_grip(self, index: int, pos: QPointF):
+        """Move grip point: 0=p1 (stretch), 1=midpoint (move whole), 2=p2 (stretch)."""
+        if index == 0:
+            self._p1 = QPointF(pos)
+        elif index == 2:
+            self._p2 = QPointF(pos)
+        elif index == 1:
+            # Move whole dimension — compute delta from current midpoint
+            mid = QPointF((self._p1.x() + self._p2.x()) / 2,
+                          (self._p1.y() + self._p2.y()) / 2)
+            delta = pos - mid
+            self._p1 = QPointF(self._p1.x() + delta.x(), self._p1.y() + delta.y())
+            self._p2 = QPointF(self._p2.x() + delta.x(), self._p2.y() + delta.y())
+        self.update_geometry()
 
     # ---------------------------------|
     # Helpers -------------------------|
@@ -269,27 +239,12 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
             self.update_geometry()
 
     def update_geometry(self):
-        """Recalculate line, ticks, label, and witness lines based on handle positions."""
+        """Recalculate line, ticks, label, and witness lines based on _p1/_p2."""
         if self._updating:
             return
         self._updating = True
         try:
-            p1 = self.handle1.scenePos()
-            p2 = self.handle2.scenePos()
-
-            # Derive offset distance from handle3 if it has been dragged
-            h3 = self.handle3.scenePos()
-            mid_base = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
-            line_angle = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
-            perp = line_angle + math.pi / 2
-            # Project handle3 offset vector onto perpendicular direction
-            dx = h3.x() - mid_base.x()
-            dy = h3.y() - mid_base.y()
-            projected = dx * math.cos(perp) + dy * math.sin(perp)
-            if abs(projected) > 1e-3:
-                self._offset_dist = projected
-
-            self.setLine(p1.x(), p1.y(), p2.x(), p2.y())
+            self.setLine(self._p1.x(), self._p1.y(), self._p2.x(), self._p2.y())
             self.update_arrows_and_witness()
             self.update_label()
         finally:
@@ -300,9 +255,9 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self.update_geometry()
 
     def update_label(self):
-        # Compute display length from handle1 → handle2 (the measurement, not the offset line)
-        p1 = self.handle1.scenePos()
-        p2 = self.handle2.scenePos()
+        # Compute display length from _p1 → _p2 (the measurement, not the offset line)
+        p1 = self._p1
+        p2 = self._p2
         length = math.hypot(p2.x() - p1.x(), p2.y() - p1.y())
         scene = self.scene()
         prefix = "R " if self.is_radius else ""
@@ -362,9 +317,9 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
             offset_gap = 3
             witness_ext = 6  # extend witness lines past dimension line
 
-        # Measurement endpoints from handles
-        start = QPointF(self.handle1.x(), self.handle1.y())
-        end = QPointF(self.handle2.x(), self.handle2.y())
+        # Measurement endpoints
+        start = QPointF(self._p1)
+        end = QPointF(self._p2)
 
         # Line angle and perpendicular
         line = QLineF(start, end)
@@ -405,22 +360,4 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
                            p2.x() + dx_tick, p2.y() + dy_tick)
         self.tick2.setPen(self._dim_pen)
 
-        # Reposition handle3 at midpoint of dimension line
-        center_point = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
-        self.handle3.setPos(center_point)
-
-
-class Handle(QGraphicsEllipseItem):
-    """Draggable node for annotations."""
-    def __init__(self, parent, x, y, radius=4):
-        super().__init__(-radius, -radius, 2*radius, 2*radius, parent)
-        self.setBrush(QColor("blue"))
-        self.setPos(x, y)
-        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
-        self.setFlag(self.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-
-    def itemChange(self, change, value):
-        if change == self.GraphicsItemChange.ItemPositionChange and self.parentItem():
-            self.parentItem().update_geometry()
-        return super().itemChange(change, value)
+        # (No child handles to reposition — grip squares drawn by the view)

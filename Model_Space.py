@@ -57,7 +57,7 @@ class Model_Space(QGraphicsScene):
         self.water_supply_node: "WaterSupply | None" = None  # placed water supply
         self.hydraulic_result = None                          # last solver run (Sprint 2)
         self.design_area_sprinklers: list = []                # Sprint 2C design area
-        self.active_user_layer: str = "0"                     # Sprint 4A active layer
+        self.active_user_layer: str = "Default"                  # Sprint 4A active layer
         self._design_area_corner1: "QPointF | None" = None
         self._design_area_rect_item = None                    # QGraphicsRectItem preview
         # Construction geometry (Sprint C)
@@ -75,8 +75,7 @@ class Model_Space(QGraphicsScene):
         self._draw_circle_center: "QPointF | None" = None     # first click for circle
         self._draw_rect_preview: "QGraphicsRectItem | None" = None
         self._draw_circle_preview: "QGraphicsEllipseItem | None" = None
-        self._draw_color: str = "#ffffff"       # default white (dark theme)
-        self._draw_lineweight: float = 3.0      # cosmetic px
+        # Draw colour/lineweight now derived from active layer (see _get_draw_color/_get_draw_lineweight)
         self._last_scene_pos: "QPointF | None" = None  # last cursor position for Tab defaults
         # Arc drawing (3-click: centre, start point, end point)
         self._draw_arcs: list[ArcItem] = []
@@ -180,8 +179,8 @@ class Model_Space(QGraphicsScene):
         for dim in self.annotations.dimensions:
             annotations_data.append({
                 "type": "dimension",
-                "p1":   [dim.handle1.scenePos().x(), dim.handle1.scenePos().y()],
-                "p2":   [dim.handle2.scenePos().x(), dim.handle2.scenePos().y()],
+                "p1":   [dim._p1.x(), dim._p1.y()],
+                "p2":   [dim._p2.x(), dim._p2.y()],
                 "offset_dist": getattr(dim, "_offset_dist", 10),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
             })
@@ -1276,8 +1275,8 @@ class Model_Space(QGraphicsScene):
         for dim in self.annotations.dimensions:
             annotations_data.append({
                 "type": "dimension",
-                "p1":   [dim.handle1.scenePos().x(), dim.handle1.scenePos().y()],
-                "p2":   [dim.handle2.scenePos().x(), dim.handle2.scenePos().y()],
+                "p1":   [dim._p1.x(), dim._p1.y()],
+                "p2":   [dim._p2.x(), dim._p2.y()],
                 "offset_dist": getattr(dim, "_offset_dist", 10),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
             })
@@ -1560,14 +1559,21 @@ class Model_Space(QGraphicsScene):
             node.update()
 
     def _get_draw_color(self) -> str:
-        """Return the effective draw colour: explicit override, else active layer colour."""
-        if self._draw_color and self._draw_color != "#ffffff":
-            return self._draw_color
+        """Return the active layer's colour for new geometry."""
         if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
             ldef = self._user_layer_manager.get(self.active_user_layer)
             if ldef:
                 return ldef.color
-        return self._draw_color
+        return "#ffffff"
+
+    def _get_draw_lineweight(self) -> float:
+        """Return the active layer's lineweight as cosmetic screen px."""
+        if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
+            from user_layer_manager import lw_mm_to_cosmetic_px
+            ldef = self._user_layer_manager.get(self.active_user_layer)
+            if ldef:
+                return lw_mm_to_cosmetic_px(ldef.lineweight)
+        return 2.0
 
     # -------------------------------------------------------------------------
     # GEOMETRY HELPERS
@@ -1737,7 +1743,7 @@ class Model_Space(QGraphicsScene):
                 anchor.y() - length * math.sin(angle_rad),  # Y-up → scene Y-down
             )
             color = self._get_draw_color()
-            item = LineItem(anchor, tip, color, self._draw_lineweight)
+            item = LineItem(anchor, tip, color, self._get_draw_lineweight())
             item.user_layer = self.active_user_layer
             self.addItem(item)
             self._draw_lines.append(item)
@@ -1786,7 +1792,7 @@ class Model_Space(QGraphicsScene):
                 self._draw_rect_anchor.y() + h_spin.value(),
             )
             color = self._get_draw_color()
-            item = RectangleItem(self._draw_rect_anchor, pt2, color, self._draw_lineweight)
+            item = RectangleItem(self._draw_rect_anchor, pt2, color, self._get_draw_lineweight())
             item.user_layer = self.active_user_layer
             self.addItem(item)
             self._draw_rects.append(item)
@@ -1869,7 +1875,7 @@ class Model_Space(QGraphicsScene):
 
             r = r_spin.value()
             color = self._get_draw_color()
-            item = CircleItem(self._draw_circle_center, r, color, self._draw_lineweight)
+            item = CircleItem(self._draw_circle_center, r, color, self._get_draw_lineweight())
             item.user_layer = self.active_user_layer
             self.addItem(item)
             self._draw_circles.append(item)
@@ -2290,8 +2296,8 @@ class Model_Space(QGraphicsScene):
             if self._dim_pending is not None:
                 # Offset sub-mode: project cursor onto perpendicular of the base line
                 dim = self._dim_pending
-                p1 = dim.handle1.scenePos()
-                p2 = dim.handle2.scenePos()
+                p1 = dim._p1
+                p2 = dim._p2
                 mid_base = QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
                 line_angle = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
                 perp = line_angle + math.pi / 2
@@ -2508,6 +2514,7 @@ class Model_Space(QGraphicsScene):
                     self._remove_dim_preview()
                     dim = DimensionAnnotation(center_pt, edge_pt)
                     dim.is_radius = True
+                    dim.user_layer = "Annotations"
                     self.addItem(dim)
                     self.annotations.add_dimension(dim)
                     self.requestPropertyUpdate.emit(dim)
@@ -2556,6 +2563,7 @@ class Model_Space(QGraphicsScene):
                 self._dim_line1 = None  # reset
                 self._remove_dim_preview()
                 dim = DimensionAnnotation(p1, p2)
+                dim.user_layer = "Annotations"
                 self.addItem(dim)
                 self.annotations.add_dimension(dim)
                 self.requestPropertyUpdate.emit(dim)
@@ -2583,7 +2591,7 @@ class Model_Space(QGraphicsScene):
                 note = NoteAnnotation(
                     text="Text", x=rect.x(), y=rect.y(),
                     text_width=text_width)
-                note.user_layer = self.active_user_layer
+                note.user_layer = "Annotations"
                 note.setTextInteractionFlags(
                     Qt.TextInteractionFlag.TextEditorInteraction)
                 self.addItem(note)
@@ -2607,7 +2615,7 @@ class Model_Space(QGraphicsScene):
                 # Create radius preview line (centre → cursor)
                 line = QGraphicsLineItem(snapped.x(), snapped.y(),
                                          snapped.x(), snapped.y())
-                _prev_pen = QPen(QColor(self._draw_color), 2, Qt.PenStyle.DashLine)
+                _prev_pen = QPen(QColor(self._get_draw_color()), 2, Qt.PenStyle.DashLine)
                 _prev_pen.setCosmetic(True)
                 line.setPen(_prev_pen)
                 line.setZValue(200)
@@ -2630,7 +2638,7 @@ class Model_Space(QGraphicsScene):
                     self.removeItem(self._draw_arc_radius_line)
                     self._draw_arc_radius_line = None
                 preview = QGraphicsPathItem()
-                _prev_pen = QPen(QColor(self._draw_color), 2, Qt.PenStyle.DashLine)
+                _prev_pen = QPen(QColor(self._get_draw_color()), 2, Qt.PenStyle.DashLine)
                 _prev_pen.setCosmetic(True)
                 preview.setPen(_prev_pen)
                 preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -2648,13 +2656,14 @@ class Model_Space(QGraphicsScene):
                 if span <= 0:
                     span += 360.0
                 color = self._get_draw_color()
-                lw = self._draw_lineweight
+                lw = self._get_draw_lineweight()
                 item = ArcItem(self._draw_arc_center, self._draw_arc_radius,
                                self._draw_arc_start_deg, span, color, lw)
                 item.user_layer = self.active_user_layer
                 self.addItem(item)
                 self._draw_arcs.append(item)
                 item.setSelected(True)
+                for v in self.views(): v.viewport().update()
                 # Clean up previews
                 if self._draw_arc_preview is not None:
                     self.removeItem(self._draw_arc_preview)
@@ -2679,6 +2688,7 @@ class Model_Space(QGraphicsScene):
                 self._gridlines.append(gl)
                 self.requestPropertyUpdate.emit(gl)
                 gl.setSelected(True)
+                for v in self.views(): v.viewport().update()
                 self._gridline_anchor = None
                 self.preview_pipe.hide()
                 self.push_undo_state()
@@ -2812,7 +2822,7 @@ class Model_Space(QGraphicsScene):
             if self._polyline_active is None:
                 # First click — create the polyline item
                 color = self._get_draw_color()
-                pl = PolylineItem(snapped, color, self._draw_lineweight)
+                pl = PolylineItem(snapped, color, self._get_draw_lineweight())
                 pl.user_layer = self.active_user_layer
                 self.addItem(pl)
                 self._polylines.append(pl)
@@ -2841,12 +2851,13 @@ class Model_Space(QGraphicsScene):
                 if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                     tip = self._constrain_angle(self._draw_line_anchor, snapped)
                 color = self._get_draw_color()
-                lw = self._draw_lineweight
+                lw = self._get_draw_lineweight()
                 item = LineItem(self._draw_line_anchor, tip, color, lw)
                 item.user_layer = self.active_user_layer
                 self.addItem(item)
                 self._draw_lines.append(item)
                 item.setSelected(True)
+                for v in self.views(): v.viewport().update()
                 self._draw_line_anchor = None
                 self.preview_pipe.hide()
                 self.push_undo_state()
@@ -2860,7 +2871,7 @@ class Model_Space(QGraphicsScene):
                 self.instructionChanged.emit("Pick opposite corner")
                 # Create preview rect
                 preview = QGraphicsRectItem(QRectF(snapped, snapped))
-                _prev_pen = QPen(QColor(self._draw_color), 2, Qt.PenStyle.DashLine)
+                _prev_pen = QPen(QColor(self._get_draw_color()), 2, Qt.PenStyle.DashLine)
                 _prev_pen.setCosmetic(True)
                 preview.setPen(_prev_pen)
                 preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -2871,7 +2882,7 @@ class Model_Space(QGraphicsScene):
                 # Commit rectangle
                 rect = QRectF(self._draw_rect_anchor, snapped).normalized()
                 color = self._get_draw_color()
-                lw = self._draw_lineweight
+                lw = self._get_draw_lineweight()
                 item = RectangleItem(
                     QPointF(rect.x(), rect.y()),
                     QPointF(rect.x() + rect.width(), rect.y() + rect.height()),
@@ -2881,6 +2892,7 @@ class Model_Space(QGraphicsScene):
                 self.addItem(item)
                 self._draw_rects.append(item)
                 item.setSelected(True)
+                for v in self.views(): v.viewport().update()
                 # Remove preview
                 if self._draw_rect_preview is not None:
                     self.removeItem(self._draw_rect_preview)
@@ -2897,7 +2909,7 @@ class Model_Space(QGraphicsScene):
                 self.instructionChanged.emit("Pick radius point")
                 # Create preview circle
                 preview = QGraphicsEllipseItem(snapped.x(), snapped.y(), 0, 0)
-                _prev_pen = QPen(QColor(self._draw_color), 2, Qt.PenStyle.DashLine)
+                _prev_pen = QPen(QColor(self._get_draw_color()), 2, Qt.PenStyle.DashLine)
                 _prev_pen.setCosmetic(True)
                 preview.setPen(_prev_pen)
                 preview.setBrush(QBrush(Qt.BrushStyle.NoBrush))
@@ -2910,12 +2922,13 @@ class Model_Space(QGraphicsScene):
                                snapped.y() - self._draw_circle_center.y())
                 if r > 0:
                     color = self._get_draw_color()
-                    lw = self._draw_lineweight
+                    lw = self._get_draw_lineweight()
                     item = CircleItem(self._draw_circle_center, r, color, lw)
                     item.user_layer = self.active_user_layer
                     self.addItem(item)
                     self._draw_circles.append(item)
                     item.setSelected(True)
+                    for v in self.views(): v.viewport().update()
                 # Remove preview
                 if self._draw_circle_preview is not None:
                     self.removeItem(self._draw_circle_preview)
@@ -2963,6 +2976,7 @@ class Model_Space(QGraphicsScene):
                 pl.finalize()
                 self._polyline_active = None
                 pl.setSelected(True)
+                for v in self.views(): v.viewport().update()
                 self.push_undo_state()
             event.accept()
             return
