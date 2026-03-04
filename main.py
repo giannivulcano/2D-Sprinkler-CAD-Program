@@ -1,4 +1,4 @@
-import sys
+import sys, os
 from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -98,13 +98,14 @@ class ImportDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FireFlow Pro - Sprinkler Design Software")
+        self.setWindowTitle("FireFlow Pro \u2014 Untitled")
 
         # Settings
         self.settings = QSettings("GV", "SprinklerAPP")
         self.current_sprinkler_template = Sprinkler(None)
         self.current_pipe_template = Pipe(None, None)
         self._current_file: str | None = None
+        self._modified: bool = False
 
         # Scene + View
         self.scene = Model_Space()
@@ -205,6 +206,7 @@ class MainWindow(QMainWindow):
         self.scene.cursorMoved.connect(self.coord_label.setText)
         self.scene.modeChanged.connect(self._update_mode_label)
         self.scene.modeChanged.connect(self._sync_mode_buttons)
+        self.scene.sceneModified.connect(self._on_scene_modified)
         self.scene.instructionChanged.connect(
             lambda text: self.mode_label.setText(text)
         )
@@ -976,7 +978,9 @@ class MainWindow(QMainWindow):
 
     def save_file(self):
         if self._current_file:
-            self.scene.save_to_file(self._current_file)
+            if self.scene.save_to_file(self._current_file):
+                self._modified = False
+                self._update_title()
         else:
             self.save_file_as()
 
@@ -984,18 +988,33 @@ class MainWindow(QMainWindow):
         file, _ = QFileDialog.getSaveFileName(self, "Save CAD Scene", "", "JSON Files (*.json)")
         if file:
             self._current_file = file
-            self.scene.save_to_file(file)
+            if self.scene.save_to_file(file):
+                self._modified = False
+                self._update_title()
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Load CAD Scene", "", "JSON Files (*.json)")
         if file:
             self._current_file = file
             self.scene.load_from_file(file)
+            self._modified = False
+            self._update_title()
 
     def new_file(self):
         """Clear the scene and start a fresh project."""
         self._current_file = None
         self.scene._clear_scene()
+        self._modified = False
+        self._update_title()
+
+    def _update_title(self):
+        name = os.path.basename(self._current_file) if self._current_file else "Untitled"
+        star = " *" if self._modified else ""
+        self.setWindowTitle(f"FireFlow Pro \u2014 {name}{star}")
+
+    def _on_scene_modified(self):
+        self._modified = True
+        self._update_title()
 
     def _delete_if_not_editing(self):
         """Delete selected items unless a text item is being edited."""
@@ -1073,6 +1092,20 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        if self._modified:
+            from PyQt6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "You have unsaved changes. Save before closing?",
+                QMessageBox.StandardButton.Save |
+                QMessageBox.StandardButton.Discard |
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Save:
+                self.save_file()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                event.ignore()
+                return
         self.save_settings()
         super().closeEvent(event)
 

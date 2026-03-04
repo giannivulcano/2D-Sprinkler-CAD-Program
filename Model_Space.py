@@ -1,4 +1,4 @@
-import sys, json, math
+import sys, json, math, shutil
 from PyQt6.QtWidgets import (QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem,
                               QGraphicsItem, QGraphicsItemGroup, QGraphicsPixmapItem,
                               QGraphicsTextItem, QGraphicsPathItem, QGraphicsRectItem,
@@ -35,6 +35,7 @@ class Model_Space(QGraphicsScene):
     underlaysChanged = pyqtSignal()    # emitted when underlays list changes (for LayerManager)
     modeChanged = pyqtSignal(str)      # emits mode name for status bar instructions
     instructionChanged = pyqtSignal(str)  # emits step-by-step instruction text
+    sceneModified = pyqtSignal()          # emitted on every push_undo_state
 
     def __init__(self):
         super().__init__()
@@ -247,17 +248,34 @@ class Model_Space(QGraphicsScene):
             "draw_arcs":           draw_arcs_data,
             "gridlines":           gridlines_data,
         }
+        # Create backup if file exists
+        bak_path = filename + ".bak"
+        if os.path.exists(filename):
+            shutil.copy2(filename, bak_path)
+
         try:
             with open(filename, "w") as f:
                 json.dump(payload, f, indent=2)
             self._show_status(f"Saved to {filename}")
+            # Remove backup on success
+            if os.path.exists(bak_path):
+                os.remove(bak_path)
+            return True
         except Exception as e:
-            self._show_status(f"Error saving: {e}")
+            self._show_status(f"Save failed: {e}")
+            # Restore from backup on failure
+            if os.path.exists(bak_path):
+                shutil.copy2(bak_path, filename)
+            return False
 
     def load_from_file(self, filename: str):
         """Clear the scene and restore from JSON."""
-        with open(filename, "r") as f:
-            payload = json.load(f)
+        try:
+            with open(filename, "r") as f:
+                payload = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError) as e:
+            self._show_status(f"Failed to open: {e}")
+            return
 
         version = payload.get("version", 1)
         self._clear_scene()
@@ -1487,6 +1505,7 @@ class Model_Space(QGraphicsScene):
             self._undo_stack.pop(0)
         else:
             self._undo_pos = len(self._undo_stack) - 1
+        self.sceneModified.emit()
 
     def undo(self):
         """Restore the previous network state."""
@@ -3064,6 +3083,8 @@ class Model_Space(QGraphicsScene):
                 data.append({
                     "type": "node",
                     "x": item.pos().x(), "y": item.pos().y(),
+                    "elevation": item.z_pos,
+                    "user_layer": getattr(item, "user_layer", "Default"),
                     "sprinkler": sprinkler,
                     "pipes": pipes,
                 })
@@ -3080,6 +3101,13 @@ class Model_Space(QGraphicsScene):
                 new_y = obj["y"] + offset.y()
                 existing = self.find_nearby_node(new_x, new_y)
                 node1 = existing if existing else self.add_node(new_x, new_y)
+
+                # Restore elevation and layer from copied data
+                if "elevation" in obj:
+                    node1.z_pos = obj["elevation"]
+                    node1.set_property("Elevation", str(obj["elevation"]))
+                if "user_layer" in obj:
+                    node1.user_layer = obj["user_layer"]
 
                 if obj.get("sprinkler"):
                     template = Sprinkler(None)

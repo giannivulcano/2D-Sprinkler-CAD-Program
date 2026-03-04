@@ -1,7 +1,7 @@
 import math
 
 from PyQt6.QtWidgets import (
-    QGraphicsView, QScrollBar,
+    QGraphicsView, QScrollBar, QMenu,
     QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsRectItem,
 )
 from PyQt6.QtCore import Qt, QPoint, QPointF, QLineF
@@ -331,3 +331,56 @@ class Model_View(QGraphicsView):
             self.fit_to_screen()
             return
         super().mouseDoubleClickEvent(event)
+
+    # ── Right-click context menu ───────────────────────────────────────────
+
+    def contextMenuEvent(self, event):
+        scene = self.scene()
+        if scene is None:
+            return
+
+        menu = QMenu(self)
+        selected = scene.selectedItems()
+        mode = getattr(scene, "mode", None)
+
+        # If in a drawing mode, offer Cancel
+        if mode and mode != "select":
+            cancel_act = menu.addAction("Cancel")
+            cancel_act.triggered.connect(lambda: scene.set_mode("select"))
+            menu.addSeparator()
+
+        # Undo / Redo
+        undo_act = menu.addAction("Undo")
+        undo_act.triggered.connect(scene.undo)
+        redo_act = menu.addAction("Redo")
+        redo_act.triggered.connect(scene.redo)
+        menu.addSeparator()
+
+        # Selection-dependent actions
+        if selected:
+            delete_act = menu.addAction("Delete")
+            delete_act.triggered.connect(scene.delete_selected_items)
+            copy_act = menu.addAction("Copy")
+            copy_act.triggered.connect(scene.copy_selected_items)
+            dup_act = menu.addAction("Duplicate")
+            dup_act.triggered.connect(lambda: scene.set_mode("duplicate"))
+            menu.addSeparator()
+            desel_act = menu.addAction("Deselect All")
+            desel_act.triggered.connect(scene.clearSelection)
+        else:
+            sel_all = menu.addAction("Select All")
+            sel_all.triggered.connect(self._select_all_items)
+
+        # Paste (if clipboard has data)
+        if hasattr(scene, "clipboard_data") and scene.clipboard_data():
+            paste_act = menu.addAction("Paste")
+            paste_act.triggered.connect(lambda: scene.set_mode("paste"))
+
+        menu.exec(event.globalPos())
+
+    def _select_all_items(self):
+        scene = self.scene()
+        if scene:
+            for item in scene.items():
+                if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+                    item.setSelected(True)

@@ -1,4 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QFormLayout, QLabel, QLineEdit, QComboBox, QSpinBox
+from PyQt6.QtGui import QDoubleValidator
 from node import Node
 from pipe import Pipe
 from sprinkler import Sprinkler
@@ -38,8 +39,18 @@ class PropertyManager(QWidget):
                     lambda val, key=key, target=item: target.set_property(key, val)
                 )
 
-            else:  # fallback to text
+            else:  # fallback to text — with optional numeric validation
                 widget = QLineEdit(str(meta["value"]))
+
+                # Auto-detect numeric fields and add validator
+                try:
+                    float(meta["value"])
+                    validator = QDoubleValidator()
+                    validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+                    widget.setValidator(validator)
+                except (ValueError, TypeError):
+                    pass  # truly a text field — no validator
+
                 widget.editingFinished.connect(
                     lambda key=key, field=widget, target=item: target.set_property(key, field.text())
                 )
