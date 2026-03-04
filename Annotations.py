@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QGraphicsPolygonItem,
     QStyle,
 )
-from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption
+from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption, QPainterPath, QPainterPathStroker
 from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
 
 class Annotation:
@@ -66,6 +66,9 @@ class NoteAnnotation(QGraphicsTextItem, Annotation):
 
         self._properties.update({
             "Text":      {"type": "string", "value": text},
+            "Color":     {"type": "enum",
+                          "options": ["White", "Black", "Red", "Blue"],
+                          "value": "White"},
             "FontSize":  {"type": "string", "value": "12"},
             "Bold":      {"type": "enum", "options": ["Off", "On"], "value": "Off"},
             "Italic":    {"type": "enum", "options": ["Off", "On"], "value": "Off"},
@@ -80,6 +83,10 @@ class NoteAnnotation(QGraphicsTextItem, Annotation):
         super().set_property(key, value)
         if key == "Text":
             self.setPlainText(value)
+        elif key == "Color":
+            _color_map = {"Black": "#000000", "Red": "#ff0000",
+                          "Blue": "#0000ff", "White": "#ffffff"}
+            self.setDefaultTextColor(QColor(_color_map.get(value, value)))
         elif key == "FontSize":
             try:
                 f = self.font()
@@ -185,6 +192,35 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.StateFlag.State_Selected
         super().paint(painter, option, widget)
+
+    # ── Hit-area overrides — make dimensions easy to click ───────────────
+
+    def shape(self) -> QPainterPath:
+        """Return a wide stroke around the dimension line + label area."""
+        path = QPainterPath()
+        line = self.line()
+        path.moveTo(line.p1())
+        path.lineTo(line.p2())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(16.0)          # generous 16-px click corridor
+        wide_path = stroker.createStroke(path)
+        # Include the label bounding rect so clicking the text selects too
+        if self.label:
+            label_path = QPainterPath()
+            label_path.addRect(self.label.boundingRect())
+            mapped = self.label.mapToParent(label_path)
+            wide_path = wide_path.united(mapped)
+        return wide_path
+
+    def boundingRect(self) -> QRectF:
+        """Encompass the main line, witness lines, ticks, and label."""
+        base = super().boundingRect()
+        for child in (self.witness1, self.witness2, self.tick1, self.tick2):
+            if child:
+                base = base.united(child.mapRectToParent(child.boundingRect()))
+        if self.label:
+            base = base.united(self.label.mapRectToParent(self.label.boundingRect()))
+        return base.adjusted(-8, -8, 8, 8)
 
     # ── Grip protocol (integrates with Model_View grip squares) ──────────
 

@@ -81,7 +81,7 @@ class Node(QGraphicsEllipseItem):
                 self.fitting.update()   # <-- auto-update here
                 pipe.update_geometry()
             else:
-                print("only 4 connections permitted")
+                pass  # max 4 connections
 
     def remove_pipe(self, pipe):
         if pipe in self.pipes:

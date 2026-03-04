@@ -5,8 +5,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
                               QTabWidget, QMenu, QStyle, QWidget,
                               QComboBox)
-from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap
+from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF
+from PyQt6.QtWidgets import QGraphicsTextItem
 from Model_Space import Model_Space
 from Model_View import Model_View
 from sprinkler import Sprinkler
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("GV", "SprinklerAPP")
         self.current_sprinkler_template = Sprinkler(None)
         self.current_pipe_template = Pipe(None, None)
+        self._current_file: str | None = None
 
         # Scene + View
         self.scene = Model_Space()
@@ -209,6 +211,15 @@ class MainWindow(QMainWindow):
 
         self.init_ribbon()
 
+        # Global keyboard shortcuts
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_file)
+        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.open_file)
+        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.new_file)
+        QShortcut(QKeySequence("Delete"), self).activated.connect(
+            self._delete_if_not_editing)
+        QShortcut(QKeySequence("Escape"), self).activated.connect(
+            lambda: self.scene.set_mode("select"))
+
         # Restore settings
         self.restore_settings()
 
@@ -262,21 +273,26 @@ class MainWindow(QMainWindow):
 
         # --- File ---
         g_file = manage_page.add_group("File")
-        g_file.add_large_button("Open", _I("load_icon.svg"), self.open_file)
-        g_file.add_large_button("Save", _I("save_icon.svg"), self.save_file)
-        g_file.add_large_button("Save As", _I("saveas_icon.svg"), self.save_file_as)
+        _btn = g_file.add_large_button("Open", _I("load_icon.svg"), self.open_file)
+        _btn.setToolTip("Open a saved project [Ctrl+O]")
+        _btn = g_file.add_large_button("Save", _I("save_icon.svg"), self.save_file)
+        _btn.setToolTip("Save the current project [Ctrl+S]")
+        _btn = g_file.add_large_button("Save As", _I("saveas_icon.svg"), self.save_file_as)
+        _btn.setToolTip("Save as a new file")
 
         # --- Import (split menu: PDF / DXF) ---
         g_imp = manage_page.add_group("Import")
         import_menu = QMenu(self)
         import_menu.addAction("PDF Underlay\u2026", self.open_pdf_import_dialog)
         import_menu.addAction("DXF Underlay\u2026", self.open_dxf_import_dialog)
-        g_imp.add_large_menu_button(
+        _btn = g_imp.add_large_menu_button(
             "Import\nUnderlay", _I("import_icon.svg"), import_menu)
-        g_imp.add_small_button(
+        _btn.setToolTip("Import a PDF or DXF underlay")
+        _btn = g_imp.add_small_button(
             "Refresh All",
             s.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
             self.refresh_underlays)
+        _btn.setToolTip("Re-import all underlays from disk")
 
         # --- Export (placeholder) ---
         g_exp = manage_page.add_group("Export")
@@ -287,38 +303,46 @@ class MainWindow(QMainWindow):
 
         # --- Project ---
         g_proj = manage_page.add_group("Project")
-        g_proj.add_large_button(
+        _btn = g_proj.add_large_button(
             "Project\nInfo", _I("info_icon.svg"),
             self._open_project_info)
+        _btn.setToolTip("View/edit project metadata")
 
         # --- Settings ---
         g_set = manage_page.add_group("Settings")
-        g_set.add_small_menu_button(
+        _btn = g_set.add_small_menu_button(
             "Units", _I("info_icon.svg"), self._build_units_menu())
-        g_set.add_small_menu_button(
+        _btn.setToolTip("Set display units (Imperial/Metric)")
+        _btn = g_set.add_small_menu_button(
             "Precision", _I("info_icon.svg"), self._build_precision_menu())
+        _btn.setToolTip("Set decimal precision")
 
         # --- Grid ---
         g_grid = manage_page.add_group("Grid")
         self._grid_btn = g_grid.add_large_button(
             "Grid\nOn/Off", _I("gridline_icon.svg"),
             self.toggle_grid, checkable=True)
-        g_grid.add_small_menu_button(
+        self._grid_btn.setToolTip("Toggle background grid")
+        _btn = g_grid.add_small_menu_button(
             "Grid Size", _I("gridline_icon.svg"), self._build_grid_size_menu())
+        _btn.setToolTip("Change grid dot spacing")
 
         # --- Edit (Undo/Redo always accessible) ---
         g_edit = manage_page.add_group("Edit")
-        g_edit.add_large_button(
+        _btn = g_edit.add_large_button(
             "Undo", _I("undo_icon.svg"),
             self.scene.undo, shortcut="Ctrl+Z")
-        g_edit.add_large_button(
+        _btn.setToolTip("Undo last action [Ctrl+Z]")
+        _btn = g_edit.add_large_button(
             "Redo", _I("redo_icon.svg"),
             self.scene.redo, shortcut="Ctrl+Y")
+        _btn.setToolTip("Redo last undone action [Ctrl+Y]")
 
         # --- Panels (dock toggles) ---
         g_pan = manage_page.add_group("Panels")
         prop_btn = g_pan.add_small_button(
             "Properties", _I("info_icon.svg"), None, checkable=True)
+        prop_btn.setToolTip("Toggle Properties panel")
         prop_btn.toggled.connect(self.dock.setVisible)
         self.dock.visibilityChanged.connect(prop_btn.setChecked)
 
@@ -326,11 +350,13 @@ class MainWindow(QMainWindow):
             "Browser",
             s.standardIcon(QStyle.StandardPixmap.SP_DirIcon),
             None, checkable=True)
+        browser_btn.setToolTip("Toggle Browser panel")
         browser_btn.toggled.connect(self.browser_dock.setVisible)
         self.browser_dock.visibilityChanged.connect(browser_btn.setChecked)
 
         report_btn = g_pan.add_small_button(
             "Report Panel", _I("report_icon.svg"), None, checkable=True)
+        report_btn.setToolTip("Toggle Hydraulic Report panel")
         report_btn.toggled.connect(
             lambda on: self.hydro_dock.show() if on else self.hydro_dock.hide())
         self.hydro_dock.visibilityChanged.connect(report_btn.setChecked)
@@ -351,12 +377,12 @@ class MainWindow(QMainWindow):
                 btn = group.add_small_button(label, icon, cb, checkable=True)
             self._mode_buttons[mode_name] = btn
             return btn
-        _mode_btn(g_geom, "Line", _I("line_icon.svg"), "draw_line")
-        _mode_btn(g_geom, "Rectangle", _I("rectangle_icon.svg"), "draw_rectangle")
-        _mode_btn(g_geom, "Circle", _I("circle_icon.svg"), "draw_circle")
-        _mode_btn(g_geom, "Polyline", _I("polyline_icon.svg"), "polyline")
-        _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc")
-        _mode_btn(g_geom, "Gridlines", _I("gridline_icon.svg"), "gridline")
+        _mode_btn(g_geom, "Line", _I("line_icon.svg"), "draw_line").setToolTip("Draw a line segment")
+        _mode_btn(g_geom, "Rectangle", _I("rectangle_icon.svg"), "draw_rectangle").setToolTip("Draw a rectangle")
+        _mode_btn(g_geom, "Circle", _I("circle_icon.svg"), "draw_circle").setToolTip("Draw a circle")
+        _mode_btn(g_geom, "Polyline", _I("polyline_icon.svg"), "polyline").setToolTip("Draw a polyline (multi-segment)")
+        _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc").setToolTip("Draw an arc (3-click)")
+        _mode_btn(g_geom, "Gridlines", _I("gridline_icon.svg"), "gridline").setToolTip("Place construction gridlines")
 
         # --- Layer (assigns new geometry to selected layer) ---
         g_draw_layer = draw_page.add_group("Layer")
@@ -371,18 +397,24 @@ class MainWindow(QMainWindow):
 
         # --- Constraints (placeholder — geometric constraints like AutoCAD) ---
         g_const = draw_page.add_group("Constraints")
-        g_const.add_small_button(
+        _btn = g_const.add_small_button(
             "Parallel",
             s.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
             None)
-        g_const.add_small_button(
+        _btn.setEnabled(False)
+        _btn.setToolTip("Parallel constraint -- coming soon")
+        _btn = g_const.add_small_button(
             "Perpendicular",
             s.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
             None)
-        g_const.add_small_button(
+        _btn.setEnabled(False)
+        _btn.setToolTip("Perpendicular constraint -- coming soon")
+        _btn = g_const.add_small_button(
             "Coincident",
             s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
             None)
+        _btn.setEnabled(False)
+        _btn.setToolTip("Coincident constraint -- coming soon")
 
         # --- Snap ---
         g_snap = draw_page.add_group("Snap")
@@ -392,20 +424,22 @@ class MainWindow(QMainWindow):
             self._toggle_osnap, checkable=True, shortcut="F3")
         self._osnap_btn.setChecked(True)
         self._osnap_btn.setToolTip("Object Snap  [F3]")
-        g_snap.add_small_button(
+        _btn = g_snap.add_small_button(
             "Snap to\nUnderlay",
             s.standardIcon(QStyle.StandardPixmap.SP_CommandLink),
             lambda checked: setattr(self.scene, "_snap_to_underlay", checked),
             checkable=True)
-        g_snap.add_small_menu_button(
+        _btn.setToolTip("Snap to DXF underlay geometry")
+        _btn = g_snap.add_small_menu_button(
             "Angle Snap",
             s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
             self._build_snap_angle_menu())
+        _btn.setToolTip("Set Ctrl-drag angle snap increment")
 
         # --- Annotations ---
         g_ann = draw_page.add_group("Annotations")
-        _mode_btn(g_ann, "Dimension", _I("dimension_icon.svg"), "dimension")
-        _mode_btn(g_ann, "Text", _I("text_icon.svg"), "text")
+        _mode_btn(g_ann, "Dimension", _I("dimension_icon.svg"), "dimension").setToolTip("Place a dimension annotation")
+        _mode_btn(g_ann, "Text", _I("text_icon.svg"), "text").setToolTip("Place a text note")
 
         # ── Tab 3: Build ─────────────────────────────────────────────────────
         build_page = self.ribbon.add_page("Build")
@@ -416,11 +450,13 @@ class MainWindow(QMainWindow):
             "Pipe", _I("pipe_icon.svg"),
             lambda: self.scene.set_mode("pipe", self.current_pipe_template),
             checkable=True)
+        _pipe_btn.setToolTip("Draw a pipe between two nodes")
         self._mode_buttons["pipe"] = _pipe_btn
         _sprinkler_btn = g_place.add_large_button(
             "Sprinkler", _I("sprinkler_icon.svg"),
             lambda: self.scene.set_mode("sprinkler", self.current_sprinkler_template),
             checkable=True)
+        _sprinkler_btn.setToolTip("Place a sprinkler on a node or pipe")
         self._mode_buttons["sprinkler"] = _sprinkler_btn
 
         # --- System ---
@@ -429,21 +465,25 @@ class MainWindow(QMainWindow):
             "Water\nSupply", _I("supply_icon.svg"),
             lambda: self.scene.set_mode("water_supply"),
             checkable=True)
+        _ws_btn.setToolTip("Place the water supply point")
         self._mode_buttons["water_supply"] = _ws_btn
         _da_btn = g_sys.add_large_button(
             "Design\nArea", _I("design_area_icon.svg"),
             lambda: self.scene.set_mode("design_area"),
             checkable=True)
+        _da_btn.setToolTip("Define the design area for hydraulic calc")
         self._mode_buttons["design_area"] = _da_btn
         self._coverage_btn = g_sys.add_small_button(
             "Coverage Overlay", _I("sprinkler_icon.svg"),
             self.toggle_coverage_overlay, checkable=True)
+        self._coverage_btn.setToolTip("Show/hide sprinkler coverage circles")
 
         # --- Library ---
         g_lib = build_page.add_group("Library")
-        g_lib.add_large_button(
+        _btn = g_lib.add_large_button(
             "Sprinkler\nManager", _I("sprinkler_icon.svg"),
             self.open_sprinkler_manager)
+        _btn.setToolTip("Open sprinkler database manager")
 
         # ── Tab 4: Modify (always visible, auto-switches on selection) ────────
         modify_page = self.ribbon.add_page("Modify")
@@ -451,20 +491,26 @@ class MainWindow(QMainWindow):
 
         # --- Edit ---
         g_medit = modify_page.add_group("Edit")
-        g_medit.add_large_button("Undo", _I("undo_icon.svg"), self.scene.undo)
-        g_medit.add_large_button("Redo", _I("redo_icon.svg"), self.scene.redo)
-        g_medit.add_large_button(
+        _btn = g_medit.add_large_button("Undo", _I("undo_icon.svg"), self.scene.undo)
+        _btn.setToolTip("Undo last action [Ctrl+Z]")
+        _btn = g_medit.add_large_button("Redo", _I("redo_icon.svg"), self.scene.redo)
+        _btn.setToolTip("Redo last undone action [Ctrl+Y]")
+        _btn = g_medit.add_large_button(
             "Delete", _I("delete_icon.svg"),
             lambda: self.scene.delete_selected_items())
-        g_medit.add_small_button(
+        _btn.setToolTip("Delete selected items [Del]")
+        _btn = g_medit.add_small_button(
             "Cut", _I("cut_icon.svg"),
             lambda: (self.scene.copy_selected_items(), self.scene.delete_selected_items()))
-        g_medit.add_small_button(
+        _btn.setToolTip("Cut selected items")
+        _btn = g_medit.add_small_button(
             "Copy", _I("copy_icon.svg"),
             lambda: self.scene.copy_selected_items())
-        g_medit.add_small_button(
+        _btn.setToolTip("Copy selected items")
+        _btn = g_medit.add_small_button(
             "Paste", _I("paste_icon.svg"),
             lambda: self.scene.paste_items())
+        _btn.setToolTip("Paste items")
 
         # --- Layer ---
         g_layer = modify_page.add_group("Layer")
@@ -476,24 +522,30 @@ class MainWindow(QMainWindow):
 
         # --- Transform ---
         g_xform = modify_page.add_group("Transform")
-        g_xform.add_small_button(
+        _btn = g_xform.add_small_button(
             "Move", _I("move_icon.svg"),
             lambda: self._require_selection(lambda: self.scene.set_mode("move")))
-        g_xform.add_small_button(
+        _btn.setToolTip("Move selected items (pick base + dest)")
+        _btn = g_xform.add_small_button(
             "Duplicate", _I("duplicate_icon.svg"),
             lambda: self._require_selection(lambda: self.scene.duplicate_selected()))
-        g_xform.add_small_button(
+        _btn.setToolTip("Duplicate selected items in place")
+        _btn = g_xform.add_small_button(
             "Array", _I("array_icon.svg"),
             lambda: self._require_selection(self._open_array_dialog))
-        g_xform.add_small_button(
+        _btn.setToolTip("Create linear/radial array of selected items")
+        _btn = g_xform.add_small_button(
             "Rotate", _I("rotate_icon.svg"),
             lambda: self._require_selection(lambda: self.scene.rotate_selected_items()))
-        g_xform.add_small_button(
+        _btn.setToolTip("Rotate selected items 90 deg")
+        _btn = g_xform.add_small_button(
             "Scale", _I("scale_icon.svg"),
             lambda: self._require_selection(self.set_scale_dialog))
-        g_xform.add_small_button(
+        _btn.setToolTip("Scale selected items")
+        _btn = g_xform.add_small_button(
             "Offset", _I("trim_icon.svg"),
             lambda: self.scene.set_mode("offset"))
+        _btn.setToolTip("Offset geometry by a distance")
 
         # --- Text Formatting (shown when text is selected) ---
         g_text = modify_page.add_group("Text")
@@ -550,46 +602,54 @@ class MainWindow(QMainWindow):
 
         # --- Hydraulics ---
         g_hyd = analyze_page.add_group("Hydraulics")
-        g_hyd.add_large_button(
+        _btn = g_hyd.add_large_button(
             "Run\nHydraulics", _I("hydraulics_icon.svg"),
             self.run_hydraulics, shortcut="F5")
-        g_hyd.add_large_button(
+        _btn.setToolTip("Run hydraulic calculation [F5]")
+        _btn = g_hyd.add_large_button(
             "Clear\nResults", _I("clear_icon.svg"),
             self.clear_hydraulics)
+        _btn.setToolTip("Clear hydraulic overlay and results")
 
         # --- Export ---
         g_exp = analyze_page.add_group("Export")
-        g_exp.add_large_button(
+        _btn = g_exp.add_large_button(
             "Export PDF", _I("export_icon.svg"),
             self.hydro_report._export_pdf)
-        g_exp.add_large_button(
+        _btn.setToolTip("Export hydraulic report to PDF")
+        _btn = g_exp.add_large_button(
             "Export CSV", _I("report_icon.svg"),
             self.hydro_report._export_csv)
+        _btn.setToolTip("Export hydraulic results to CSV")
 
         # ── Tab 6: Draft ─────────────────────────────────────────────────────
         draft_page = self.ribbon.add_page("Draft")
 
         # --- Workspace ---
         g_ws = draft_page.add_group("Workspace")
-        g_ws.add_large_button(
+        _btn = g_ws.add_large_button(
             "Model\nSpace",
             s.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
             lambda: self.central_tabs.setCurrentIndex(0))
-        g_ws.add_large_button(
+        _btn.setToolTip("Switch to Model Space view")
+        _btn = g_ws.add_large_button(
             "Layout 1\nPaper",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
             lambda: self.central_tabs.setCurrentIndex(1))
+        _btn.setToolTip("Switch to Paper Space layout")
 
         # --- Page ---
         g_pg = draft_page.add_group("Page")
-        g_pg.add_large_menu_button(
+        _btn = g_pg.add_large_menu_button(
             "Paper Size",
             s.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
             self._build_paper_size_menu())
-        g_pg.add_large_button(
+        _btn.setToolTip("Change paper sheet size")
+        _btn = g_pg.add_large_button(
             "Title Block",
             s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
             self.paper_space_widget.edit_title_block)
+        _btn.setToolTip("Edit title block fields")
 
     # ── Project Information dialog ────────────────────────────────────────────
 
@@ -915,19 +975,34 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def save_file(self):
-        file, _ = QFileDialog.getSaveFileName(self, "Save CAD Scene", "", "JSON Files (*.json)")
-        if file:
-            self.scene.save_to_file(file)
+        if self._current_file:
+            self.scene.save_to_file(self._current_file)
+        else:
+            self.save_file_as()
 
     def save_file_as(self):
         file, _ = QFileDialog.getSaveFileName(self, "Save CAD Scene", "", "JSON Files (*.json)")
         if file:
+            self._current_file = file
             self.scene.save_to_file(file)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "Load CAD Scene", "", "JSON Files (*.json)")
         if file:
+            self._current_file = file
             self.scene.load_from_file(file)
+
+    def new_file(self):
+        """Clear the scene and start a fresh project."""
+        self._current_file = None
+        self.scene._clear_scene()
+
+    def _delete_if_not_editing(self):
+        """Delete selected items unless a text item is being edited."""
+        focus = self.scene.focusItem()
+        if isinstance(focus, QGraphicsTextItem) and focus.hasFocus():
+            return  # let the text editor handle Delete
+        self.scene.delete_selected_items()
 
     def set_scale_dialog(self):
         self.scene.set_mode("set_scale")

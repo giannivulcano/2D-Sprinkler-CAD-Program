@@ -40,10 +40,6 @@ class SprinklerSystem:
             self.fittings.remove(fitting)
 
     def report(self):
-        print(f"nodes: {len(self.nodes)}")
-        print(f"pipes: {len(self.pipes)}")
-        print(f"sprinklers: {len(self.sprinklers)}")
-        print(f"fittings: {len(self.fittings)}")
         return {
             "nodes": len(self.nodes),
             "pipes": len(self.pipes),

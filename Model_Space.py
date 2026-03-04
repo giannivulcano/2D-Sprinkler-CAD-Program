@@ -250,9 +250,9 @@ class Model_Space(QGraphicsScene):
         try:
             with open(filename, "w") as f:
                 json.dump(payload, f, indent=2)
-            print(f"✅ Saved to {filename}")
+            self._show_status(f"Saved to {filename}")
         except Exception as e:
-            print(f"❌ Error saving: {e}")
+            self._show_status(f"Error saving: {e}")
 
     def load_from_file(self, filename: str):
         """Clear the scene and restore from JSON."""
@@ -397,7 +397,7 @@ class Model_Space(QGraphicsScene):
         self._undo_stack = []
         self._undo_pos = -1
         self.push_undo_state()
-        print(f"✅ Loaded from {filename}")
+        self._show_status(f"Loaded from {filename}")
 
     def _clear_scene(self):
         """Remove all user content, keeping preview items and origin markers."""
@@ -447,6 +447,14 @@ class Model_Space(QGraphicsScene):
 
     # -------------------------------------------------------------------------
     # SCENE MANAGEMENT
+
+    def _show_status(self, message: str, timeout: int = 5000):
+        """Show a message on the main window's status bar."""
+        views = self.views()
+        if views:
+            window = views[0].window()
+            if window and hasattr(window, 'statusBar'):
+                window.statusBar().showMessage(message, timeout)
 
     def draw_origin(self):
         """Draw a small white cross at the origin — constant screen size, non-selectable."""
@@ -1038,7 +1046,7 @@ class Model_Space(QGraphicsScene):
         progress.close()
         self._cleanup_dxf_worker()
         self.underlaysChanged.emit()
-        print(f"✅ Imported DXF: {params['file_path']} ({len(items)} items)")
+        self._show_status(f"Imported DXF: {params['file_path']} ({len(items)} items)")
 
     def _geom_to_item(self, geom: dict, pen: QPen, color: QColor):
         """Convert a geometry dict (from DxfImportWorker) into a QGraphicsItem.
@@ -1101,7 +1109,7 @@ class Model_Space(QGraphicsScene):
 
     def _on_dxf_error(self, msg: str, progress: QProgressDialog):
         progress.close()
-        print(f"❌ {msg}")
+        self._show_status(f"DXF error: {msg}")
         self._cleanup_dxf_worker()
 
     def _cleanup_dxf_worker(self):
@@ -1156,10 +1164,10 @@ class Model_Space(QGraphicsScene):
             self._apply_underlay_display(item, record)
 
             self.underlays.append((record, item))
-            print(f"✅ Imported PDF '{file_path}' page {page} at {dpi} DPI")
+            self._show_status(f"Imported PDF '{file_path}' page {page} at {dpi} DPI")
 
         except Exception as e:
-            print("❌ Error importing PDF:", e)
+            self._show_status(f"Error importing PDF: {e}")
 
     # -------------------------------------------------------------------------
     # UNDERLAYS — MANAGEMENT
@@ -1198,7 +1206,7 @@ class Model_Space(QGraphicsScene):
             else:
                 self.removeItem(item)
         self.underlaysChanged.emit()
-        print(f"🗑️ Removed underlay: {data.path}")
+        self._show_status(f"Removed underlay: {data.path}")
 
     def refresh_underlay(self, data: Underlay, item: QGraphicsItem):
         """Re-import an underlay from disk, preserving position/scale/rotation/opacity."""
@@ -1237,7 +1245,7 @@ class Model_Space(QGraphicsScene):
                 # Remove the first (stale) one
                 self.underlays.pop(old_entries[0][0])
 
-        print(f"🔄 Refreshed underlay: {data.path}")
+        self._show_status(f"Refreshed underlay: {data.path}")
 
     def refresh_all_underlays(self):
         """Re-import every underlay from disk."""
@@ -2471,7 +2479,7 @@ class Model_Space(QGraphicsScene):
         elif self.mode == "set_scale":
             if self._cal_point1 is None:
                 self._cal_point1 = snapped
-                print(f"Scale point 1: ({snapped.x():.1f}, {snapped.y():.1f}) — click second point")
+                self.instructionChanged.emit("Pick second calibration point")
             else:
                 dialog = CalibrateDialog(self.views()[0] if self.views() else None)
                 if dialog.exec():
@@ -2481,10 +2489,10 @@ class Model_Space(QGraphicsScene):
                         self.scale_manager.calibrate(
                             self._cal_point1, snapped, distance, unit
                         )
-                        print(f"Scale set: {self.scale_manager.pixels_per_mm:.4f} px/mm")
+                        self._show_status(f"Scale set: {self.scale_manager.pixels_per_mm:.4f} px/mm")
                         self._refresh_all_scales()
                     except ValueError as e:
-                        print(f"❌ Calibration failed: {e}")
+                        self._show_status(f"Calibration failed: {e}")
                 self._cal_point1 = None
                 self.set_mode(None)
                 return
@@ -2731,7 +2739,7 @@ class Model_Space(QGraphicsScene):
                 self._design_area_corner1 = None
                 # Keep the rect visible as a reminder (user can clear it)
                 self.set_mode(None)
-                print(f"Design area: {len(self.design_area_sprinklers)} sprinkler(s) selected.")
+                self._show_status(f"Design area: {len(self.design_area_sprinklers)} sprinkler(s) selected.")
             return
 
         elif self.mode in ("paste", "move"):
@@ -2940,8 +2948,7 @@ class Model_Space(QGraphicsScene):
 
         elif self.mode is None:
             if isinstance(selection, Node):
-                print(selection)
-                print(f"node has: {len(selection.pipes)} pipes connected")
+                pass  # node selected — grip check follows
             # ── Check for grip handle hit ───────────────────────────────────
             grip_hit = self._find_grip_hit(snapped)
             if grip_hit is not None:

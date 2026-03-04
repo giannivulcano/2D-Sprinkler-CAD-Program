@@ -108,7 +108,7 @@ def _render_titleblock_pdf(pdf_path: str, paper_w_mm: float, paper_h_mm: float,
         pixmap = QPixmap.fromImage(image)
         return pixmap
     except Exception as e:
-        print(f"[TitleBlock] PDF render error: {e}")
+        pass  # render failed — caller checks for None
         return None
 
 
@@ -137,7 +137,7 @@ class TitleBlockPdfItem(QGraphicsPixmapItem):
             self.setTransform(QTransform().scale(sx, sy))
             self.setPos(0, 0)
         else:
-            print(f"[TitleBlock] Could not load PDF: {pdf_path}")
+            pass  # pixmap failed to render — item will be blank
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -48,8 +48,6 @@ class Fitting():
     def update(self,visibility=True):
         pipes = self.node.pipes
         self.type = self.determine_type(pipes)
-        print(self.node)
-        print(f"fitting type: {self.type}")
         self.update_symbol()
         self.align_fitting()
         if self.node.has_sprinkler():
@@ -146,8 +144,6 @@ class Fitting():
                 if self.type == "tee":
                     M2 = [M1[0],M1[2]]
                 elif self.type == "wye":
-                    print(f"angle b/w M1[0] and M1[2]: {CAD_Math.get_angle_between_vectors(M1[0],M1[2],signed=False)}")
-                    print(f"angle b/w M1[1] and M1[2]: {CAD_Math.get_angle_between_vectors(M1[1],M1[2],signed=False)}")
                     angle = CAD_Math.get_angle_between_vectors(M1[0],M1[2],signed=False)
                     if math.isclose(angle,135, rel_tol=1e-2):
                         M2 = [M1[0],M1[2]]
@@ -159,8 +155,6 @@ class Fitting():
                 if self.type == "tee":
                     M2 = [M1[0],M1[1]]
                 elif self.type == "wye":
-                    print(f"angle b/w M1[0] and M1[1]: {CAD_Math.get_angle_between_vectors(M1[0],M1[1],signed=False)}")
-                    print(f"angle b/w M1[2] and M1[1]: {CAD_Math.get_angle_between_vectors(M1[2],M1[1],signed=False)}")
                     angle = CAD_Math.get_angle_between_vectors(M1[0],M1[1],signed=False)
                     if math.isclose(angle,135, rel_tol=1e-2):
                         M2 = [M1[0],M1[1]]
@@ -172,8 +166,6 @@ class Fitting():
                 if self.type == "tee":
                     M2 = [M1[1],M1[0]]
                 elif self.type == "wye":
-                    print(f"angle b/w M1[1] and M1[0]: {CAD_Math.get_angle_between_vectors(M1[1],M1[0],signed=False)}")
-                    print(f"angle b/w M1[2] and M1[0]: {CAD_Math.get_angle_between_vectors(M1[2],M1[0],signed=False)}")
                     angle = CAD_Math.get_angle_between_vectors(M1[1],M1[0],signed=False)
                     if math.isclose(angle, 135,rel_tol=1e-2):
                         M2 = [M1[1],M1[0]]
@@ -182,8 +174,8 @@ class Fitting():
             M3 = self.SYMBOLS[self.type].get("through")
             try:
                 transform = CAD_Math.make_qtransform_from_qpoints(M3, M2)
-            except Exception as e:
-                print(f"Something broke: {e}")
+            except Exception:
+                pass
             
         bounds = self.symbol.boundingRect()
         center = bounds.center()
