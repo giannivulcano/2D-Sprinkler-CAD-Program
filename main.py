@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
-                              QTabWidget, QMenu, QStyle, QWidget,
+                              QTabWidget, QMenu, QWidget,
                               QComboBox)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF
@@ -267,7 +267,6 @@ class MainWindow(QMainWindow):
         Must be called *after* all dock widgets are created so that dock
         visibility toggles can be wired correctly.
         """
-        s = self.style()
         _I = lambda name: QIcon(f"graphics/Ribbon/{name}")
 
         # ── Tab 1: Manage ────────────────────────────────────────────────────
@@ -292,7 +291,7 @@ class MainWindow(QMainWindow):
         _btn.setToolTip("Import a PDF or DXF underlay")
         _btn = g_imp.add_small_button(
             "Refresh All",
-            s.standardIcon(QStyle.StandardPixmap.SP_BrowserReload),
+            _I("placeholder_icon.svg"),
             self.refresh_underlays)
         _btn.setToolTip("Re-import all underlays from disk")
 
@@ -319,16 +318,6 @@ class MainWindow(QMainWindow):
             "Precision", _I("info_icon.svg"), self._build_precision_menu())
         _btn.setToolTip("Set decimal precision")
 
-        # --- Grid ---
-        g_grid = manage_page.add_group("Grid")
-        self._grid_btn = g_grid.add_large_button(
-            "Grid\nOn/Off", _I("gridline_icon.svg"),
-            self.toggle_grid, checkable=True)
-        self._grid_btn.setToolTip("Toggle background grid")
-        _btn = g_grid.add_small_menu_button(
-            "Grid Size", _I("gridline_icon.svg"), self._build_grid_size_menu())
-        _btn.setToolTip("Change grid dot spacing")
-
         # --- Edit (Undo/Redo always accessible) ---
         g_edit = manage_page.add_group("Edit")
         _btn = g_edit.add_large_button(
@@ -340,6 +329,13 @@ class MainWindow(QMainWindow):
             self.scene.redo, shortcut="Ctrl+Y")
         _btn.setToolTip("Redo last undone action [Ctrl+Y]")
 
+        # --- View ---
+        g_view = manage_page.add_group("View")
+        _btn = g_view.add_large_button(
+            "Fit to\nScreen", _I("placeholder_icon.svg"),
+            self.view.fit_to_screen)
+        _btn.setToolTip("Zoom to fit all content [F]")
+
         # --- Panels (dock toggles) ---
         g_pan = manage_page.add_group("Panels")
         prop_btn = g_pan.add_small_button(
@@ -350,7 +346,7 @@ class MainWindow(QMainWindow):
 
         browser_btn = g_pan.add_small_button(
             "Browser",
-            s.standardIcon(QStyle.StandardPixmap.SP_DirIcon),
+            _I("placeholder_icon.svg"),
             None, checkable=True)
         browser_btn.setToolTip("Toggle Browser panel")
         browser_btn.toggled.connect(self.browser_dock.setVisible)
@@ -385,6 +381,12 @@ class MainWindow(QMainWindow):
         _mode_btn(g_geom, "Polyline", _I("polyline_icon.svg"), "polyline").setToolTip("Draw a polyline (multi-segment)")
         _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc").setToolTip("Draw an arc (3-click)")
         _mode_btn(g_geom, "Gridlines", _I("gridline_icon.svg"), "gridline").setToolTip("Place construction gridlines")
+        self._single_place_btn = g_geom.add_small_button(
+            "Single\nPlace", _I("placeholder_icon.svg"), None, checkable=True)
+        self._single_place_btn.setToolTip("Return to Select mode after placing one item")
+        self._single_place_btn.setChecked(False)
+        self._single_place_btn.toggled.connect(
+            lambda on: setattr(self.scene, 'single_place_mode', on))
 
         # --- Layer (assigns new geometry to selected layer) ---
         g_draw_layer = draw_page.add_group("Layer")
@@ -397,44 +399,23 @@ class MainWindow(QMainWindow):
         self._draw_layer_combo.currentTextChanged.connect(self._set_active_draw_layer)
         g_draw_layer._btn_row.addWidget(self._draw_layer_combo)
 
-        # --- Constraints (placeholder — geometric constraints like AutoCAD) ---
-        g_const = draw_page.add_group("Constraints")
-        _btn = g_const.add_small_button(
-            "Parallel",
-            s.standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
-            None)
-        _btn.setEnabled(False)
-        _btn.setToolTip("Parallel constraint -- coming soon")
-        _btn = g_const.add_small_button(
-            "Perpendicular",
-            s.standardIcon(QStyle.StandardPixmap.SP_ArrowUp),
-            None)
-        _btn.setEnabled(False)
-        _btn.setToolTip("Perpendicular constraint -- coming soon")
-        _btn = g_const.add_small_button(
-            "Coincident",
-            s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
-            None)
-        _btn.setEnabled(False)
-        _btn.setToolTip("Coincident constraint -- coming soon")
-
         # --- Snap ---
         g_snap = draw_page.add_group("Snap")
         self._osnap_btn = g_snap.add_large_button(
             "OSNAP",
-            s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
+            _I("placeholder_icon.svg"),
             self._toggle_osnap, checkable=True, shortcut="F3")
         self._osnap_btn.setChecked(True)
         self._osnap_btn.setToolTip("Object Snap  [F3]")
         _btn = g_snap.add_small_button(
             "Snap to\nUnderlay",
-            s.standardIcon(QStyle.StandardPixmap.SP_CommandLink),
+            _I("placeholder_icon.svg"),
             lambda checked: setattr(self.scene, "_snap_to_underlay", checked),
             checkable=True)
         _btn.setToolTip("Snap to DXF underlay geometry")
         _btn = g_snap.add_small_menu_button(
             "Angle Snap",
-            s.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton),
+            _I("placeholder_icon.svg"),
             self._build_snap_angle_menu())
         _btn.setToolTip("Set Ctrl-drag angle snap increment")
 
@@ -442,6 +423,8 @@ class MainWindow(QMainWindow):
         g_ann = draw_page.add_group("Annotations")
         _mode_btn(g_ann, "Dimension", _I("dimension_icon.svg"), "dimension").setToolTip("Place a dimension annotation")
         _mode_btn(g_ann, "Text", _I("text_icon.svg"), "text").setToolTip("Place a text note")
+        _mode_btn(g_ann, "Hatch", _I("placeholder_icon.svg"), "hatch").setToolTip(
+            "Add hatching to a closed object")
 
         # ── Tab 3: Build ─────────────────────────────────────────────────────
         build_page = self.ribbon.add_page("Build")
@@ -545,9 +528,24 @@ class MainWindow(QMainWindow):
             lambda: self._require_selection(self.set_scale_dialog))
         _btn.setToolTip("Scale selected items")
         _btn = g_xform.add_small_button(
-            "Offset", _I("trim_icon.svg"),
+            "Offset", _I("placeholder_icon.svg"),
             lambda: self.scene.set_mode("offset"))
         _btn.setToolTip("Offset geometry by a distance")
+        _mode_btn(g_xform, "Trim", _I("trim_icon.svg"), "trim", large=False).setToolTip(
+            "Trim geometry at intersection")
+        _mode_btn(g_xform, "Extend", _I("placeholder_icon.svg"), "extend", large=False).setToolTip(
+            "Extend geometry to boundary")
+        _mode_btn(g_xform, "Merge\nPoints", _I("placeholder_icon.svg"), "merge_points", large=False).setToolTip(
+            "Merge two endpoints")
+
+        # --- Constraints ---
+        g_constraint = modify_page.add_group("Constraints")
+        _mode_btn(g_constraint, "Concentric", _I("placeholder_icon.svg"),
+                  "constraint_concentric", large=False).setToolTip(
+            "Make two circles share the same center")
+        _mode_btn(g_constraint, "Distance", _I("placeholder_icon.svg"),
+                  "constraint_dimensional", large=False).setToolTip(
+            "Fix the distance between two points")
 
         # --- Text Formatting (shown when text is selected) ---
         g_text = modify_page.add_group("Text")
@@ -631,12 +629,12 @@ class MainWindow(QMainWindow):
         g_ws = draft_page.add_group("Workspace")
         _btn = g_ws.add_large_button(
             "Model\nSpace",
-            s.standardIcon(QStyle.StandardPixmap.SP_DesktopIcon),
+            _I("placeholder_icon.svg"),
             lambda: self.central_tabs.setCurrentIndex(0))
         _btn.setToolTip("Switch to Model Space view")
         _btn = g_ws.add_large_button(
             "Layout 1\nPaper",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView),
+            _I("placeholder_icon.svg"),
             lambda: self.central_tabs.setCurrentIndex(1))
         _btn.setToolTip("Switch to Paper Space layout")
 
@@ -644,12 +642,12 @@ class MainWindow(QMainWindow):
         g_pg = draft_page.add_group("Page")
         _btn = g_pg.add_large_menu_button(
             "Paper Size",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileIcon),
+            _I("placeholder_icon.svg"),
             self._build_paper_size_menu())
         _btn.setToolTip("Change paper sheet size")
         _btn = g_pg.add_large_button(
             "Title Block",
-            s.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView),
+            _I("placeholder_icon.svg"),
             self.paper_space_widget.edit_title_block)
         _btn.setToolTip("Edit title block fields")
 
@@ -717,15 +715,6 @@ class MainWindow(QMainWindow):
         for name in PAPER_SIZES:
             m.addAction(name,
                         lambda _, n=name: self.paper_space_widget.change_paper(n))
-        return m
-
-    def _build_grid_size_menu(self) -> QMenu:
-        """Return a QMenu of common grid-size presets (scene units)."""
-        m = QMenu(self)
-        for size in (5, 10, 25, 50, 100):
-            act = m.addAction(f"{size} units")
-            # Use checked=False default so lambda works with 0-arg or 1-arg call
-            act.triggered.connect(lambda checked=False, s=size: self._set_grid_size(s))
         return m
 
     def _build_snap_angle_menu(self) -> QMenu:
@@ -911,18 +900,6 @@ class MainWindow(QMainWindow):
         dlg = GridLinesDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.scene.place_grid_lines(dlg.get_params())
-
-    def toggle_grid(self, checked: bool):
-        """Show/hide the dot grid overlay on the model-space view."""
-        self.view.set_grid(checked)
-
-    def _set_grid_size(self, size: int):
-        """Update grid dot spacing and keep the toggle button checked."""
-        self.view.set_grid(True, size)
-        # Block toggled signal to prevent cascading toggle_grid calls
-        self._grid_btn.blockSignals(True)
-        self._grid_btn.setChecked(True)
-        self._grid_btn.blockSignals(False)
 
     def toggle_coverage_overlay(self, checked: bool):
         """Show/hide translucent sprinkler coverage circles."""

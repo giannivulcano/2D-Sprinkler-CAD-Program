@@ -10,10 +10,10 @@ import math
 from CAD_Math import CAD_Math
 from PyQt6.QtWidgets import (
     QGraphicsTextItem, QGraphicsLineItem,
-    QGraphicsPolygonItem,
+    QGraphicsPolygonItem, QGraphicsPathItem,
     QStyle,
 )
-from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption, QPainterPath, QPainterPathStroker
+from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption, QPainterPath, QPainterPathStroker, QBrush
 from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
 
 class Annotation:
@@ -150,6 +150,8 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self._perp_angle = 0.0     # stored by update_arrows_and_witness
         self._updating = False     # recursion guard
         self.is_radius: bool = False  # True → label shows "R" prefix
+        # Per-dimension witness extension override (None = use default)
+        self._witness_ext_override: float | None = None
 
         # Styling — cosmetic pen so dimension lines stay visible at any zoom
         self._dim_pen = QPen(QColor(self._properties["Colour"]["value"]),
@@ -225,13 +227,43 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
     # ── Grip protocol (integrates with Model_View grip squares) ──────────
 
     def grip_points(self) -> list[QPointF]:
-        """Return [p1, midpoint, p2] for the grip system."""
+        """Return [p1, midpoint, p2, witness1_end, witness2_end] for the grip system."""
         mid = QPointF((self._p1.x() + self._p2.x()) / 2,
                       (self._p1.y() + self._p2.y()) / 2)
-        return [QPointF(self._p1), mid, QPointF(self._p2)]
+        # Compute witness line end positions (same math as update_arrows_and_witness)
+        w1_end, w2_end = self._witness_end_points()
+        return [QPointF(self._p1), mid, QPointF(self._p2), w1_end, w2_end]
+
+    def _witness_end_points(self) -> tuple[QPointF, QPointF]:
+        """Compute the end points of both witness lines."""
+        sm = getattr(self.scene(), "scale_manager", None) if self.scene() else None
+        if self._witness_ext_override is not None:
+            witness_ext = self._witness_ext_override
+        elif sm and sm.is_calibrated:
+            witness_ext = sm.paper_to_scene(2.0)
+        else:
+            witness_ext = 6
+
+        if sm and sm.is_calibrated:
+            offset_gap = sm.paper_to_scene(1.0)
+        else:
+            offset_gap = 3
+
+        line = QLineF(self._p1, self._p2)
+        angle = math.atan2(line.dy(), line.dx())
+        perp_angle = angle + math.pi / 2
+        dx_perp = math.cos(perp_angle)
+        dy_perp = math.sin(perp_angle)
+        offset = self._offset_dist
+        total = offset + offset_gap + witness_ext
+
+        w1_end = self._p1 + QPointF(dx_perp * total, dy_perp * total)
+        w2_end = self._p2 + QPointF(dx_perp * total, dy_perp * total)
+        return w1_end, w2_end
 
     def apply_grip(self, index: int, pos: QPointF):
-        """Move grip point: 0=p1 (stretch), 1=midpoint (move whole), 2=p2 (stretch)."""
+        """Move grip point: 0=p1 (stretch), 1=midpoint (move whole), 2=p2 (stretch),
+        3=witness1 end (extend/shorten), 4=witness2 end (extend/shorten)."""
         if index == 0:
             self._p1 = QPointF(pos)
         elif index == 2:
@@ -243,6 +275,24 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
             delta = pos - mid
             self._p1 = QPointF(self._p1.x() + delta.x(), self._p1.y() + delta.y())
             self._p2 = QPointF(self._p2.x() + delta.x(), self._p2.y() + delta.y())
+        elif index in (3, 4):
+            # User dragged a witness line end — compute new witness extension
+            # Project the dragged position onto the perpendicular direction
+            base_pt = self._p1 if index == 3 else self._p2
+            line = QLineF(self._p1, self._p2)
+            angle = math.atan2(line.dy(), line.dx())
+            perp_angle = angle + math.pi / 2
+            dx_perp = math.cos(perp_angle)
+            dy_perp = math.sin(perp_angle)
+            # Project (pos - base_pt) onto perpendicular direction
+            delta = pos - base_pt
+            projected = delta.x() * dx_perp + delta.y() * dy_perp
+
+            sm = getattr(self.scene(), "scale_manager", None) if self.scene() else None
+            offset_gap = sm.paper_to_scene(1.0) if (sm and sm.is_calibrated) else 3
+            # witness_ext = total_projected - offset - offset_gap
+            new_ext = projected - self._offset_dist - offset_gap
+            self._witness_ext_override = max(0, new_ext)
         self.update_geometry()
 
     # ---------------------------------|
@@ -347,11 +397,13 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         if sm and sm.is_calibrated:
             tick_size = sm.paper_to_scene(1.5)    # 1.5mm tick on paper
             offset_gap = sm.paper_to_scene(1.0)   # 1mm gap at measurement point
-            witness_ext = sm.paper_to_scene(2.0)  # 2mm extension past dimension line
+            default_ext = sm.paper_to_scene(2.0)  # 2mm extension past dimension line
         else:
             tick_size = 6
             offset_gap = 3
-            witness_ext = 6  # extend witness lines past dimension line
+            default_ext = 6  # extend witness lines past dimension line
+        # Use per-dimension override if set, otherwise use default
+        witness_ext = self._witness_ext_override if self._witness_ext_override is not None else default_ext
 
         # Measurement endpoints
         start = QPointF(self._p1)
@@ -397,3 +449,290 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
         self.tick2.setPen(self._dim_pen)
 
         # (No child handles to reposition — grip squares drawn by the view)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# HatchItem — pattern fill for closed geometry
+# ═════════════════════════════════════════════════════════════════════════════
+
+class HatchItem(QGraphicsPathItem):
+    """
+    A hatch-fill drawn inside a closed QPainterPath boundary.
+
+    The item stores a *copy* of the boundary path (plus a scene-coordinate
+    position offset) so it is independent of the source geometry item.
+
+    Supported patterns
+    ------------------
+    * ``"diagonal"`` — parallel lines at the given *angle* (default 45 deg).
+    * ``"cross"``    — two sets of diagonal lines at *angle* and *angle + 90*.
+    * ``"solid"``    — filled region with the hatch colour.
+
+    Parameters
+    ----------
+    boundary_path : QPainterPath
+        The closed path that defines the filled region (in *local* coordinates).
+    pos : QPointF
+        Scene position for the item (typically the position of the source
+        geometry item, so the path aligns correctly).
+    pattern_type : str
+        One of ``"diagonal"``, ``"cross"``, ``"solid"``.
+    angle : float
+        Line angle in degrees (default 45).
+    spacing : float
+        Distance between hatch lines in scene units (default 8).
+    colour : str
+        Hex colour string (default ``"#888888"``).
+    """
+
+    def __init__(
+        self,
+        boundary_path: QPainterPath,
+        pos: QPointF = QPointF(0, 0),
+        pattern_type: str = "diagonal",
+        angle: float = 45.0,
+        spacing: float = 8.0,
+        colour: str = "#888888",
+    ):
+        super().__init__()
+        self._boundary_path = QPainterPath(boundary_path)
+        self._pattern_type = pattern_type
+        self._angle = angle
+        self._spacing = spacing
+        self._colour = colour
+
+        # Set the boundary as the item's path (used for boundingRect / shape)
+        self.setPath(self._boundary_path)
+        self.setPos(pos)
+
+        # No outline pen — the hatch lines are drawn in paint()
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+
+        self.setZValue(0)  # sits between geometry and annotations
+        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
+
+    # ── Public properties ────────────────────────────────────────────────────
+
+    @property
+    def pattern_type(self) -> str:
+        return self._pattern_type
+
+    @pattern_type.setter
+    def pattern_type(self, value: str):
+        if value in ("diagonal", "cross", "solid"):
+            self._pattern_type = value
+            self.update()
+
+    @property
+    def angle(self) -> float:
+        return self._angle
+
+    @angle.setter
+    def angle(self, value: float):
+        self._angle = value
+        self.update()
+
+    @property
+    def spacing(self) -> float:
+        return self._spacing
+
+    @spacing.setter
+    def spacing(self, value: float):
+        self._spacing = max(1.0, value)
+        self.update()
+
+    @property
+    def colour(self) -> str:
+        return self._colour
+
+    @colour.setter
+    def colour(self, value: str):
+        self._colour = value
+        self.update()
+
+    # ── Grip protocol (empty — hatches have no grips) ────────────────────────
+
+    def grip_points(self) -> list[QPointF]:
+        return []
+
+    # ── Property panel integration ───────────────────────────────────────────
+
+    def get_properties(self) -> dict:
+        return {
+            "Type":    {"type": "label",  "value": "Hatch"},
+            "Pattern": {"type": "enum",   "options": ["diagonal", "cross", "solid"],
+                        "value": self._pattern_type},
+            "Angle":   {"type": "string", "value": f"{self._angle:.1f}"},
+            "Spacing": {"type": "string", "value": f"{self._spacing:.1f}"},
+            "Colour":  {"type": "string", "value": self._colour},
+        }
+
+    def set_property(self, key: str, value):
+        if key == "Pattern":
+            self.pattern_type = value
+        elif key == "Angle":
+            try:
+                self.angle = float(value)
+            except (ValueError, TypeError):
+                pass
+        elif key == "Spacing":
+            try:
+                self.spacing = float(value)
+            except (ValueError, TypeError):
+                pass
+        elif key == "Colour":
+            self.colour = value
+
+    # ── Serialisation ────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """Serialise the hatch to a plain dict for JSON storage."""
+        # Serialise the boundary path as a list of element tuples
+        elements = []
+        for i in range(self._boundary_path.elementCount()):
+            el = self._boundary_path.elementAt(i)
+            el_type = el.type
+            # Handle both enum (PyQt6 newer) and int (older) for el.type
+            if hasattr(el_type, 'value'):
+                el_type = el_type.value
+            elements.append([int(el_type), el.x, el.y])
+        return {
+            "type":         "hatch",
+            "path":         elements,
+            "pos":          [self.pos().x(), self.pos().y()],
+            "pattern_type": self._pattern_type,
+            "angle":        self._angle,
+            "spacing":      self._spacing,
+            "colour":       self._colour,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HatchItem":
+        """Reconstruct a HatchItem from a serialised dict."""
+        path = cls._rebuild_path_from_elements(data["path"])
+
+        pos_data = data.get("pos", [0, 0])
+        pos = QPointF(pos_data[0], pos_data[1])
+        return cls(
+            boundary_path=path,
+            pos=pos,
+            pattern_type=data.get("pattern_type", "diagonal"),
+            angle=data.get("angle", 45.0),
+            spacing=data.get("spacing", 8.0),
+            colour=data.get("colour", "#888888"),
+        )
+
+    @staticmethod
+    def _rebuild_path_from_elements(elements: list) -> QPainterPath:
+        """Rebuild a QPainterPath from the serialised element list,
+        correctly handling cubic curve segments."""
+        path = QPainterPath()
+        i = 0
+        while i < len(elements):
+            el_type, x, y = elements[i]
+            if el_type == 0:        # MoveToElement
+                path.moveTo(x, y)
+                i += 1
+            elif el_type == 1:      # LineToElement
+                path.lineTo(x, y)
+                i += 1
+            elif el_type == 2:      # CurveToElement — next 2 entries are data
+                # Collect the control and end points
+                if i + 2 < len(elements):
+                    _, cx2, cy2 = elements[i + 1]
+                    _, ex, ey = elements[i + 2]
+                    path.cubicTo(x, y, cx2, cy2, ex, ey)
+                    i += 3
+                else:
+                    i += 1  # malformed — skip
+            else:
+                i += 1
+        return path
+
+    # ── Translate ────────────────────────────────────────────────────────────
+
+    def translate(self, dx: float, dy: float):
+        """Move the hatch by (dx, dy)."""
+        self.setPos(self.pos().x() + dx, self.pos().y() + dy)
+
+    # ── Paint ────────────────────────────────────────────────────────────────
+
+    def paint(self, painter: QPainter, option, widget=None):
+        """Draw the hatch pattern clipped to the boundary path."""
+        painter.save()
+        option.state &= ~QStyle.StateFlag.State_Selected
+
+        # Clip all drawing to the closed boundary
+        painter.setClipPath(self._boundary_path)
+
+        color = QColor(self._colour)
+
+        if self._pattern_type == "solid":
+            painter.fillPath(self._boundary_path, QBrush(color))
+        else:
+            # Draw hatch lines
+            pen = QPen(color, 1)
+            pen.setCosmetic(True)
+            painter.setPen(pen)
+
+            self._draw_hatch_lines(painter, self._angle)
+            if self._pattern_type == "cross":
+                self._draw_hatch_lines(painter, self._angle + 90)
+
+        # Selection highlight
+        if self.isSelected():
+            sel_pen = QPen(QColor("#44aaff"), 1.5, Qt.PenStyle.DashLine)
+            sel_pen.setCosmetic(True)
+            painter.setClipping(False)
+            painter.setPen(sel_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(self._boundary_path)
+
+        painter.restore()
+
+    def _draw_hatch_lines(self, painter: QPainter, angle_deg: float):
+        """Draw a set of parallel lines at *angle_deg* across the bounding
+        rect, clipped to the boundary path (clip is already set by paint)."""
+        br = self._boundary_path.boundingRect()
+        if br.isEmpty():
+            return
+
+        spacing = max(1.0, self._spacing)
+        angle_rad = math.radians(angle_deg)
+
+        # Direction along the hatch lines
+        dx = math.cos(angle_rad)
+        dy = math.sin(angle_rad)
+        # Perpendicular direction (used to step between lines)
+        nx = -dy
+        ny = dx
+
+        # Diagonal length of the bounding rect — guarantees full coverage
+        diag = math.hypot(br.width(), br.height())
+        cx = br.center().x()
+        cy = br.center().y()
+
+        # Number of lines needed to cover the bounding rect
+        n = int(diag / spacing) + 1
+
+        lines = []
+        for i in range(-n, n + 1):
+            # Offset along the perpendicular
+            ox = cx + nx * i * spacing
+            oy = cy + ny * i * spacing
+            # Line endpoints extending across the full diagonal
+            x1 = ox - dx * diag
+            y1 = oy - dy * diag
+            x2 = ox + dx * diag
+            y2 = oy + dy * diag
+            lines.append(QLineF(x1, y1, x2, y2))
+
+        painter.drawLines(lines)
+
+    # ── Shape / hit-test ─────────────────────────────────────────────────────
+
+    def shape(self) -> QPainterPath:
+        """The entire filled region is clickable."""
+        return self._boundary_path

@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QStyle,
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF
-from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QPainterPathStroker
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -258,6 +258,26 @@ class PolylineItem(QGraphicsPathItem):
         self._points = [QPointF(p.x() + dx, p.y() + dy) for p in self._points]
         self._rebuild_path()
 
+    # ── Closed-path protocol ─────────────────────────────────────────────────
+
+    def is_closed(self) -> bool:
+        """Return True if the first and last vertices coincide (within 1e-3)."""
+        if len(self._points) < 3:
+            return False
+        first, last = self._points[0], self._points[-1]
+        return (abs(first.x() - last.x()) < 1e-3 and
+                abs(first.y() - last.y()) < 1e-3)
+
+    def get_closed_path(self) -> QPainterPath | None:
+        """Return a QPainterPath polygon if the polyline is closed, else None."""
+        if not self.is_closed():
+            return None
+        poly = QPolygonF(self._points)
+        path = QPainterPath()
+        path.addPolygon(poly)
+        path.closeSubpath()
+        return path
+
     # ── Serialisation ────────────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
@@ -408,6 +428,16 @@ class LineItem(QGraphicsLineItem):
         self._pt2 = QPointF(self._pt2.x() + dx, self._pt2.y() + dy)
         self.setLine(self._pt1.x(), self._pt1.y(), self._pt2.x(), self._pt2.y())
 
+    # ── Closed-path protocol ─────────────────────────────────────────────────
+
+    def is_closed(self) -> bool:
+        """Lines are never closed shapes."""
+        return False
+
+    def get_closed_path(self) -> None:
+        """Lines have no closed path."""
+        return None
+
     # ── Paint (selection highlight) ──────────────────────────────────────────
 
     def paint(self, painter, option, widget=None):
@@ -547,6 +577,18 @@ class RectangleItem(QGraphicsRectItem):
     def translate(self, dx: float, dy: float):
         self.setRect(self.rect().translated(dx, dy))
 
+    # ── Closed-path protocol ─────────────────────────────────────────────────
+
+    def is_closed(self) -> bool:
+        """Rectangles are always closed shapes."""
+        return True
+
+    def get_closed_path(self) -> QPainterPath:
+        """Return a QPainterPath rectangle for hatching / fill operations."""
+        path = QPainterPath()
+        path.addRect(self.rect())
+        return path
+
     # ── Paint (selection highlight) ──────────────────────────────────────────
 
     def paint(self, painter, option, widget=None):
@@ -673,6 +715,18 @@ class CircleItem(QGraphicsEllipseItem):
         cx, cy, r = self._center.x(), self._center.y(), self._radius
         self.setRect(cx - r, cy - r, 2 * r, 2 * r)
 
+    # ── Closed-path protocol ─────────────────────────────────────────────────
+
+    def is_closed(self) -> bool:
+        """Circles are always closed shapes."""
+        return True
+
+    def get_closed_path(self) -> QPainterPath:
+        """Return a QPainterPath ellipse for hatching / fill operations."""
+        path = QPainterPath()
+        path.addEllipse(self.rect())
+        return path
+
     # ── Paint (selection highlight) ──────────────────────────────────────────
 
     def paint(self, painter, option, widget=None):
@@ -791,6 +845,21 @@ class ArcItem(QGraphicsPathItem):
     def translate(self, dx: float, dy: float):
         self._center = QPointF(self._center.x() + dx, self._center.y() + dy)
         self._rebuild_path()
+
+    # ── Closed-path protocol ─────────────────────────────────────────────────
+
+    def is_closed(self) -> bool:
+        """Return True if the arc spans a full 360 degrees (i.e. a full circle)."""
+        return abs(self._span_deg) >= 360
+
+    def get_closed_path(self) -> QPainterPath | None:
+        """Return a QPainterPath ellipse if the arc is a full circle, else None."""
+        if not self.is_closed():
+            return None
+        cx, cy, r = self._center.x(), self._center.y(), self._radius
+        path = QPainterPath()
+        path.addEllipse(QRectF(cx - r, cy - r, 2 * r, 2 * r))
+        return path
 
     # ── Paint (selection highlight) ──────────────────────────────────────────
 

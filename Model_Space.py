@@ -106,6 +106,21 @@ class Model_Space(QGraphicsScene):
         self._offset_source = None              # entity selected for offset
         self._offset_dist: float = 0.0          # distance entered by user
         self._offset_preview = None             # preview item shown during side-pick
+        # Single place mode (Sprint Y) — return to select after placing one item
+        self.single_place_mode: bool = False
+        # Trim / Extend / Merge state (Sprint Y)
+        self._trim_edge = None              # cutting edge item for trim
+        self._trim_edge_highlight = None    # highlight overlay
+        self._extend_boundary = None        # boundary edge item for extend
+        self._extend_boundary_highlight = None
+        self._merge_point1: tuple | None = None  # (item, grip_index, QPointF)
+        self._merge_preview = None          # visual line connecting merge points
+        # Hatching state (Sprint Y)
+        self._hatch_items: list = []        # list of HatchItem
+        # Constraint state (Sprint Y)
+        self._constraints: list = []        # list of Constraint objects
+        self._constraint_circle_a = None    # first circle for concentric constraint
+        self._constraint_grip_a: tuple | None = None  # (item, grip_index) for dimensional
         # Place-import mode (Sprint L)
         self._place_import_params = None
         self._place_import_ghost = None
@@ -132,13 +147,13 @@ class Model_Space(QGraphicsScene):
         self.preview_pipe.hide()
 
     def init_preview_node(self):
-        self.preview_node = QGraphicsEllipseItem(0, 0, 10, 10)
+        self.preview_node = QGraphicsEllipseItem(-5, -5, 10, 10)
         self.preview_node.setBrush(QBrush(QColor(0, 0, 255, 100)))
         self.preview_node.setPen(QPen(Qt.GlobalColor.blue))
         self.preview_node.setZValue(200)
+        self.preview_node.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         self.addItem(self.preview_node)
-        bounds = self.preview_node.boundingRect()
-        self.preview_node.setTransformOriginPoint(bounds.center())
         self.preview_node.hide()
 
     # -------------------------------------------------------------------------
@@ -183,6 +198,7 @@ class Model_Space(QGraphicsScene):
                 "p1":   [dim._p1.x(), dim._p1.y()],
                 "p2":   [dim._p2.x(), dim._p2.y()],
                 "offset_dist": getattr(dim, "_offset_dist", 10),
+                "witness_ext_override": getattr(dim, "_witness_ext_override", None),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
             })
         for note in self.annotations.notes:
@@ -193,6 +209,22 @@ class Model_Space(QGraphicsScene):
                 "text_width": note.textWidth(),
                 "properties": {k: v["value"] for k, v in note.get_properties().items()},
             })
+
+        # --- Hatch items ---
+        hatch_data = []
+        for h in self._hatch_items:
+            if hasattr(h, 'to_dict'):
+                hatch_data.append(h.to_dict())
+
+        # --- Constraints ---
+        all_geom = self._all_geometry_items()
+        geom_id = {item: i for i, item in enumerate(all_geom)}
+        constraints_data = []
+        for c in self._constraints:
+            try:
+                constraints_data.append(c.to_dict(geom_id))
+            except (KeyError, AttributeError):
+                pass  # skip constraints referencing deleted items
 
         # --- Underlays (sync positions from scene before saving) ---
         underlays_data = []
@@ -247,6 +279,8 @@ class Model_Space(QGraphicsScene):
             "draw_circles":        draw_circles_data,
             "draw_arcs":           draw_arcs_data,
             "gridlines":           gridlines_data,
+            "hatches":             hatch_data,
+            "constraints":         constraints_data,
         }
         # Create backup if file exists
         bak_path = filename + ".bak"
@@ -333,6 +367,7 @@ class Model_Space(QGraphicsScene):
                 dim = DimensionAnnotation(p1, p2)
                 dim._offset_dist = entry.get("offset_dist",
                     float(entry.get("properties", {}).get("Offset", "10")))
+                dim._witness_ext_override = entry.get("witness_ext_override", None)
                 self.addItem(dim)
                 self.annotations.add_dimension(dim)
                 for key, value in entry.get("properties", {}).items():
@@ -411,6 +446,28 @@ class Model_Space(QGraphicsScene):
             self.addItem(gl)
             self._gridlines.append(gl)
 
+        # --- Hatches ---
+        from Annotations import HatchItem
+        for entry in payload.get("hatches", []):
+            try:
+                h = HatchItem.from_dict(entry)
+                self.addItem(h)
+                self._hatch_items.append(h)
+            except Exception:
+                pass  # skip malformed hatch data
+
+        # --- Constraints ---
+        from constraints import Constraint as ConstraintBase
+        all_geom = self._all_geometry_items()
+        id_to_geom = {i: item for i, item in enumerate(all_geom)}
+        for entry in payload.get("constraints", []):
+            try:
+                c = ConstraintBase.from_dict(entry, id_to_geom)
+                if c is not None:
+                    self._constraints.append(c)
+            except Exception:
+                pass  # skip malformed constraint data
+
         # Start fresh undo history with the loaded state
         self._undo_stack = []
         self._undo_pos = -1
@@ -448,6 +505,8 @@ class Model_Space(QGraphicsScene):
         self._text_preview = None
         self._gridlines = []
         self._gridline_anchor = None
+        self._hatch_items = []
+        self._constraints = []
         reset_grid_counters()
         self.dimension_start = None
         self._dim_line1 = None
@@ -658,6 +717,28 @@ class Model_Space(QGraphicsScene):
             self._clear_offset_preview()
             self._offset_source = None
 
+        # Clean up trim state
+        if mode not in ("trim", "trim_pick"):
+            self._clear_trim_state()
+
+        # Clean up extend state
+        if mode not in ("extend", "extend_pick"):
+            self._clear_extend_state()
+
+        # Clean up merge state
+        if mode != "merge_points":
+            self._merge_point1 = None
+            if self._merge_preview is not None:
+                if self._merge_preview.scene() is self:
+                    self.removeItem(self._merge_preview)
+                self._merge_preview = None
+
+        # Clean up constraint state
+        if mode != "constraint_concentric":
+            self._constraint_circle_a = None
+        if mode != "constraint_dimensional":
+            self._constraint_grip_a = None
+
         # Clean up place_import ghost
         if mode != "place_import":
             if self._place_import_ghost is not None:
@@ -693,6 +774,14 @@ class Model_Space(QGraphicsScene):
             "water_supply":   "Click to place water supply",
             "paste":          "Click to place pasted items",
             "gridline":       "Pick start point",
+            "trim":           "Select cutting edge",
+            "trim_pick":      "Click segment to trim (right-click to cancel)",
+            "extend":         "Select boundary edge",
+            "extend_pick":    "Click near endpoint to extend (right-click to cancel)",
+            "merge_points":   "Click first endpoint",
+            "hatch":          "Click a closed object to apply hatching",
+            "constraint_concentric":   "Select first circle",
+            "constraint_dimensional":  "Click first grip point",
         }
         instr = _initial_steps.get(mode, "")
         if instr:
@@ -1304,6 +1393,7 @@ class Model_Space(QGraphicsScene):
                 "p1":   [dim._p1.x(), dim._p1.y()],
                 "p2":   [dim._p2.x(), dim._p2.y()],
                 "offset_dist": getattr(dim, "_offset_dist", 10),
+                "witness_ext_override": getattr(dim, "_witness_ext_override", None),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
             })
         for note in self.annotations.notes:
@@ -1335,7 +1425,23 @@ class Model_Space(QGraphicsScene):
             "draw_circles":       [c.to_dict()  for c in self._draw_circles],
             "draw_arcs":          [a.to_dict()  for a in self._draw_arcs],
             "gridlines":          [gl.to_dict() for gl in self._gridlines],
+            # ── Hatches & Constraints ─────────────────────────────────────
+            "hatches":            [h.to_dict() for h in self._hatch_items
+                                  if hasattr(h, 'to_dict')],
+            "constraints":        self._capture_constraints(),
         }
+
+    def _capture_constraints(self) -> list[dict]:
+        """Serialize constraints for undo/save, using geometry-list index IDs."""
+        all_geom = self._all_geometry_items()
+        geom_id = {item: i for i, item in enumerate(all_geom)}
+        result = []
+        for c in self._constraints:
+            try:
+                result.append(c.to_dict(geom_id))
+            except (KeyError, AttributeError):
+                pass
+        return result
 
     def _restore_network(self, state: dict):
         """Restore nodes/pipes/annotations from a dict (keeps underlays and scale)."""
@@ -1396,10 +1502,13 @@ class Model_Space(QGraphicsScene):
                     p1 = QPointF(entry["p1"][0], entry["p1"][1])
                     p2 = QPointF(entry["p2"][0], entry["p2"][1])
                     dim = DimensionAnnotation(p1, p2)
+                    dim._offset_dist = entry.get("offset_dist", 10)
+                    dim._witness_ext_override = entry.get("witness_ext_override", None)
                     self.addItem(dim)
                     self.annotations.add_dimension(dim)
                     for key, value in entry.get("properties", {}).items():
                         dim.set_property(key, value)
+                    dim.update_geometry()
                 elif ann_type == "note":
                     note = NoteAnnotation(x=entry["x"], y=entry["y"])
                     self.addItem(note)
@@ -1454,6 +1563,13 @@ class Model_Space(QGraphicsScene):
                     self.removeItem(gl)
             self._gridlines.clear()
 
+            for h in list(self._hatch_items):
+                if h.scene() is self:
+                    self.removeItem(h)
+            self._hatch_items.clear()
+
+            self._constraints.clear()
+
             # Restore from snapshot
             for d in state.get("construction_lines", []):
                 cl = ConstructionLine.from_dict(d)
@@ -1489,6 +1605,28 @@ class Model_Space(QGraphicsScene):
                 gl = GridlineItem.from_dict(d)
                 self.addItem(gl)
                 self._gridlines.append(gl)
+
+            # ── Hatches ───────────────────────────────────────────────────
+            from Annotations import HatchItem
+            for d in state.get("hatches", []):
+                try:
+                    h = HatchItem.from_dict(d)
+                    self.addItem(h)
+                    self._hatch_items.append(h)
+                except Exception:
+                    pass
+
+            # ── Constraints ───────────────────────────────────────────────
+            from constraints import Constraint as ConstraintBase
+            all_geom = self._all_geometry_items()
+            id_to_geom = {i: item for i, item in enumerate(all_geom)}
+            for d in state.get("constraints", []):
+                try:
+                    c = ConstraintBase.from_dict(d, id_to_geom)
+                    if c is not None:
+                        self._constraints.append(c)
+                except Exception:
+                    pass
 
         finally:
             self._in_undo_restore = False
@@ -1778,6 +1916,8 @@ class Model_Space(QGraphicsScene):
             self._draw_line_anchor = None
             self.preview_pipe.hide()
             self.push_undo_state()
+            if self.single_place_mode:
+                self.set_mode("select")
 
         # ── Rectangle ────────────────────────────────────────────────────
         elif self.mode == "draw_rectangle" and self._draw_rect_anchor is not None:
@@ -1829,6 +1969,8 @@ class Model_Space(QGraphicsScene):
                 self._draw_rect_preview = None
             self._draw_rect_anchor = None
             self.push_undo_state()
+            if self.single_place_mode:
+                self.set_mode("select")
 
         # ── Polyline ─────────────────────────────────────────────────────
         elif self.mode == "polyline" and self._polyline_active is not None:
@@ -1912,6 +2054,8 @@ class Model_Space(QGraphicsScene):
                 self._draw_circle_preview = None
             self._draw_circle_center = None
             self.push_undo_state()
+            if self.single_place_mode:
+                self.set_mode("select")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Grid Lines
@@ -2147,8 +2291,7 @@ class Model_Space(QGraphicsScene):
         )
 
     def update_preview_node(self, pos: QPointF):
-        offset = self.preview_node.boundingRect().center()
-        self.preview_node.setPos(pos - offset)
+        self.preview_node.setPos(pos)
         self.preview_node.show()
 
     # -------------------------------------------------------------------------
@@ -2433,6 +2576,7 @@ class Model_Space(QGraphicsScene):
                         opp = 0 if self._grip_index == len(grips) - 1 else len(grips) - 1
                         pos = self._constrain_angle(grips[opp], snapped)
                 self._grip_item.apply_grip(self._grip_index, pos)
+                self._solve_constraints(self._grip_item)  # live constraint solving
                 # Refresh foreground (grip handle positions changed)
                 for v in self.views():
                     v.viewport().update()
@@ -2700,7 +2844,10 @@ class Model_Space(QGraphicsScene):
                 self._draw_arc_start_deg = 0.0
                 self._draw_arc_step = 0
                 self.push_undo_state()
-                self.instructionChanged.emit("Pick center point")
+                if self.single_place_mode:
+                    self.set_mode("select")
+                else:
+                    self.instructionChanged.emit("Pick center point")
             return
 
         elif self.mode == "gridline":
@@ -2719,7 +2866,10 @@ class Model_Space(QGraphicsScene):
                 self._gridline_anchor = None
                 self.preview_pipe.hide()
                 self.push_undo_state()
-                self.instructionChanged.emit("Pick start point")
+                if self.single_place_mode:
+                    self.set_mode("select")
+                else:
+                    self.instructionChanged.emit("Pick start point")
             return
 
         elif self.mode == "water_supply":
@@ -2845,6 +2995,31 @@ class Model_Space(QGraphicsScene):
             self.set_mode("offset")
             return
 
+        # ── Trim / Extend / Merge / Hatch / Constraints (Sprint Y) ────────
+        elif self.mode in ("trim", "trim_pick"):
+            self._handle_trim_click(snapped)
+            return
+
+        elif self.mode in ("extend", "extend_pick"):
+            self._handle_extend_click(snapped)
+            return
+
+        elif self.mode == "merge_points":
+            self._handle_merge_click(snapped)
+            return
+
+        elif self.mode == "hatch":
+            self._handle_hatch_click(snapped)
+            return
+
+        elif self.mode == "constraint_concentric":
+            self._handle_constraint_concentric_click(snapped)
+            return
+
+        elif self.mode == "constraint_dimensional":
+            self._handle_constraint_dimensional_click(snapped)
+            return
+
         elif self.mode == "polyline":
             if self._polyline_active is None:
                 # First click — create the polyline item
@@ -2888,7 +3063,10 @@ class Model_Space(QGraphicsScene):
                 self._draw_line_anchor = None
                 self.preview_pipe.hide()
                 self.push_undo_state()
-                self.instructionChanged.emit("Pick first point")
+                if self.single_place_mode:
+                    self.set_mode("select")
+                else:
+                    self.instructionChanged.emit("Pick first point")
             return
 
         elif self.mode == "draw_rectangle":
@@ -2926,7 +3104,10 @@ class Model_Space(QGraphicsScene):
                     self._draw_rect_preview = None
                 self._draw_rect_anchor = None
                 self.push_undo_state()
-                self.instructionChanged.emit("Pick first corner")
+                if self.single_place_mode:
+                    self.set_mode("select")
+                else:
+                    self.instructionChanged.emit("Pick first corner")
             return
 
         elif self.mode == "draw_circle":
@@ -2962,7 +3143,10 @@ class Model_Space(QGraphicsScene):
                     self._draw_circle_preview = None
                 self._draw_circle_center = None
                 self.push_undo_state()
-                self.instructionChanged.emit("Pick center point")
+                if self.single_place_mode:
+                    self.set_mode("select")
+                else:
+                    self.instructionChanged.emit("Pick center point")
             return
 
         elif self.mode is None:
@@ -2979,6 +3163,7 @@ class Model_Space(QGraphicsScene):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._grip_dragging:
+            self._solve_constraints(self._grip_item)  # enforce constraints
             self._grip_dragging = False
             self._grip_item     = None
             self._grip_index    = -1
@@ -3004,6 +3189,8 @@ class Model_Space(QGraphicsScene):
                 pl.setSelected(True)
                 for v in self.views(): v.viewport().update()
                 self.push_undo_state()
+                if self.single_place_mode:
+                    self.set_mode("select")
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -3064,6 +3251,8 @@ class Model_Space(QGraphicsScene):
                     self._polyline_active = None
                     pl.setSelected(True)
                     self.push_undo_state()
+                    if self.single_place_mode:
+                        self.set_mode("select")
                     # Stay in polyline mode so user can draw another
         else:
             super().keyPressEvent(event)
@@ -3204,6 +3393,7 @@ class Model_Space(QGraphicsScene):
             elif hasattr(item, "translate"):
                 item.translate(offset.x(), offset.y())
                 item.setSelected(True)
+        self._solve_constraints()  # enforce constraints after move
         self._selected_items = None   # clear after use
 
     def clipboard_data(self):
@@ -3500,3 +3690,537 @@ class Model_Space(QGraphicsScene):
                 if math.hypot(pos.x() - gpt.x(), pos.y() - gpt.y()) <= tol:
                     return (item, idx)
         return None
+
+    # =========================================================================
+    # TRIM / EXTEND / MERGE  (Sprint Y)
+    # =========================================================================
+
+    def _all_geometry_items(self):
+        """Return a flat list of all construction geometry items in the scene."""
+        from construction_geometry import (
+            LineItem, RectangleItem, CircleItem, ArcItem, PolylineItem,
+        )
+        items = []
+        items.extend(self._draw_lines)
+        items.extend(self._draw_rects)
+        items.extend(self._draw_circles)
+        items.extend(self._draw_arcs)
+        items.extend(self._polylines)
+        return items
+
+    def _find_geometry_at(self, pos: QPointF):
+        """Find the geometry item nearest to pos (within tolerance)."""
+        from construction_geometry import (
+            LineItem, RectangleItem, CircleItem, ArcItem, PolylineItem,
+        )
+        tol = 8.0
+        views = self.views()
+        if views:
+            scale = views[0].transform().m11()
+            tol = 8.0 / max(scale, 1e-6)
+
+        best_item = None
+        best_dist = tol
+        for item in self._all_geometry_items():
+            if hasattr(item, 'shape'):
+                path = item.shape()
+                # Check if point is near the item's shape
+                from PyQt6.QtCore import QPointF as QP
+                item_pos = item.mapFromScene(pos)
+                if path.contains(item_pos):
+                    return item
+                # Also check distance to bounding rect as fallback
+            if hasattr(item, 'grip_points'):
+                for gpt in item.grip_points():
+                    d = math.hypot(pos.x() - gpt.x(), pos.y() - gpt.y())
+                    if d < best_dist:
+                        best_dist = d
+                        best_item = item
+        return best_item
+
+    def _find_endpoint_hit(self, pos: QPointF):
+        """Find endpoint grip on any geometry item near pos (not just selected).
+        Returns (item, grip_index, QPointF) or None."""
+        from construction_geometry import (
+            LineItem, PolylineItem, ArcItem,
+        )
+        views = self.views()
+        if not views:
+            return None
+        scale = views[0].transform().m11()
+        tol = 8.0 / max(scale, 1e-6)
+
+        for item in self._all_geometry_items():
+            if not hasattr(item, 'grip_points'):
+                continue
+            grips = item.grip_points()
+            for idx, gpt in enumerate(grips):
+                # Only allow endpoints — skip midpoints, centers, etc.
+                if isinstance(item, LineItem) and idx == 1:
+                    continue  # skip midpoint
+                if isinstance(item, ArcItem) and idx == 0:
+                    continue  # skip center
+                if math.hypot(pos.x() - gpt.x(), pos.y() - gpt.y()) <= tol:
+                    return (item, idx, QPointF(gpt))
+        return None
+
+    def _clear_trim_state(self):
+        """Clean up trim edge highlight and state."""
+        if self._trim_edge_highlight is not None:
+            if self._trim_edge_highlight.scene() is self:
+                self.removeItem(self._trim_edge_highlight)
+            self._trim_edge_highlight = None
+        self._trim_edge = None
+
+    def _clear_extend_state(self):
+        """Clean up extend boundary highlight and state."""
+        if self._extend_boundary_highlight is not None:
+            if self._extend_boundary_highlight.scene() is self:
+                self.removeItem(self._extend_boundary_highlight)
+            self._extend_boundary_highlight = None
+        self._extend_boundary = None
+
+    def _highlight_item(self, item, color="#ff4400"):
+        """Create a bright overlay highlight for an item."""
+        highlight_pen = QPen(QColor(color), 3, Qt.PenStyle.SolidLine)
+        highlight_pen.setCosmetic(True)
+        if hasattr(item, 'line'):
+            line = item.line()
+            h = QGraphicsLineItem(line)
+            h.setPen(highlight_pen)
+            h.setZValue(250)
+            self.addItem(h)
+            return h
+        elif hasattr(item, 'rect'):
+            from PyQt6.QtWidgets import QGraphicsRectItem
+            h = QGraphicsRectItem(item.rect())
+            h.setPen(highlight_pen)
+            h.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            h.setZValue(250)
+            self.addItem(h)
+            return h
+        elif hasattr(item, 'path'):
+            from PyQt6.QtWidgets import QGraphicsPathItem
+            h = QGraphicsPathItem(item.path())
+            h.setPen(highlight_pen)
+            h.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+            h.setZValue(250)
+            self.addItem(h)
+            return h
+        return None
+
+    def _handle_trim_click(self, pos: QPointF):
+        """Handle mouse click during trim mode."""
+        from construction_geometry import (
+            LineItem, CircleItem, ArcItem, PolylineItem,
+        )
+        import geometry_intersect as gi
+
+        if self.mode == "trim":
+            # Phase 1: select cutting edge
+            item = self._find_geometry_at(pos)
+            if item is not None:
+                self._trim_edge = item
+                self._trim_edge_highlight = self._highlight_item(item)
+                self.mode = "trim_pick"
+                self.modeChanged.emit("trim_pick")
+                self.instructionChanged.emit(
+                    "Click segment to trim (right-click to cancel)")
+            return
+
+        elif self.mode == "trim_pick":
+            # Phase 2: click segment to trim at intersection with cutting edge
+            item = self._find_geometry_at(pos)
+            if item is None or item is self._trim_edge:
+                return
+
+            edge = self._trim_edge
+            # Find intersections between item and edge
+            intersections = self._compute_intersections(item, edge)
+            if not intersections:
+                self._show_status("No intersection found")
+                return
+
+            # Determine which portion to remove based on click position
+            hit = gi.nearest_intersection(pos, intersections)
+            if hit is None:
+                return
+
+            if isinstance(item, LineItem):
+                # Shorten line by moving the nearer endpoint to the intersection
+                grips = item.grip_points()
+                d0 = math.hypot(pos.x() - grips[0].x(), pos.y() - grips[0].y())
+                d2 = math.hypot(pos.x() - grips[2].x(), pos.y() - grips[2].y())
+                if d0 < d2:
+                    item.apply_grip(0, hit)  # move p1 to intersection
+                else:
+                    item.apply_grip(2, hit)  # move p2 to intersection
+                self.push_undo_state()
+                self._show_status("Trimmed line")
+
+            elif isinstance(item, CircleItem):
+                # Convert circle to arc by removing the clicked portion
+                center = item._center
+                r = item._radius
+                # Compute angle of intersection and click
+                int_angles = []
+                for ipt in intersections:
+                    angle = math.degrees(math.atan2(
+                        ipt.y() - center.y(), ipt.x() - center.x()))
+                    int_angles.append(angle % 360)
+
+                if len(int_angles) < 2:
+                    self._show_status("Need two intersections to trim a circle")
+                    return
+
+                click_angle = math.degrees(math.atan2(
+                    pos.y() - center.y(), pos.x() - center.x())) % 360
+
+                a1, a2 = sorted(int_angles[:2])
+                # Determine which arc to keep (the one NOT clicked)
+                if a1 < click_angle < a2:
+                    start = a2
+                    span = (a1 + 360 - a2) % 360
+                else:
+                    start = a1
+                    span = a2 - a1
+
+                color = item.pen().color().name()
+                lw = item.pen().widthF()
+                arc = ArcItem(center, r, start, span, color, lw)
+                arc.user_layer = getattr(item, 'user_layer', 'Default')
+                self.addItem(arc)
+                self._draw_arcs.append(arc)
+
+                # Remove original circle
+                self.removeItem(item)
+                if item in self._draw_circles:
+                    self._draw_circles.remove(item)
+                self.push_undo_state()
+                self._show_status("Trimmed circle to arc")
+
+            elif isinstance(item, ArcItem):
+                center = item._center
+                int_angles = []
+                for ipt in intersections:
+                    angle = math.degrees(math.atan2(
+                        ipt.y() - center.y(), ipt.x() - center.x())) % 360
+                    int_angles.append(angle)
+
+                if not int_angles:
+                    return
+                trim_angle = int_angles[0]
+                click_angle = math.degrees(math.atan2(
+                    pos.y() - center.y(), pos.x() - center.x())) % 360
+
+                start = item._start_deg % 360
+                span = item._span_deg
+                end = (start + span) % 360
+
+                # Compute angular position of click within arc span
+                rel_click = (click_angle - start) % 360
+                rel_trim = (trim_angle - start) % 360
+
+                if rel_click < rel_trim:
+                    # Click is before trim point — keep from trim to end
+                    item._start_deg = trim_angle
+                    item._span_deg = span - rel_trim
+                else:
+                    # Click is after trim point — keep from start to trim
+                    item._span_deg = rel_trim
+
+                item._rebuild_path()
+                self.push_undo_state()
+                self._show_status("Trimmed arc")
+
+    def _handle_extend_click(self, pos: QPointF):
+        """Handle mouse click during extend mode."""
+        from construction_geometry import LineItem, ArcItem, PolylineItem
+        import geometry_intersect as gi
+
+        if self.mode == "extend":
+            item = self._find_geometry_at(pos)
+            if item is not None:
+                self._extend_boundary = item
+                self._extend_boundary_highlight = self._highlight_item(item, "#00aa00")
+                self.mode = "extend_pick"
+                self.modeChanged.emit("extend_pick")
+                self.instructionChanged.emit(
+                    "Click near endpoint to extend (right-click to cancel)")
+            return
+
+        elif self.mode == "extend_pick":
+            endpoint_hit = self._find_endpoint_hit(pos)
+            if endpoint_hit is None:
+                return
+            item, grip_idx, grip_pt = endpoint_hit
+            boundary = self._extend_boundary
+
+            if isinstance(item, LineItem):
+                grips = item.grip_points()
+                p1, p2 = grips[0], grips[2]
+                # Extend from the clicked endpoint
+                intersections = self._compute_extend_intersections(
+                    item, grip_idx, boundary)
+                if not intersections:
+                    self._show_status("No intersection with boundary")
+                    return
+                hit = gi.nearest_intersection(grip_pt, intersections)
+                if hit:
+                    item.apply_grip(grip_idx, hit)
+                    self.push_undo_state()
+                    self._show_status("Extended line to boundary")
+
+    def _handle_merge_click(self, pos: QPointF):
+        """Handle mouse click during merge points mode."""
+        endpoint_hit = self._find_endpoint_hit(pos)
+        if endpoint_hit is None:
+            self._show_status("No endpoint found nearby")
+            return
+
+        item, grip_idx, grip_pt = endpoint_hit
+
+        if self._merge_point1 is None:
+            # First click — store the target point
+            self._merge_point1 = (item, grip_idx, grip_pt)
+            self.instructionChanged.emit("Click second endpoint to merge")
+            # Create visual indicator
+            from PyQt6.QtWidgets import QGraphicsEllipseItem
+            marker = QGraphicsEllipseItem(-4, -4, 8, 8)
+            marker.setPos(grip_pt)
+            marker.setBrush(QBrush(QColor("#ff4400")))
+            marker.setPen(QPen(QColor("#ff4400")))
+            marker.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+            marker.setZValue(300)
+            self.addItem(marker)
+            self._merge_preview = marker
+        else:
+            # Second click — move second endpoint to first
+            target_pt = self._merge_point1[2]
+            item.apply_grip(grip_idx, target_pt)
+            self.push_undo_state()
+            self._show_status("Points merged")
+            # Clean up
+            if self._merge_preview is not None:
+                if self._merge_preview.scene() is self:
+                    self.removeItem(self._merge_preview)
+                self._merge_preview = None
+            self._merge_point1 = None
+            self.instructionChanged.emit("Click first endpoint")
+
+    def _handle_hatch_click(self, pos: QPointF):
+        """Handle mouse click during hatch mode."""
+        item = self._find_geometry_at(pos)
+        if item is None:
+            return
+
+        if not hasattr(item, 'is_closed') or not item.is_closed():
+            self._show_status("Object is not closed — cannot hatch")
+            return
+
+        from Annotations import HatchItem
+        closed_path = item.get_closed_path()
+        if closed_path is None:
+            self._show_status("Cannot get closed path for hatching")
+            return
+
+        hatch = HatchItem(closed_path, item.pos())
+        self.addItem(hatch)
+        self._hatch_items.append(hatch)
+        hatch.setSelected(True)
+        self.push_undo_state()
+        self._show_status("Hatch applied")
+
+    def _handle_constraint_concentric_click(self, pos: QPointF):
+        """Handle mouse click during concentric constraint mode."""
+        from construction_geometry import CircleItem, ArcItem
+        item = self._find_geometry_at(pos)
+        if item is None or not isinstance(item, (CircleItem, ArcItem)):
+            self._show_status("Please select a circle or arc")
+            return
+
+        if self._constraint_circle_a is None:
+            self._constraint_circle_a = item
+            self.instructionChanged.emit("Select second circle")
+        else:
+            from constraints import ConcentricConstraint
+            constraint = ConcentricConstraint(self._constraint_circle_a, item)
+            self._constraints.append(constraint)
+            self._solve_constraints(self._constraint_circle_a)
+            self.push_undo_state()
+            self._constraint_circle_a = None
+            self._show_status("Concentric constraint applied")
+            self.instructionChanged.emit("Select first circle")
+            for v in self.views():
+                v.viewport().update()
+
+    def _handle_constraint_dimensional_click(self, pos: QPointF):
+        """Handle mouse click during dimensional constraint mode."""
+        endpoint_hit = self._find_endpoint_hit(pos)
+        if endpoint_hit is None:
+            self._show_status("No grip point found nearby")
+            return
+
+        item, grip_idx, grip_pt = endpoint_hit
+
+        if self._constraint_grip_a is None:
+            self._constraint_grip_a = (item, grip_idx, grip_pt)
+            self.instructionChanged.emit("Click second grip point")
+        else:
+            item_a, grip_a, pt_a = self._constraint_grip_a
+            current_dist = math.hypot(
+                grip_pt.x() - pt_a.x(), grip_pt.y() - pt_a.y())
+
+            # Show dialog for distance
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel,
+                                          QDoubleSpinBox, QDialogButtonBox)
+            dlg = QDialog()
+            dlg.setWindowTitle("Dimensional Constraint")
+            layout = QVBoxLayout(dlg)
+            layout.addWidget(QLabel("Set constraint distance:"))
+            spin = QDoubleSpinBox()
+            spin.setRange(0.01, 1e6)
+            spin.setDecimals(2)
+            spin.setValue(current_dist)
+            layout.addWidget(spin)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Ok |
+                QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(dlg.accept)
+            buttons.rejected.connect(dlg.reject)
+            layout.addWidget(buttons)
+
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                from constraints import DimensionalConstraint
+                dist = spin.value()
+                constraint = DimensionalConstraint(
+                    item_a, grip_a, item, grip_idx, dist)
+                self._constraints.append(constraint)
+                self._solve_constraints()
+                self.push_undo_state()
+                self._show_status(f"Dimensional constraint: {dist:.1f}")
+
+            self._constraint_grip_a = None
+            self.instructionChanged.emit("Click first grip point")
+            for v in self.views():
+                v.viewport().update()
+
+    def _solve_constraints(self, moved_item=None):
+        """Run the constraint solver. Called after every movement operation."""
+        for _iteration in range(5):
+            all_satisfied = True
+            for c in self._constraints:
+                if not c.enabled:
+                    continue
+                if not c.solve(moved_item):
+                    all_satisfied = False
+            if all_satisfied:
+                break
+        for v in self.views():
+            v.viewport().update()
+
+    def _compute_intersections(self, item, edge):
+        """Compute intersection points between two geometry items."""
+        from construction_geometry import (
+            LineItem, CircleItem, ArcItem, RectangleItem, PolylineItem,
+        )
+        import geometry_intersect as gi
+
+        results = []
+
+        # Get segments/shapes from both items
+        item_segs = self._get_item_segments(item)
+        edge_segs = self._get_item_segments(edge)
+
+        for seg in item_segs:
+            for eseg in edge_segs:
+                if seg[0] == "line" and eseg[0] == "line":
+                    pt = gi.line_line_intersection(
+                        seg[1], seg[2], eseg[1], eseg[2])
+                    if pt:
+                        results.append(pt)
+                elif seg[0] == "line" and eseg[0] == "circle":
+                    pts = gi.line_circle_intersections(
+                        seg[1], seg[2], eseg[1], eseg[2])
+                    results.extend(pts)
+                elif seg[0] == "circle" and eseg[0] == "line":
+                    pts = gi.line_circle_intersections(
+                        eseg[1], eseg[2], seg[1], seg[2])
+                    results.extend(pts)
+                elif seg[0] == "line" and eseg[0] == "arc":
+                    pts = gi.line_arc_intersections(
+                        seg[1], seg[2], eseg[1], eseg[2],
+                        eseg[3], eseg[4])
+                    results.extend(pts)
+                elif seg[0] == "arc" and eseg[0] == "line":
+                    pts = gi.line_arc_intersections(
+                        eseg[1], eseg[2], seg[1], seg[2],
+                        seg[3], seg[4])
+                    results.extend(pts)
+        return results
+
+    def _compute_extend_intersections(self, item, grip_idx, boundary):
+        """Compute where item would intersect boundary if extended."""
+        from construction_geometry import LineItem
+        import geometry_intersect as gi
+
+        results = []
+        if isinstance(item, LineItem):
+            grips = item.grip_points()
+            p1, p2 = grips[0], grips[2]
+            boundary_segs = self._get_item_segments(boundary)
+            for bseg in boundary_segs:
+                if bseg[0] == "line":
+                    pt = gi.line_line_intersection_unbounded(
+                        p1, p2, bseg[1], bseg[2])
+                    if pt:
+                        results.append(pt)
+                elif bseg[0] == "circle":
+                    pts = gi.line_circle_intersections_unbounded(
+                        p1, p2, bseg[1], bseg[2])
+                    results.extend(pts)
+                elif bseg[0] == "arc":
+                    pts = gi.line_circle_intersections_unbounded(
+                        p1, p2, bseg[1], bseg[2])
+                    # Filter to only points on the arc
+                    for pt in pts:
+                        angle = math.degrees(math.atan2(
+                            pt.y() - bseg[1].y(),
+                            pt.x() - bseg[1].x())) % 360
+                        from geometry_intersect import _angle_in_arc
+                        if _angle_in_arc(angle, bseg[3], bseg[4]):
+                            results.append(pt)
+        return results
+
+    def _get_item_segments(self, item):
+        """Return geometric representation of an item as list of tuples.
+        Returns: [("line", p1, p2), ("circle", center, radius),
+                  ("arc", center, radius, start_deg, span_deg)]"""
+        from construction_geometry import (
+            LineItem, CircleItem, ArcItem, RectangleItem, PolylineItem,
+        )
+        segs = []
+        if isinstance(item, LineItem):
+            grips = item.grip_points()
+            segs.append(("line", grips[0], grips[2]))
+        elif isinstance(item, CircleItem):
+            segs.append(("circle", item._center, item._radius))
+        elif isinstance(item, ArcItem):
+            segs.append(("arc", item._center, item._radius,
+                         item._start_deg, item._span_deg))
+        elif isinstance(item, RectangleItem):
+            grips = item.grip_points()
+            # 9 grips: TL, TM, TR, RM, BR, BM, BL, LM, Center
+            tl = grips[0]
+            tr = grips[2]
+            br = grips[4]
+            bl = grips[6]
+            segs.append(("line", tl, tr))
+            segs.append(("line", tr, br))
+            segs.append(("line", br, bl))
+            segs.append(("line", bl, tl))
+        elif isinstance(item, PolylineItem):
+            pts = item._points
+            for i in range(len(pts) - 1):
+                segs.append(("line", QPointF(pts[i]), QPointF(pts[i + 1])))
+        return segs

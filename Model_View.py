@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView, QScrollBar, QMenu,
     QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsRectItem,
 )
-from PyQt6.QtCore import Qt, QPoint, QPointF, QLineF
+from PyQt6.QtCore import Qt, QPoint, QPointF, QLineF, QRectF
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon, QFont
 import theme as th
 from snap_engine import SNAP_COLORS, SNAP_MARKERS
@@ -179,6 +179,35 @@ class Model_View(QGraphicsView):
 
             painter.restore()
 
+        # ── 3b. Constraint indicators (viewport coordinates) ───────────────
+        constraints = getattr(scene, "_constraints", [])
+        if constraints:
+            painter.save()
+            painter.resetTransform()
+            for c in constraints:
+                if not c.enabled:
+                    continue
+                vis = c.visual_points()
+                for vtype, vpt in vis:
+                    vp = self.mapFromScene(vpt)
+                    cx, cy = int(vp.x()), int(vp.y())
+                    if vtype == "concentric":
+                        # Draw bullseye icon
+                        color = QColor("#ff4400") if not c.satisfied else QColor("#00cc44")
+                        painter.setPen(QPen(color, 2))
+                        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                        painter.drawEllipse(cx - 6, cy - 6, 12, 12)
+                        painter.drawEllipse(cx - 3, cy - 3, 6, 6)
+                    elif vtype == "dimensional":
+                        color = QColor("#ff4400") if not c.satisfied else QColor("#0066cc")
+                        painter.setPen(QPen(color, 2))
+                        painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+                        painter.drawRect(cx - 5, cy - 5, 10, 10)
+                        # Draw "D" label
+                        painter.setFont(QFont("Arial", 7))
+                        painter.drawText(cx - 3, cy + 3, "D")
+            painter.restore()
+
         # ── 4. Dim HUD (viewport coordinates, near cursor) ───────────────────
         dim_hint = getattr(scene, "_draw_dim_hint", None)
         vp_cursor = getattr(self, "_last_vp_pos", None)
@@ -317,8 +346,11 @@ class Model_View(QGraphicsView):
             return
         rect = sc.itemsBoundingRect()
         if rect.isNull() or rect.isEmpty():
-            # Nothing in scene — center on origin
+            # Nothing in scene — center origin in both X and Y
             self.resetTransform()
+            vp = self.viewport().rect()
+            w, h = vp.width(), vp.height()
+            self.setSceneRect(QRectF(-w / 2, -h / 2, w, h))
             self.centerOn(QPointF(0, 0))
             return
         # Add 5% margin
