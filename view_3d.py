@@ -826,11 +826,17 @@ class View3D(QWidget):
         return best_item
 
     def _project_to_screen(self, world_pos: np.ndarray):
-        """Project a 3D world position to 2D screen coordinates."""
+        """Project a 3D world position to 2D screen (canvas) coordinates.
+
+        Uses the full vispy transform chain (visual → camera → canvas)
+        so that the camera projection is included.
+        """
         try:
-            tr = self._view.scene.transform
-            mapped = tr.map(world_pos)
-            return np.array(mapped[:2])
+            tr = self._view.scene.transforms.get_transform(
+                map_from='visual', map_to='canvas',
+            )
+            mapped = tr.map(world_pos[:3])
+            return np.array(mapped[:2], dtype=float)
         except Exception:
             return None
 
