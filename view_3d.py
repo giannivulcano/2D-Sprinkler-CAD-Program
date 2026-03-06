@@ -496,22 +496,55 @@ class View3D(QWidget):
 
     @staticmethod
     def _edges_from_faces(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
-        """Extract unique edge segments from triangulated mesh.
+        """Extract visible edge segments from a triangulated mesh.
+
+        Filters out internal diagonal edges created when quads are split
+        into two triangles.  An edge shared by two coplanar faces (normals
+        within ~0.06° of each other) is considered a triangulation artefact
+        and is skipped.
 
         Returns Nx3 array of line-segment endpoints (pairs of 3D points),
         suitable for ``visuals.Line(connect='segments')``.
         """
-        edges: set[tuple[int, int]] = set()
-        for f in faces:
+        # Build edge → face-index mapping and compute face normals
+        edge_faces: dict[tuple[int, int], list[int]] = {}
+        face_normals: list[np.ndarray] = []
+
+        for fi, f in enumerate(faces):
+            v0, v1, v2 = verts[int(f[0])], verts[int(f[1])], verts[int(f[2])]
+            normal = np.cross(v1 - v0, v2 - v0)
+            norm_len = np.linalg.norm(normal)
+            if norm_len > 1e-10:
+                normal = normal / norm_len
+            face_normals.append(normal)
+
             for i in range(3):
                 e = tuple(sorted([int(f[i]), int(f[(i + 1) % 3])]))
-                edges.add(e)
-        if not edges:
+                edge_faces.setdefault(e, []).append(fi)
+
+        if not edge_faces:
             return np.zeros((0, 3), dtype=np.float32)
-        segments = []
-        for a, b in edges:
-            segments.append(verts[a])
-            segments.append(verts[b])
+
+        segments: list[np.ndarray] = []
+        for (a, b), fi_list in edge_faces.items():
+            if len(fi_list) == 1:
+                # Boundary edge — always visible
+                segments.append(verts[a])
+                segments.append(verts[b])
+            elif len(fi_list) == 2:
+                # Shared edge — draw only if the two faces are NOT coplanar
+                dot = abs(float(np.dot(face_normals[fi_list[0]],
+                                       face_normals[fi_list[1]])))
+                if dot < 0.999:
+                    segments.append(verts[a])
+                    segments.append(verts[b])
+            else:
+                # Non-manifold edge — always visible
+                segments.append(verts[a])
+                segments.append(verts[b])
+
+        if not segments:
+            return np.zeros((0, 3), dtype=np.float32)
         return np.array(segments, dtype=np.float32)
 
     # ── Extract: Walls ────────────────────────────────────────────────────
