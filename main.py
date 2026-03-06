@@ -497,7 +497,7 @@ class MainWindow(QMainWindow):
         # --- Library ---
         g_lib = build_page.add_group("Library")
         _btn = g_lib.add_large_button(
-            "Sprinkler\nManager", _I("sprinkler_icon.svg"),
+            "Sprinkler\nManager", _I("sprinkler_manager_icon.svg"),
             self.open_sprinkler_manager)
         _btn.setToolTip("Open sprinkler database manager")
 

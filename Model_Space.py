@@ -2196,10 +2196,29 @@ class Model_Space(QGraphicsScene):
         current drawing operation (line length+angle, rect W+H, circle radius).
         Called by Model_View.keyPressEvent when Tab is pressed.
 
+        In wall mode, Tab cycles alignment (Center → Interior → Exterior)
+        instead of opening the exact-input dialog.
+
         Defaults are computed from the current cursor position relative to
         the anchor point.  Values are always in mm (1 scene unit = 1 mm
         when uncalibrated).  Angles follow Y-up convention (0°=right, 90°=up).
         """
+        # ── Wall mode: cycle alignment instead of opening dialog ──
+        if self.mode == "wall":
+            _cycle = {"Center": "Interior", "Interior": "Exterior", "Exterior": "Center"}
+            self._wall_alignment = _cycle.get(self._wall_alignment, "Center")
+            if self._wall_anchor is None:
+                self.instructionChanged.emit(f"Pick wall start point [{self._wall_alignment}]")
+            else:
+                self.instructionChanged.emit(f"Pick wall end point [{self._wall_alignment}]")
+            # Sync ribbon combo if available
+            combo = getattr(self, "_wall_align_combo_ref", None)
+            if combo is not None:
+                combo.blockSignals(True)
+                combo.setCurrentText(self._wall_alignment)
+                combo.blockSignals(False)
+            return
+
         from PyQt6.QtWidgets import (
             QDialog, QVBoxLayout, QFormLayout,
             QDoubleSpinBox, QDialogButtonBox,
