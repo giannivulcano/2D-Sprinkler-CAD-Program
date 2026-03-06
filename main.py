@@ -522,6 +522,40 @@ class MainWindow(QMainWindow):
             self.open_sprinkler_manager)
         _btn.setToolTip("Open sprinkler database manager")
 
+        # --- 3D Modeling ---
+        g_3d = build_page.add_group("3D Modeling")
+        _wall_btn = g_3d.add_large_button(
+            "Wall", _I("pipe_icon.svg"),
+            lambda: self.scene.set_mode("wall"),
+            checkable=True)
+        _wall_btn.setToolTip("Draw a wall segment")
+        self._mode_buttons["wall"] = _wall_btn
+        _wall_align = QComboBox()
+        _wall_align.addItems(["Center", "Interior", "Exterior"])
+        _wall_align.setToolTip("Wall placement alignment")
+        _wall_align.setFixedWidth(90)
+        _wall_align.currentTextChanged.connect(
+            lambda t: setattr(self.scene, "_wall_alignment", t))
+        g_3d._btn_row.addWidget(_wall_align)
+        _floor_btn = g_3d.add_large_button(
+            "Floor", _I("design_area_icon.svg"),
+            lambda: self.scene.set_mode("floor"),
+            checkable=True)
+        _floor_btn.setToolTip("Draw a floor slab boundary")
+        self._mode_buttons["floor"] = _floor_btn
+        _door_btn = g_3d.add_small_button(
+            "Door", _I("pipe_icon.svg"),
+            lambda: self.scene.set_mode("door"),
+            checkable=True)
+        _door_btn.setToolTip("Place a door opening in a wall")
+        self._mode_buttons["door"] = _door_btn
+        _window_btn = g_3d.add_small_button(
+            "Window", _I("pipe_icon.svg"),
+            lambda: self.scene.set_mode("window"),
+            checkable=True)
+        _window_btn.setToolTip("Place a window opening in a wall")
+        self._mode_buttons["window"] = _window_btn
+
         # --- Level ---
         g_level = build_page.add_group("Level")
         self._level_combo = QComboBox()
