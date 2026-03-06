@@ -2323,20 +2323,20 @@ class Model_Space(QGraphicsScene):
             def_h = max(def_h, 0.01)
 
             dlg = QDialog()
-            dlg.setWindowTitle("Exact Width & Height")
+            dlg.setWindowTitle("Exact X & Y")
             form = QFormLayout()
             w_spin = QDoubleSpinBox()
-            w_spin.setRange(0.01, 1_000_000)
+            w_spin.setRange(-1_000_000, 1_000_000)
             w_spin.setDecimals(3)
             w_spin.setValue(def_w)
             w_spin.setSuffix(suf)
             h_spin = QDoubleSpinBox()
-            h_spin.setRange(0.01, 1_000_000)
+            h_spin.setRange(-1_000_000, 1_000_000)
             h_spin.setDecimals(3)
             h_spin.setValue(def_h)
             h_spin.setSuffix(suf)
-            form.addRow("Width:", w_spin)
-            form.addRow("Height:", h_spin)
+            form.addRow("X:", w_spin)
+            form.addRow("Y:", h_spin)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Ok |
                 QDialogButtonBox.StandardButton.Cancel
@@ -2351,7 +2351,7 @@ class Model_Space(QGraphicsScene):
 
             pt2 = QPointF(
                 self._draw_rect_anchor.x() + w_spin.value(),
-                self._draw_rect_anchor.y() + h_spin.value(),
+                self._draw_rect_anchor.y() - h_spin.value(),   # Y-up → scene Y-down
             )
             color = self._get_draw_color()
             item = RectangleItem(self._draw_rect_anchor, pt2, color, self._get_draw_lineweight())
