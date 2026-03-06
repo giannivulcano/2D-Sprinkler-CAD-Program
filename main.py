@@ -463,33 +463,6 @@ class MainWindow(QMainWindow):
         # ── Tab 3: Build ─────────────────────────────────────────────────────
         build_page = self.ribbon.add_page("Build")
 
-        # --- 3D Modeling ---
-        g_3d = build_page.add_group("3D Modeling")
-        _wall_btn = g_3d.add_large_button(
-            "Wall", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("wall"),
-            checkable=True)
-        _wall_btn.setToolTip("Draw a wall segment")
-        self._mode_buttons["wall"] = _wall_btn
-        _floor_btn = g_3d.add_large_button(
-            "Floor", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("floor"),
-            checkable=True)
-        _floor_btn.setToolTip("Draw a floor slab boundary")
-        self._mode_buttons["floor"] = _floor_btn
-        _door_btn = g_3d.add_small_button(
-            "Door", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("door"),
-            checkable=True)
-        _door_btn.setToolTip("Place a door opening in a wall")
-        self._mode_buttons["door"] = _door_btn
-        _window_btn = g_3d.add_small_button(
-            "Window", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("window"),
-            checkable=True)
-        _window_btn.setToolTip("Place a window opening in a wall")
-        self._mode_buttons["window"] = _window_btn
-
         # --- Fire Suppression Systems ---
         g_sys = build_page.add_group("Fire Suppression Systems")
         _pipe_btn = g_sys.add_large_button(
