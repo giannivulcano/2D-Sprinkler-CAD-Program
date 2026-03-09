@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, QSizePolicy,
+    QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
@@ -65,7 +66,10 @@ class ModelBrowser(QWidget):
             f"QTreeWidget::item:selected {{ background: {_t.accent_primary}; color: #ffffff; }}"
             f"QTreeWidget::item:hover   {{ background: {_t.bg_base}; }}"
         )
-        self._tree.itemClicked.connect(self._on_item_clicked)
+        self._tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         layout.addWidget(self._tree)
 
@@ -171,14 +175,26 @@ class ModelBrowser(QWidget):
 
     # ── Click handlers ────────────────────────────────────────────────────
 
-    def _on_item_clicked(self, item: QTreeWidgetItem, column: int):
-        entity_id = item.data(0, _ROLE_ENTITY)
-        if entity_id is not None:
-            entity = self._find_entity_by_id(entity_id)
-            if entity is not None:
-                self._scene.clearSelection()
-                entity.setSelected(True)
-                self.entitySelected.emit(entity)
+    def _on_selection_changed(self):
+        """Handle tree selection changes — supports multi-select via
+        Ctrl+click and Shift+click."""
+        selected_items = self._tree.selectedItems()
+        entities = []
+        for tree_item in selected_items:
+            entity_id = tree_item.data(0, _ROLE_ENTITY)
+            if entity_id is not None:
+                entity = self._find_entity_by_id(entity_id)
+                if entity is not None:
+                    entities.append(entity)
+        if not entities:
+            return
+        self._scene.clearSelection()
+        for entity in entities:
+            entity.setSelected(True)
+        if len(entities) == 1:
+            self.entitySelected.emit(entities[0])
+        else:
+            self.entitySelected.emit(entities)
 
     def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """Double-click: select + zoom to fit the entity."""
