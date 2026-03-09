@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QPushButton, QColorDialog, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtGui import QDoubleValidator, QColor, QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 from node import Node
 from pipe import Pipe
@@ -77,6 +77,13 @@ class PropertyManager(QWidget):
         self._level_manager = None
         self._user_layer_manager = None
         self._targets: list = []
+        self._refreshing = False   # guard against re-entrant refresh
+
+        # Debounced auto-refresh timer
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(50)
+        self._refresh_timer.timeout.connect(self._do_refresh)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -88,6 +95,7 @@ class PropertyManager(QWidget):
 
     def show_properties(self, item):
         """Display properties for *item* (single entity, list, or None)."""
+        self._refreshing = True
 
         # Clear existing rows
         for i in reversed(range(self._form.count())):
@@ -231,24 +239,18 @@ class PropertyManager(QWidget):
             )
             self._form.addRow(QLabel("Absolute Elev. (ft)"), abs_field)
 
+        self._refreshing = False
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _apply_property(self, key: str, value):
         """Apply a property change to ALL selected targets, then refresh."""
+        if self._refreshing:
+            return  # ignore signals fired during form rebuild
         for t in self._targets:
             if hasattr(t, "set_property"):
                 t.set_property(key, value)
         # Auto-refresh so dependent fields (e.g. elevation) update immediately
-        self._schedule_refresh()
-
-    def _schedule_refresh(self):
-        """Debounced refresh to avoid recursion from widget signal feedback."""
-        if not hasattr(self, "_refresh_timer"):
-            from PyQt6.QtCore import QTimer
-            self._refresh_timer = QTimer(self)
-            self._refresh_timer.setSingleShot(True)
-            self._refresh_timer.setInterval(50)
-            self._refresh_timer.timeout.connect(self._do_refresh)
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()
 
