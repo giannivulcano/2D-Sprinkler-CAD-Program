@@ -192,15 +192,18 @@ class UserLayerManager:
         lyr_map = {l.name: l for l in self._layers}
 
         def _apply_item(item, lyr_name: str):
-            """Apply visibility, lock, colour and lineweight to a geometry item."""
+            """Apply visibility, lock, colour and lineweight to a geometry item.
+            Only HIDE items when the layer is hidden — never un-hide items
+            that were already hidden by the level manager."""
             ldef = lyr_map.get(lyr_name)
             if ldef is None:
                 return
-            item.setVisible(ldef.visible)
-            item.setFlag(
-                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                ldef.visible and not ldef.locked,
-            )
+            if not ldef.visible:
+                item.setVisible(False)
+            if not ldef.visible or ldef.locked:
+                item.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                )
             # Apply layer colour + lineweight to items that have a pen
             if callable(getattr(item, "pen", None)) and callable(getattr(item, "setPen", None)):
                 pen = QPen(item.pen())
@@ -217,21 +220,23 @@ class UserLayerManager:
             lyr = getattr(node, "user_layer", "0")
             ldef = lyr_map.get(lyr)
             if ldef:
-                node.setVisible(ldef.visible)
-                node.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                    ldef.visible and not ldef.locked,
-                )
+                if not ldef.visible:
+                    node.setVisible(False)
+                if not ldef.visible or ldef.locked:
+                    node.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                    )
 
         for pipe in scene.sprinkler_system.pipes:
             lyr = getattr(pipe, "user_layer", "0")
             ldef = lyr_map.get(lyr)
             if ldef:
-                pipe.setVisible(ldef.visible)
-                pipe.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                    ldef.visible and not ldef.locked,
-                )
+                if not ldef.visible:
+                    pipe.setVisible(False)
+                if not ldef.visible or ldef.locked:
+                    pipe.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                    )
 
         # ── Construction / draw geometry (colour + lineweight applied) ────────
         for item in getattr(scene, "_construction_lines", []):
@@ -260,11 +265,12 @@ class UserLayerManager:
                 ldef = lyr_map.get(lyr_name)
                 if ldef is None:
                     continue
-                dim.setVisible(ldef.visible)
-                dim.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                    ldef.visible and not ldef.locked,
-                )
+                if not ldef.visible:
+                    dim.setVisible(False)
+                if not ldef.visible or ldef.locked:
+                    dim.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                    )
                 # Apply colour to dim pen and child items
                 c = _QColor(ldef.color)
                 dim._dim_pen.setColor(c)
@@ -278,11 +284,12 @@ class UserLayerManager:
                 ldef = lyr_map.get(lyr_name)
                 if ldef is None:
                     continue
-                note.setVisible(ldef.visible)
-                note.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                    ldef.visible and not ldef.locked,
-                )
+                if not ldef.visible:
+                    note.setVisible(False)
+                if not ldef.visible or ldef.locked:
+                    note.setFlag(
+                        QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                    )
                 note.setDefaultTextColor(_QColor(ldef.color))
 
         for item in getattr(scene, "_hatch_items", []):
@@ -290,11 +297,12 @@ class UserLayerManager:
             ldef = lyr_map.get(lyr_name)
             if ldef is None:
                 continue
-            item.setVisible(ldef.visible)
-            item.setFlag(
-                QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
-                ldef.visible and not ldef.locked,
-            )
+            if not ldef.visible:
+                item.setVisible(False)
+            if not ldef.visible or ldef.locked:
+                item.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False,
+                )
             item._colour = ldef.color
             item.update()
 

@@ -1226,6 +1226,9 @@ class Model_Space(QGraphicsScene):
                     for pt in g.get("points", []):
                         xs.append((pt[0] - bx) * s)
                         ys.append((pt[1] - by) * s)
+                elif kind == "text":
+                    xs.append((g["x"] - bx) * s)
+                    ys.append((g["y"] - by) * s)
             if xs and ys:
                 self._place_import_bounds = QRectF(
                     min(xs), min(ys),
@@ -1532,6 +1535,11 @@ class Model_Space(QGraphicsScene):
             item = QGraphicsTextItem(geom["text"])
             item.setPos(geom["x"], geom["y"])
             item.setDefaultTextColor(color)
+            if "size" in geom:
+                from PyQt6.QtGui import QFont as _QF
+                f = _QF()
+                f.setPointSizeF(geom["size"])
+                item.setFont(f)
             item.setZValue(-100)
 
         else:
