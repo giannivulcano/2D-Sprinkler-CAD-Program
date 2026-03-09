@@ -1012,11 +1012,11 @@ class View3D(QWidget):
             self._scene.clearSelection()
             hit.setSelected(True)
             self.entitySelected.emit(hit)
-            self._highlight_mesh_selection(hit)
+            self._highlight_mesh_selection([hit])
         else:
             self._scene.clearSelection()
             self.entitySelected.emit(None)
-            self._highlight_mesh_selection(None)
+            self._highlight_mesh_selection([])
 
     def _pick_nearest(self, screen_pos: np.ndarray):
         """Find nearest entity to a screen-space click position."""
@@ -1087,8 +1087,15 @@ class View3D(QWidget):
 
     # ── Mesh Selection Highlight ─────────────────────────────────────────────
 
-    def _highlight_mesh_selection(self, selected_item):
-        """Highlight the selected wall/slab and fade non-selected ones."""
+    def _highlight_mesh_selection(self, selected_items):
+        """Highlight selected walls/slabs and fade non-selected ones.
+
+        *selected_items* is a list of WallSegment / FloorSlab instances
+        (may be empty or None).
+        """
+        if selected_items is None:
+            selected_items = []
+
         # Reset all walls to original colors
         for i, mesh in enumerate(self._wall_meshes):
             if i < len(self._original_wall_colors):
@@ -1104,29 +1111,28 @@ class View3D(QWidget):
                 if i < len(self._slab_edge_lines) and self._slab_edge_lines[i] is not None:
                     self._slab_edge_lines[i].set_data(color=orig_edge, width=1.0)
 
-        if selected_item is None:
+        if not selected_items:
             self._canvas.update()
             return
 
-        # Find which wall or slab is selected
-        sel_wall_idx = None
-        sel_slab_idx = None
-        for i, ref in enumerate(self._wall_refs):
-            if ref is selected_item:
-                sel_wall_idx = i
-                break
-        if sel_wall_idx is None:
+        # Build sets of selected wall and slab indices
+        sel_wall_idxs = set()
+        sel_slab_idxs = set()
+        for sel in selected_items:
+            for i, ref in enumerate(self._wall_refs):
+                if ref is sel:
+                    sel_wall_idxs.add(i)
             for i, ref in enumerate(self._slab_refs):
-                if ref is selected_item:
-                    sel_slab_idx = i
-                    break
+                if ref is sel:
+                    sel_slab_idxs.add(i)
 
-        if sel_wall_idx is None and sel_slab_idx is None:
-            return  # not a wall/slab
+        if not sel_wall_idxs and not sel_slab_idxs:
+            self._canvas.update()
+            return
 
         # Highlight selected, fade others
         for i, mesh in enumerate(self._wall_meshes):
-            if i == sel_wall_idx:
+            if i in sel_wall_idxs:
                 mesh.color = COL_SEL_MESH
                 if i < len(self._wall_edge_lines) and self._wall_edge_lines[i] is not None:
                     self._wall_edge_lines[i].set_data(color=COL_SEL_EDGE, width=3.0)
@@ -1136,7 +1142,7 @@ class View3D(QWidget):
                     mesh.color = (r, g, b, DESELECT_ALPHA)
 
         for i, mesh in enumerate(self._slab_meshes):
-            if i == sel_slab_idx:
+            if i in sel_slab_idxs:
                 mesh.color = COL_SEL_MESH
                 if i < len(self._slab_edge_lines) and self._slab_edge_lines[i] is not None:
                     self._slab_edge_lines[i].set_data(color=COL_SEL_EDGE, width=2.5)
@@ -1162,7 +1168,7 @@ class View3D(QWidget):
             return
 
         positions = []
-        mesh_selected = None
+        mesh_selected = []
         for item in selected:
             if isinstance(item, Node):
                 positions.append(self._node_to_3d(item))
@@ -1171,7 +1177,7 @@ class View3D(QWidget):
                     mid = (self._node_to_3d(item.node1) + self._node_to_3d(item.node2)) / 2
                     positions.append(mid)
             elif isinstance(item, (WallSegment, FloorSlab)):
-                mesh_selected = item
+                mesh_selected.append(item)
 
         if positions:
             self._highlight_markers.set_data(
