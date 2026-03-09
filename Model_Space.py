@@ -291,13 +291,15 @@ class Model_Space(QGraphicsScene):
             except (KeyError, AttributeError):
                 pass  # skip constraints referencing deleted items
 
-        # --- Underlays (sync positions from scene before saving) ---
+        # --- Underlays (sync all display state from scene before saving) ---
         underlays_data = []
         for data, item in self.underlays:
             if item is not None:
-                data.x = item.scenePos().x()
-                data.y = item.scenePos().y()
-                # rotation and opacity are already kept in sync via context menu
+                data.x        = item.scenePos().x()
+                data.y        = item.scenePos().y()
+                data.scale    = item.scale()
+                data.rotation = item.rotation()
+                data.opacity  = item.opacity()
             underlays_data.append(data.to_dict())
 
         # --- Water supply ---
@@ -1644,8 +1646,15 @@ class Model_Space(QGraphicsScene):
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
         )
-        item.setPos(x if x != 0.0 else -pixmap.width() / 2,
-                    y if y != 0.0 else -pixmap.height() / 2)
+        # When reloading from a saved project (_record provided), always use
+        # the stored position exactly.  For a fresh import with no explicit
+        # position, centre the pixmap on the scene origin.
+        if _record is not None:
+            item.setPos(x, y)
+        elif x != 0.0 or y != 0.0:
+            item.setPos(x, y)
+        else:
+            item.setPos(-pixmap.width() / 2, -pixmap.height() / 2)
         item.setData(0, "PDF Underlay")
         self.addItem(item)
 
