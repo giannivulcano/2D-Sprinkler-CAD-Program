@@ -175,6 +175,13 @@ class PdfImportWorker(QThread):
                 if i % 200 == 0 or i == total - 1:
                     self.progress.emit(i + 1, total)
 
+            # ── Extract text blocks ────────────────────────────────────
+            try:
+                text_geoms = self._extract_text(page_obj)
+                geometries.extend(text_geoms)
+            except Exception:
+                pass
+
             if skipped:
                 self.status.emit(f"Done — {len(geometries)} geometries, {skipped} skipped")
             else:
@@ -282,6 +289,46 @@ class PdfImportWorker(QThread):
 
         return results
 
+    # ─────────────────────────────────────────────────────────────────
+    # Text extraction
+    # ─────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_text(page) -> list[dict]:
+        """Extract text spans from a PDF page as geometry dicts.
+
+        Uses ``get_text("dict")`` which returns text blocks containing
+        lines and spans with position, size, and content.  Each span
+        becomes a ``kind: "text"`` geometry dict.
+        """
+        results: list[dict] = []
+        try:
+            td = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+        except Exception:
+            return results
+
+        for block in td.get("blocks", []):
+            if block.get("type") != 0:      # 0 = text block
+                continue
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    text = span.get("text", "").strip()
+                    if not text:
+                        continue
+                    bbox = span.get("bbox")       # (x0, y0, x1, y1)
+                    size = span.get("size", 8.0)
+                    if bbox is None:
+                        continue
+                    results.append({
+                        "kind": "text",
+                        "layer": "PDF Text",
+                        "x": bbox[0],
+                        "y": bbox[1],
+                        "text": text,
+                        "size": size,
+                    })
+        return results
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Synchronous helpers for the preview dialog
@@ -320,6 +367,15 @@ def extract_pdf_vectors_sync(
                     layers_set.add(g.get("layer", "PDF Vectors"))
             except Exception:
                 pass
+
+        # Also extract text
+        try:
+            text_geoms = PdfImportWorker._extract_text(page_obj)
+            for g in text_geoms:
+                geometries.append(g)
+                layers_set.add(g.get("layer", "PDF Text"))
+        except Exception:
+            pass
 
         return geometries, sorted(layers_set) if layers_set else ["PDF Vectors"]
     finally:

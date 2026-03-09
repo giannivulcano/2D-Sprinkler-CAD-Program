@@ -71,12 +71,11 @@ def compute_wall_quad(
     # Half-thickness in scene units
     half_mm = (thickness_in * 25.4) / 2.0
     if (scale_manager is not None
-            and scale_manager.is_calibrated
             and scale_manager.drawing_scale > 0):
         paper_mm = half_mm / scale_manager.drawing_scale
         ht = scale_manager.paper_to_scene(paper_mm)
     else:
-        ht = thickness_in * 3.0  # cosmetic fallback
+        ht = half_mm  # fallback: 1 px ≈ 1 mm
 
     if alignment == ALIGN_INTERIOR:
         off_left = QPointF(0, 0)
@@ -172,19 +171,19 @@ class WallSegment(QGraphicsPathItem):
     def half_thickness_scene(self) -> float:
         """Half-thickness converted from inches to scene units.
 
-        Uses the scene's ScaleManager when available; otherwise falls back
-        to a cosmetic approximation so the wall is still visible.
+        Uses the scene's ScaleManager (which always has valid defaults
+        even before calibration: 1 px/mm, 1:100 scale).
         """
         # inches → mm: 1 in = 25.4 mm
         half_mm = (self._thickness_in * 25.4) / 2.0
         sc = self.scene()
         if sc and hasattr(sc, "scale_manager"):
             sm = sc.scale_manager
-            if sm.is_calibrated and sm.drawing_scale > 0:
+            if sm.drawing_scale > 0:
                 paper_mm = half_mm / sm.drawing_scale
                 return sm.paper_to_scene(paper_mm)
-        # Fallback: ~3 px per inch so wall is visible
-        return self._thickness_in * 3.0
+        # Fallback when not attached to a scene
+        return half_mm
 
     def quad_points(self) -> tuple[QPointF, QPointF, QPointF, QPointF]:
         """Return the four corner points of the wall rectangle (2D).

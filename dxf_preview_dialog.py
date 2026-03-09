@@ -759,6 +759,35 @@ class UnderlayImportDialog(QDialog):
             self._layers = layers
             self._populate_layer_list()
             self._selected_indices = None
+
+            # Default base point for PDFs: bottom-left corner of bounding box.
+            # PDF coords have origin at top-left (Y-down), so bottom-left is
+            # (min_x, max_y).  This ensures "Insert at origin" places the
+            # visual bottom-left at the scene origin.
+            xs, ys = [], []
+            for g in geoms:
+                kind = g.get("kind")
+                if kind == "line":
+                    xs += [g["x1"], g["x2"]]
+                    ys += [g["y1"], g["y2"]]
+                elif kind == "path_points":
+                    for pt in g.get("points", []):
+                        xs.append(pt[0]); ys.append(pt[1])
+                elif kind in ("circle", "arc"):
+                    x0 = g.get("x", g.get("rx", 0))
+                    y0 = g.get("y", g.get("ry", 0))
+                    xs += [x0, x0 + g.get("w", g.get("rw", 0))]
+                    ys += [y0, y0 + g.get("h", g.get("rh", 0))]
+                elif kind == "text":
+                    xs.append(g["x"]); ys.append(g["y"])
+            if xs and ys:
+                self._base_x_spin.blockSignals(True)
+                self._base_y_spin.blockSignals(True)
+                self._base_x_spin.setValue(min(xs))
+                self._base_y_spin.setValue(max(ys))
+                self._base_x_spin.blockSignals(False)
+                self._base_y_spin.blockSignals(False)
+
             self._rebuild_preview()
             n = len(geoms)
             self._info_lbl.setText(
@@ -923,7 +952,7 @@ class UnderlayImportDialog(QDialog):
             item = QGraphicsTextItem(g.get("text", ""))
             item.setDefaultTextColor(pen.color())
             f = QFont()
-            f.setPointSizeF(6)
+            f.setPointSizeF(g.get("size", 6))
             item.setFont(f)
             item.setPos(g["x"], g["y"])
             self._preview_scene.addItem(item)

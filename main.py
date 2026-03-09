@@ -4,8 +4,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
                               QTabWidget, QMenu, QWidget,
-                              QComboBox, QDoubleSpinBox, QFormLayout)
-from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut
+                              QComboBox, QDoubleSpinBox, QFormLayout,
+                              QProgressBar)
+from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut, QFont
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF
 from PyQt6.QtWidgets import QGraphicsTextItem
 from Model_Space import Model_Space
@@ -31,13 +32,102 @@ import theme as th
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Splash / Loading Screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _SplashScreen(QWidget):
+    """Frameless loading screen with blue progress bar."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.SplashScreen
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setFixedSize(420, 200)
+
+        # Centre on screen
+        from PyQt6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            self.move(
+                geo.x() + (geo.width() - 420) // 2,
+                geo.y() + (geo.height() - 200) // 2,
+            )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 30, 30, 20)
+        layout.setSpacing(8)
+
+        # App title
+        title = QLabel("FireFlow Pro")
+        f = QFont("Segoe UI", 22)
+        f.setBold(True)
+        title.setFont(f)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("color: #ffffff;")
+        layout.addWidget(title)
+
+        # Subtitle
+        sub = QLabel("Fire Protection Design Suite")
+        sub.setFont(QFont("Segoe UI", 9))
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet("color: #a0c4e8;")
+        layout.addWidget(sub)
+
+        layout.addStretch()
+
+        # Status label
+        self._status = QLabel("Loading...")
+        self._status.setFont(QFont("Segoe UI", 8))
+        self._status.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._status.setStyleSheet("color: #c0c0c0;")
+        layout.addWidget(self._status)
+
+        # Progress bar
+        self._bar = QProgressBar()
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        self._bar.setFixedHeight(6)
+        self._bar.setTextVisible(False)
+        self._bar.setStyleSheet("""
+            QProgressBar {
+                background: #3a3a3a;
+                border: none;
+                border-radius: 3px;
+            }
+            QProgressBar::chunk {
+                background: #3399ff;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self._bar)
+
+        self.setStyleSheet(
+            "background: #1e1e2e; border: 1px solid #3a3a4a; border-radius: 8px;"
+        )
+
+    # ── Public helpers ─────────────────────────────────────────────────────────
+
+    def set_progress(self, value: int, message: str = ""):
+        self._bar.setValue(value)
+        if message:
+            self._status.setText(message)
+        QApplication.processEvents()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main Window
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, splash: _SplashScreen | None = None):
         super().__init__()
         self.setWindowTitle("FireFlow Pro \u2014 Untitled")
+        self._splash = splash
 
         # Settings
         self.settings = QSettings("GV", "SprinklerAPP")
@@ -47,6 +137,7 @@ class MainWindow(QMainWindow):
         self._modified: bool = False
 
         # Scene + View
+        self._splash_progress(10, "Initialising scene...")
         self.scene = Model_Space()
         self.view = Model_View(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -63,6 +154,7 @@ class MainWindow(QMainWindow):
         # (no per-item overrides — see Fix 2 Sprint V)
 
         # User layer manager — shared between scene and UI
+        self._splash_progress(25, "Setting up layers...")
         self.user_layer_mgr = UserLayerManager()
         self.scene._user_layer_manager = self.user_layer_mgr   # for save/load
 
@@ -71,6 +163,7 @@ class MainWindow(QMainWindow):
         self.scene._level_manager = self.level_mgr
 
         # Central tab widget: Model Space | 3D View | Layout 1 (Paper Space)
+        self._splash_progress(35, "Building 3D viewport...")
         self.paper_space_widget = PaperSpaceWidget(self.scene)
         self.view_3d = View3D(self.scene, self.level_mgr, self.scene.scale_manager)
         self.central_tabs = QTabWidget()
@@ -79,11 +172,13 @@ class MainWindow(QMainWindow):
         self.central_tabs.addTab(self.paper_space_widget, "Layout 1")
 
         # Ribbon spans full window width (above docks) via setMenuWidget
+        self._splash_progress(55, "Building ribbon toolbar...")
         self.ribbon = RibbonBar()
         self.setMenuWidget(self.ribbon)
         self.setCentralWidget(self.central_tabs)
 
         # Property manager (will be added as tab in browser dock)
+        self._splash_progress(65, "Setting up panels...")
         self.prop_manager = PropertyManager()
         self.prop_manager.set_level_manager(self.level_mgr)
         self.prop_manager.set_user_layer_manager(self.user_layer_mgr)
@@ -100,7 +195,7 @@ class MainWindow(QMainWindow):
             lambda name: setattr(self.scene, "active_user_layer", name)
         )
         self.user_layer_widget.layersChanged.connect(
-            lambda: self.user_layer_mgr.apply_to_scene(self.scene)
+            lambda: self.level_mgr.apply_to_scene(self.scene)
         )
         self.user_layer_widget.layersChanged.connect(
             self._refresh_modify_layer_combo
@@ -198,6 +293,7 @@ class MainWindow(QMainWindow):
             lambda text: self.mode_label.setText(text)
         )
 
+        self._splash_progress(80, "Wiring up controls...")
         self.init_ribbon()
 
         # Global keyboard shortcuts
@@ -210,7 +306,14 @@ class MainWindow(QMainWindow):
             lambda: self.scene.set_mode("select"))
 
         # Restore settings
+        self._splash_progress(95, "Restoring settings...")
         self.restore_settings()
+        self._splash_progress(100, "Ready")
+
+    def _splash_progress(self, value: int, message: str = ""):
+        """Update the splash screen progress bar if present."""
+        if self._splash is not None:
+            self._splash.set_progress(value, message)
 
     def restore_settings(self):
         geom = self.settings.value("geometry", b"")
@@ -1275,10 +1378,17 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     # Apply global theme stylesheet before any widgets are created
+    # Show splash screen while loading
+    splash = _SplashScreen()
+    splash.show()
+    splash.set_progress(0, "Applying theme...")
+
     _t = th.detect()
     app.setStyleSheet(th.build_app_qss(_t))
-    window = MainWindow()
+
+    window = MainWindow(splash=splash)
     window.resize(800, 600)
+    splash.close()
     window.show()
     sys.exit(app.exec())
 
