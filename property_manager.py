@@ -234,10 +234,30 @@ class PropertyManager(QWidget):
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _apply_property(self, key: str, value):
-        """Apply a property change to ALL selected targets."""
+        """Apply a property change to ALL selected targets, then refresh."""
         for t in self._targets:
             if hasattr(t, "set_property"):
                 t.set_property(key, value)
+        # Auto-refresh so dependent fields (e.g. elevation) update immediately
+        self._schedule_refresh()
+
+    def _schedule_refresh(self):
+        """Debounced refresh to avoid recursion from widget signal feedback."""
+        if not hasattr(self, "_refresh_timer"):
+            from PyQt6.QtCore import QTimer
+            self._refresh_timer = QTimer(self)
+            self._refresh_timer.setSingleShot(True)
+            self._refresh_timer.setInterval(50)
+            self._refresh_timer.timeout.connect(self._do_refresh)
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _do_refresh(self):
+        """Re-display properties for the current targets."""
+        if self._targets:
+            self.show_properties(
+                self._targets if len(self._targets) > 1 else self._targets[0]
+            )
 
     def _pick_color(self, key: str, btn: QPushButton):
         """Open a colour dialog, update swatch, and apply to all targets."""
