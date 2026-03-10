@@ -836,6 +836,9 @@ class Model_Space(QGraphicsScene):
     def set_mode(self, mode, template=None):
         self.mode = mode
         self.modeChanged.emit(mode)
+        # Auto-deselect all geometry when entering a drawing/placement mode
+        if mode not in ("select", "stretch"):
+            self.clearSelection()
         self.preview_node.hide()
         self.preview_pipe.hide()
         self._cal_point1 = None
@@ -3382,17 +3385,23 @@ class Model_Space(QGraphicsScene):
             selection = next((i for i in items if isinstance(i, Pipe)), None)
 
         # ── Grip hit takes priority over mode handlers ──────────────────
-        grip_hit = self._find_grip_hit(snapped)
-        if grip_hit is not None:
-            if self.mode == "move" and self.node_start_pos is None:
-                # In move mode, use grip point as precise base point
-                item, idx = grip_hit
-                self.node_start_pos = item.grip_points()[idx]
-                self.instructionChanged.emit("Pick destination point")
-                return
-            self._grip_item, self._grip_index = grip_hit
-            self._grip_dragging = True
-            return  # consumed by grip system
+        # Skip grip detection in drawing modes so clicks reach the draw handler
+        _skip_grip_modes = ("wall", "floor", "floor_rect", "pipe", "sprinkler",
+                            "draw_line", "draw_rectangle", "draw_circle",
+                            "draw_arc", "polyline", "gridline", "dimension",
+                            "text", "door", "window", "set_scale")
+        if self.mode not in _skip_grip_modes:
+            grip_hit = self._find_grip_hit(snapped)
+            if grip_hit is not None:
+                if self.mode == "move" and self.node_start_pos is None:
+                    # In move mode, use grip point as precise base point
+                    item, idx = grip_hit
+                    self.node_start_pos = item.grip_points()[idx]
+                    self.instructionChanged.emit("Pick destination point")
+                    return
+                self._grip_item, self._grip_index = grip_hit
+                self._grip_dragging = True
+                return  # consumed by grip system
 
         if self.mode == "sprinkler":
             if selection is None:
@@ -4116,7 +4125,7 @@ class Model_Space(QGraphicsScene):
                 _close_loop = False
                 if self._wall_chain_start is not None:
                     scale = self.views()[0].transform().m11() if self.views() else 1.0
-                    tol = 8.0 / max(scale, 1e-6)
+                    tol = 15.0 / max(scale, 1e-6)
                     d_start = math.hypot(tip.x() - self._wall_chain_start.x(),
                                          tip.y() - self._wall_chain_start.y())
                     if d_start <= tol:
