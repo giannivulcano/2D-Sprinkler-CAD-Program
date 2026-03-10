@@ -132,7 +132,8 @@ class View3D(QWidget):
 
         # Toolbar
         tb = QHBoxLayout()
-        tb.setContentsMargins(4, 2, 4, 2)
+        tb.setContentsMargins(4, 0, 4, 0)
+        tb.setSpacing(4)
 
         self._fit_btn = QPushButton("Fit All")
         self._fit_btn.setFixedHeight(24)
@@ -877,11 +878,16 @@ class View3D(QWidget):
     def _toggle_projection(self):
         """Toggle between perspective and orthographic projection."""
         self._perspective = not self._perspective
+        cam = self._view.camera
         if self._perspective:
-            self._view.camera.fov = 45
+            cam.fov = 45
             self._proj_btn.setText("Ortho")
         else:
-            self._view.camera.fov = 0
+            # Transfer perspective zoom level to ortho scale_factor so
+            # mouse-wheel zoom continues to work in orthographic mode.
+            half_h = cam.distance * math.tan(math.radians(cam.fov / 2))
+            cam.fov = 0
+            cam.scale_factor = half_h * 2
             self._proj_btn.setText("Perspective")
 
     def _create_ground_grid(self, extent: float, step: float):

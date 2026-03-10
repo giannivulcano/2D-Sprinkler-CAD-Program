@@ -42,7 +42,7 @@ class Pipe(QGraphicsLineItem):
         super().__init__()
         # Properties
         self._properties = {
-            "Diameter":    {"type": "enum",   "value": "Ø 2\"",          "options": ["1\"Ø", "1-½\"Ø", "2\"Ø","3\"Ø","4\"Ø","5\"Ø","6\"Ø","8\"Ø"]},
+            "Diameter":    {"type": "enum",   "value": "1\"Ø",            "options": ["1\"Ø", "1-½\"Ø", "2\"Ø","3\"Ø","4\"Ø","5\"Ø","6\"Ø","8\"Ø"]},
             "Schedule":    {"type": "enum",   "value": "Sch 40",         "options": ["Sch 10", "Sch 40", "Sch 80", "Sch 40S", "Sch 10S"]},
             "C-Factor":    {"type": "string", "value": "120"},
             "Material":    {"type": "enum",   "value": "Galvanized Steel","options": ["Galvanized Steel", "Stainless Steel", "Black Steel", "PVC"]},
@@ -107,17 +107,18 @@ class Pipe(QGraphicsLineItem):
             length = f"{self.length:.1f} px"
 
         # Include hydraulic results if available
-        hr_line = ""
+        hr_lines = ""
         if scene and hasattr(scene, "hydraulic_result") and scene.hydraulic_result is not None:
             result = scene.hydraulic_result
             q = result.pipe_flows.get(self)
             hf = result.pipe_friction_loss.get(self)
             if q is not None:
-                hr_line = f" | <span style='color:#00aaff'>{q:.1f} gpm</span>"
+                hr_lines += f"<br><span style='color:#00aaff'>{q:.1f} gpm</span>"
             if hf is not None:
-                hr_line += f"<span style='color:#ffaa00'> | {hf:.2f} psi</span>"
+                hr_lines += f"<br><span style='color:#ffaa00'>{hf:.2f} psi</span>"
 
-        html = f"<span style='white-space:nowrap'>{diameter} | {length}{hr_line}</span>"
+        html = (f"<div style='font-size:9pt; line-height:1.2; text-align:center;'>"
+                f"{diameter}<br>{length}{hr_lines}</div>")
         self.label.setHtml(html)
         self.label.setTextWidth(-1)  # no wrapping
 
@@ -219,13 +220,14 @@ class Pipe(QGraphicsLineItem):
             self.set_property(key, meta["value"])
 
     def get_od_mm(self) -> float:
-        """Return the nominal outside diameter in mm for the current pipe size.
+        """Return the visual outside diameter in mm for the current pipe size.
 
+        Returns 2× the nominal OD so pipes are easier to see on screen.
         Used by the 2D paint method to draw pipes at their real physical width.
         """
         nominal = self._properties["Diameter"]["value"]
-        od_in = self.NOMINAL_OD_IN.get(nominal, 2.375)   # fallback to 2"
-        return od_in * 25.4  # inches → mm (= scene units)
+        od_in = self.NOMINAL_OD_IN.get(nominal, 1.315)   # fallback to 1"
+        return od_in * 25.4 * 2  # inches → mm (= scene units), doubled for visibility
 
     def get_inner_diameter(self) -> float:
         """Return the actual inside diameter in inches for the current nominal size and schedule.
