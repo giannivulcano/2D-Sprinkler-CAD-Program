@@ -11,9 +11,9 @@ class Sprinkler(QGraphicsSvgItem):
         "Sprinkler2": r"graphics/sprinkler_graphics/sprinkler2.svg"
     }
 
-    SCALE = 20 / 30          # fallback scale when uncalibrated (doubled)
     SVG_NATURAL_PX = 30.0    # natural SVG bounding-box width (px)
-    TARGET_PAPER_MM = 12.0   # desired symbol diameter in paper mm
+    TARGET_MM = 24.0 * 25.4  # desired symbol diameter in mm (24 inches)
+    SCALE = TARGET_MM / SVG_NATURAL_PX  # scene-unit scale factor
 
     def __init__(self, node):
         super().__init__()
@@ -34,7 +34,7 @@ class Sprinkler(QGraphicsSvgItem):
         if node is not None:
             self.setParentItem(node)
             self.setZValue(100)
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+            # No ItemIgnoresTransformations — symbol scales with zoom (real-world size)
             self._load_graphic(self.GRAPHICS[self._properties["Graphic"]["value"]])
 
     # -------------------------------------------------------------------------
@@ -49,19 +49,20 @@ class Sprinkler(QGraphicsSvgItem):
         self._centre_on_node()
 
     def rescale(self, sm=None) -> None:
-        """Re-centre (zoom-independent, so no ScaleManager needed)."""
+        """Re-centre the sprinkler at real-world scale."""
         self._centre_on_node()
 
     def _centre_on_node(self):
         """Centre the item on the parent node's origin (0, 0).
 
         Uses a QTransform that scales then translates so the SVG centre
-        maps to local (0, 0).  With ItemIgnoresTransformations this keeps
-        the symbol at a fixed screen-pixel size, centred on the node.
+        maps to local (0, 0).  The symbol is sized to TARGET_MM and
+        scales with zoom like all other scene geometry.
         """
         bounds = self.boundingRect()
         center = bounds.center()
-        s = self.SCALE
+        svg_natural = max(bounds.width(), bounds.height())
+        s = self.TARGET_MM / svg_natural if svg_natural > 0 else self.SCALE
         # Build affine: scale about origin, then translate so centre → (0,0)
         t = QTransform(s, 0, 0, s, -s * center.x(), -s * center.y())
         self.setTransform(t)
