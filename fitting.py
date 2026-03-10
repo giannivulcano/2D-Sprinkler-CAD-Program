@@ -9,6 +9,12 @@ class Fitting():
     SIZE = 1
     TARGET_PAPER_MM = 6.0   # desired fitting symbol size in paper mm
     TARGET_SCREEN_PX = 20.0 # zoom-independent screen-pixel size
+
+    # Nominal pipe OD in inches (same table as Pipe.NOMINAL_OD_IN).
+    _NOMINAL_OD_IN: dict[str, float] = {
+        '1"Ø': 1.315, '1-½"Ø': 1.900, '2"Ø': 2.375, '3"Ø': 3.500,
+        '4"Ø': 4.500, '5"Ø': 5.563, '6"Ø': 6.625, '8"Ø': 8.625,
+    }
     SYMBOLS = {
         "no fitting": {
             "path": r"graphics/fitting_symbols/no_fitting.svg"
@@ -92,6 +98,16 @@ class Fitting():
             return "no fitting"
 
 
+    def _max_connected_od_mm(self) -> float:
+        """Return the largest nominal OD (in mm) among pipes on this node."""
+        best = 2.375  # fallback: 2" OD in inches
+        for pipe in self.node.pipes:
+            nom = pipe._properties.get("Diameter", {}).get("value", '2"Ø')
+            od = self._NOMINAL_OD_IN.get(nom, 2.375)
+            if od > best:
+                best = od
+        return best * 25.4   # inches → mm (scene units)
+
     def update_symbol(self):
 
         # Kill old symbol by just dropping the reference (Qt handles deletion via parent)
@@ -102,7 +118,7 @@ class Fitting():
         # Build new symbol as child of node
         path = self.SYMBOLS[self.type]["path"]
         self.symbol = QGraphicsSvgItem(path, self.node)
-        self.symbol.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        # No ItemIgnoresTransformations — symbol scales with zoom (real-world size)
 
         # Rotation origin at the center of its bounding box
         self.symbol.setTransformOriginPoint(self.symbol.boundingRect().center())
@@ -177,22 +193,26 @@ class Fitting():
             except Exception:
                 pass
             
+        # Fallback: if no condition produced a transform, use identity
+        if transform is None:
+            transform = QTransform()
+
         bounds = self.symbol.boundingRect()
         center = bounds.center()
         self.symbol.setTransformOriginPoint(center)
 
-        # Compute zoom-independent scale (fixed screen-pixel size)
+        # Scale fitting to match the largest connected pipe OD (real-world mm)
         svg_natural = max(bounds.width(), bounds.height())
         if svg_natural > 0:
-            self.symbol_scale = self.TARGET_SCREEN_PX / svg_natural
+            target_mm = self._max_connected_od_mm()
+            self.symbol_scale = target_mm / svg_natural
         else:
-            self.symbol_scale = 0.5
+            self.symbol_scale = 1.0
 
         transform.scale(self.symbol_scale, self.symbol_scale)
 
-        # With ItemIgnoresTransformations the symbol renders in screen pixels.
-        # Adjust the transform's translation so the SVG centre maps to (0,0),
-        # then pos(0,0) anchors that centre on the parent node.
+        # Adjust the transform so the SVG centre maps to local (0, 0),
+        # anchoring the fitting on the parent node.
         cx, cy = center.x(), center.y()
         mc_x = transform.m11() * cx + transform.m21() * cy + transform.dx()
         mc_y = transform.m12() * cx + transform.m22() * cy + transform.dy()
@@ -203,7 +223,7 @@ class Fitting():
         self.symbol.setPos(0, 0)
 
     def rescale(self, sm=None) -> None:
-        """Re-draw fitting (zoom-independent, so no ScaleManager needed)."""
+        """Re-draw fitting at real-world scale (sized to largest connected pipe)."""
         if self.symbol is None:
             return
         self.update()
