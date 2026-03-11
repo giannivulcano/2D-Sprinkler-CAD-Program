@@ -56,6 +56,7 @@ class Model_Space(QGraphicsScene):
         self._cal_point1 = None          # first point for "set_scale" mode
         self.node_start_pos = None
         self.node_end_pos = None
+        self._pipe_node_was_new = False
         self._selected_items = None
         self._snap_to_underlay: bool = False
         self.water_supply_node: "WaterSupply | None" = None  # placed water supply
@@ -858,13 +859,14 @@ class Model_Space(QGraphicsScene):
                 if self._design_area_rect_item.scene() is self:
                     self.removeItem(self._design_area_rect_item)
                 self._design_area_rect_item = None
-        # Only remove node if we are truly holding an orphan Node (pipe mode).
-        # In paste/move mode node_start_pos is a QPointF — never call remove_node on it.
+        # Only remove node if we created it during pipe first-click and it's orphaned.
+        # Pre-existing nodes must survive escape. In paste/move mode node_start_pos
+        # is a QPointF — never call remove_node on it.
         if self.node_start_pos is not None:
-            if isinstance(self.node_start_pos, Node):
+            if isinstance(self.node_start_pos, Node) and self._pipe_node_was_new:
                 self.remove_node(self.node_start_pos)
-            else:
-                self.node_start_pos = None
+            self.node_start_pos = None
+        self._pipe_node_was_new = False
         # Cancel in-progress construction geometry
         self._cline_anchor = None
         if mode != "polyline" and self._polyline_active is not None:
@@ -1106,6 +1108,15 @@ class Model_Space(QGraphicsScene):
     # NODE / PIPE / SPRINKLER MANAGEMENT
 
     def find_nearby_node(self, x, y):
+        from PyQt6.QtCore import QPointF as _QP
+        pt = _QP(x, y)
+        # Priority 1: cursor inside any sprinkler's bounding box → snap to node
+        for node in self.sprinkler_system.nodes:
+            if node.has_sprinkler():
+                spr = node.sprinkler
+                if spr.mapToScene(spr.boundingRect()).boundingRect().contains(pt):
+                    return node
+        # Priority 2: distance-based snap
         for node in self.sprinkler_system.nodes:
             if node.distance_to(x, y) <= self.SNAP_RADIUS:
                 return node
@@ -2305,6 +2316,7 @@ class Model_Space(QGraphicsScene):
         """Show or hide translucent coverage circles on all sprinkler nodes."""
         Node._coverage_visible = visible
         for node in self.sprinkler_system.nodes:
+            node.prepareGeometryChange()
             node.update()
 
     def _get_draw_color(self) -> str:
@@ -3531,7 +3543,8 @@ class Model_Space(QGraphicsScene):
                             "draw_line", "draw_rectangle", "draw_circle",
                             "draw_arc", "polyline", "gridline", "dimension",
                             "text", "door", "window", "set_scale")
-        if self.mode not in _skip_grip_modes:
+        if (self.mode not in _skip_grip_modes
+                and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
             grip_hit = self._find_grip_hit(snapped)
             if grip_hit is not None:
                 if self.mode == "move" and self.node_start_pos is None:
@@ -3566,8 +3579,10 @@ class Model_Space(QGraphicsScene):
 
                 if isinstance(selection, Pipe):
                     start_node = self.split_pipe(selection, self.project_click_onto_pipe_segment(snapped, selection))
+                    self._pipe_node_was_new = True  # split created new node
                 else:
                     start_node = self.find_or_create_node(snapped.x(), snapped.y())
+                    self._pipe_node_was_new = (existing_start is None)
 
                 # Check elevation mismatch only on a pre-existing node
                 if existing_start is not None and existing_start is start_node and template is not None:
@@ -3655,6 +3670,7 @@ class Model_Space(QGraphicsScene):
                 self.node_start_pos.fitting.update()
                 end_node.fitting.update()
                 self.node_start_pos = None
+                self._pipe_node_was_new = False
                 self.preview_pipe.hide()
                 self.preview_node.hide()
                 self.push_undo_state()

@@ -60,7 +60,7 @@ class _SplashScreen(QWidget):
             )
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 18)
+        layout.setContentsMargins(8, 12, 8, 8)
         layout.setSpacing(6)
 
         # Logo
@@ -71,8 +71,8 @@ class _SplashScreen(QWidget):
             "graphics", "Program Icon", "Logo.png",
         )
         if os.path.isfile(logo_path):
-            logo_pm = QPixmap(logo_path).scaledToHeight(
-                120, Qt.TransformationMode.SmoothTransformation
+            logo_pm = QPixmap(logo_path).scaledToWidth(
+                464, Qt.TransformationMode.SmoothTransformation
             )
             logo_lbl.setPixmap(logo_pm)
         else:
@@ -83,13 +83,6 @@ class _SplashScreen(QWidget):
             logo_lbl.setFont(f)
             logo_lbl.setStyleSheet("color: #333333;")
         layout.addWidget(logo_lbl)
-
-        # Subtitle
-        sub = QLabel("Fire Protection Design Suite")
-        sub.setFont(QFont("Segoe UI", 9))
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setStyleSheet("color: #606060;")
-        layout.addWidget(sub)
 
         layout.addStretch()
 
@@ -671,11 +664,11 @@ class MainWindow(QMainWindow):
         _da_btn.setToolTip("Define the design area for hydraulic calc")
         self._mode_buttons["design_area"] = _da_btn
         self._coverage_btn = g_sys.add_small_button(
-            "Coverage Overlay", _I("sprinkler_icon.svg"),
+            "Coverage Overlay", _I("placeholder_icon.svg"),
             self.toggle_coverage_overlay, checkable=True)
         self._coverage_btn.setToolTip("Show/hide sprinkler coverage circles")
         g_sys.add_small_button(
-            "Visibility", _I("sprinkler_icon.svg"),
+            "Visibility", _I("placeholder_icon.svg"),
             self._open_fs_visibility_dialog)
 
         # --- Library ---
@@ -1504,6 +1497,12 @@ class MainWindow(QMainWindow):
     def run_hydraulics(self):
         """Run the hydraulic solver and populate the report dock."""
         design = self.scene.design_area_sprinklers or None
+        if design:
+            self.statusBar().showMessage(
+                f"Running hydraulics with {len(design)} design-area sprinkler(s)...", 5000)
+        else:
+            self.statusBar().showMessage(
+                "Running hydraulics on ALL sprinklers (no design area set)...", 5000)
         result = self.scene.run_hydraulics(design_sprinklers=design)
         self.hydro_report.populate(result, self.scene, self.scene.scale_manager)
         self.hydro_dock.show()

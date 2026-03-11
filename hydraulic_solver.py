@@ -51,6 +51,7 @@ class HydraulicResult:
     supply_pressure:    float  # psi available from supply curve at total_demand
     passed:             bool
     messages:           list   # list[str]  warnings / errors / summary
+    node_numbers:       dict   # Node  → int (BFS order, starting from 1)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,6 +266,9 @@ class HydraulicSolver:
                 )
                 passed = False
 
+        # Build node numbering (BFS order, 1-based)
+        node_numbers = {node: idx + 1 for idx, node in enumerate(bfs_order)}
+
         return HydraulicResult(
             node_pressures     = node_pressure,
             pipe_flows         = pipe_flow,
@@ -275,6 +279,7 @@ class HydraulicSolver:
             supply_pressure    = avail_pressure,
             passed             = passed,
             messages           = messages,
+            node_numbers       = node_numbers,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -285,7 +290,7 @@ class HydraulicSolver:
     def _fail(msg: str, extra_messages: list | None = None) -> HydraulicResult:
         msgs = list(extra_messages or [])
         msgs.append(f"❌ {msg}")
-        return HydraulicResult({}, {}, {}, {}, 0.0, 0.0, 0.0, False, msgs)
+        return HydraulicResult({}, {}, {}, {}, 0.0, 0.0, 0.0, False, msgs, {})
 
     @staticmethod
     def _safe_float(value, default: float) -> float:
@@ -369,7 +374,7 @@ class HydraulicSolver:
         d = pipe.get_inner_diameter()   # inches
         if d <= 0 or c <= 0:
             return 0.0
-        L_ft = pipe.get_length_ft()
+        L_ft = pipe.get_length_ft(sm=self.sm)
         hf = 4.52 * (q_gpm ** 1.852) / ((c ** 1.852) * (d ** 4.87)) * L_ft
         return hf
 

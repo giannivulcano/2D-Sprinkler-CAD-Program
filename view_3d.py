@@ -130,45 +130,59 @@ class View3D(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Toolbar
-        tb = QHBoxLayout()
-        tb.setContentsMargins(4, 0, 4, 0)
+        # Toolbar — compact wrapper widget with fixed height
+        tb_widget = QWidget()
+        tb_widget.setFixedHeight(28)
+        tb_widget.setStyleSheet("background: #1e1e1e;")
+        tb = QHBoxLayout(tb_widget)
+        tb.setContentsMargins(4, 2, 4, 2)
         tb.setSpacing(4)
 
+        _btn_style = "QPushButton { height: 20px; padding: 0 6px; font-size: 11px; }"
+
         self._fit_btn = QPushButton("Fit All")
-        self._fit_btn.setFixedHeight(24)
+        self._fit_btn.setStyleSheet(_btn_style)
         self._fit_btn.clicked.connect(self._fit_camera)
         tb.addWidget(self._fit_btn)
 
         self._proj_btn = QPushButton("Ortho")
-        self._proj_btn.setFixedHeight(24)
+        self._proj_btn.setStyleSheet(_btn_style)
         self._proj_btn.clicked.connect(self._toggle_projection)
         tb.addWidget(self._proj_btn)
 
         self._refresh_btn = QPushButton("Refresh")
-        self._refresh_btn.setFixedHeight(24)
+        self._refresh_btn.setStyleSheet(_btn_style)
         self._refresh_btn.clicked.connect(self.rebuild)
         tb.addWidget(self._refresh_btn)
 
         self._section_h_btn = QPushButton("H-Cut")
-        self._section_h_btn.setFixedHeight(24)
+        self._section_h_btn.setStyleSheet(_btn_style)
         self._section_h_btn.setCheckable(True)
         self._section_h_btn.setToolTip("Horizontal section cut — hides geometry above cut height")
         self._section_h_btn.clicked.connect(self._toggle_horizontal_cut)
         tb.addWidget(self._section_h_btn)
 
         self._grid_btn = QPushButton("Grid")
-        self._grid_btn.setFixedHeight(24)
+        self._grid_btn.setStyleSheet(_btn_style)
         self._grid_btn.setCheckable(True)
         self._grid_btn.setChecked(True)
-        self._grid_btn.setToolTip("Toggle ground grid and axis lines")
+        self._grid_btn.setToolTip("Toggle ground grid")
         self._grid_btn.clicked.connect(self._toggle_3d_grid)
         tb.addWidget(self._grid_btn)
 
+        self._floors_btn = QPushButton("Floors")
+        self._floors_btn.setStyleSheet(_btn_style)
+        self._floors_btn.setCheckable(True)
+        self._floors_btn.setChecked(True)
+        self._floors_btn.setToolTip("Toggle level floor planes")
+        self._floors_btn.clicked.connect(self._toggle_level_floors)
+        tb.addWidget(self._floors_btn)
+
         tb.addStretch()
         self._info_label = QLabel("")
+        self._info_label.setStyleSheet("color: #aaa; font-size: 11px;")
         tb.addWidget(self._info_label)
-        layout.addLayout(tb)
+        layout.addWidget(tb_widget)
 
         # vispy canvas
         self._canvas = scene.SceneCanvas(keys="interactive", show=False)
@@ -241,6 +255,11 @@ class View3D(QWidget):
         # Ground grid in XY plane at Z=0
         self._ground_grid = self._create_ground_grid(5000, 1000)
         self._3d_grid_visible = True
+        self._level_floors_visible = True
+
+        # Pan state for middle-mouse-button pan
+        self._pan_active = False
+        self._pan_last_pos = None
 
         # Section cut state
         self._h_cut_enabled: bool = False
@@ -258,6 +277,11 @@ class View3D(QWidget):
 
         # Mouse picking
         self._canvas.events.mouse_press.connect(self._on_mouse_press)
+
+        # Middle-button pan
+        self._canvas.events.mouse_press.connect(self._on_pan_press)
+        self._canvas.events.mouse_move.connect(self._on_pan_move)
+        self._canvas.events.mouse_release.connect(self._on_pan_release)
 
     def _connect_signals(self):
         self._scene.sceneModified.connect(self._schedule_rebuild)
@@ -909,13 +933,21 @@ class View3D(QWidget):
         )
 
     def _toggle_3d_grid(self):
-        """Toggle ground grid and axis lines visibility."""
+        """Toggle ground grid visibility (origin axis always remains visible)."""
         self._3d_grid_visible = not self._3d_grid_visible
-        vis = self._3d_grid_visible
-        self._ground_grid.visible = vis
-        self._axis_lines.visible = vis
-        for lbl in self._axis_labels:
+        self._ground_grid.visible = self._3d_grid_visible
+
+    def _toggle_level_floors(self):
+        """Toggle level floor planes, edge lines, and labels visibility."""
+        self._level_floors_visible = not self._level_floors_visible
+        vis = self._level_floors_visible
+        for m in self._floor_meshes:
+            m.visible = vis
+        for ln in self._floor_edge_lines:
+            ln.visible = vis
+        for lbl in self._floor_labels:
             lbl.visible = vis
+        self._canvas.update()
 
     def _set_view_preset(self, elevation: float, azimuth: float):
         """Set camera to a standard engineering view preset."""
@@ -957,6 +989,56 @@ class View3D(QWidget):
         """Sync ViewCube during interactive camera rotation."""
         if event.is_dragging:
             self._sync_viewcube()
+
+    # ── Middle-button pan ─────────────────────────────────────────────────
+
+    def _on_pan_press(self, event):
+        """Start pan on middle mouse button press (vispy button 3)."""
+        if event.button == 3:  # middle button in vispy
+            self._pan_active = True
+            self._pan_last_pos = np.array(event.pos[:2], dtype=float)
+            # Block camera from processing this event (prevent default orbit)
+            event.handled = True
+
+    def _on_pan_move(self, event):
+        """Pan the 3D camera by adjusting camera.center."""
+        if not self._pan_active or self._pan_last_pos is None:
+            return
+        cur = np.array(event.pos[:2], dtype=float)
+        dx = cur[0] - self._pan_last_pos[0]
+        dy = cur[1] - self._pan_last_pos[1]
+        self._pan_last_pos = cur
+
+        cam = self._view.camera
+        # Compute right and up vectors from camera azimuth/elevation
+        az = math.radians(cam.azimuth)
+        el = math.radians(cam.elevation)
+
+        # Right vector (perpendicular to look direction in XY plane)
+        right = np.array([-math.sin(az), math.cos(az), 0.0])
+        # Up vector (perpendicular to both look direction and right)
+        up = np.array([
+            -math.cos(az) * math.sin(el),
+            -math.sin(az) * math.sin(el),
+            math.cos(el),
+        ])
+
+        # Scale movement by camera distance for reasonable speed
+        scale = cam.distance * 0.001
+        shift = (-dx * right + dy * up) * scale
+
+        center = np.array(cam.center, dtype=float)
+        cam.center = tuple(center + shift)
+        self._canvas.update()
+        event.handled = True
+
+    def _on_pan_release(self, event):
+        """End pan on middle mouse button release."""
+        if event.button == 3 and self._pan_active:
+            self._pan_active = False
+            self._pan_last_pos = None
+            self._sync_viewcube()
+            event.handled = True
 
     def resizeEvent(self, event):
         """Reposition ViewCube when the widget is resized."""
@@ -1017,10 +1099,19 @@ class View3D(QWidget):
                 self._node_markers.set_data(pos=np.zeros((0, 3), dtype=np.float32))
 
     def _remove_horizontal_cut(self):
-        """Restore all meshes to visible."""
-        for mesh_list in (self._wall_meshes, self._slab_meshes, self._floor_meshes):
+        """Restore all meshes to visible (respecting floors toggle)."""
+        for mesh_list in (self._wall_meshes, self._slab_meshes):
             for m in mesh_list:
                 m.visible = True
+        # Restore floor meshes only if floors are toggled on
+        floors_vis = self._level_floors_visible
+        for m in self._floor_meshes:
+            m.visible = floors_vis
+        for ln in self._floor_edge_lines:
+            if ln is not None:
+                ln.visible = floors_vis
+        for lbl in self._floor_labels:
+            lbl.visible = floors_vis
         # Restore edge lines
         for ln in self._wall_edge_lines + self._slab_edge_lines:
             if ln is not None:

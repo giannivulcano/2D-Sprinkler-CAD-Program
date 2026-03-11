@@ -151,14 +151,14 @@ class HydraulicReportWidget(QWidget):
 
         # Tab 2: Pipe Results
         self._pipe_res = _make_table([
-            "#", "Diameter", "Schedule", "C-Factor",
+            "#", "From", "To", "Diameter", "Schedule", "C-Factor",
             "Length", "Flow (gpm)", "Velocity (fps)", "hf (psi)", "Status",
         ])
         self.tabs.addTab(self._pipe_res, "Pipe Results")
 
         # Tab 3: Sprinkler Schedule
         self._spr_sched = _make_table([
-            "#", "K-Factor", "Model", "Orientation", "Temp",
+            "#", "Node", "K-Factor", "Model", "Orientation", "Temp",
             "Min P (psi)", "Act P (psi)", "Act Q (gpm)", "Coverage (sq ft)",
         ])
         self.tabs.addTab(self._spr_sched, "Sprinkler Schedule")
@@ -229,6 +229,7 @@ class HydraulicReportWidget(QWidget):
     def _fill_pipe_results(self):
         r = self._result
         sm = self._sm
+        nn = r.node_numbers if hasattr(r, 'node_numbers') else {}
         pipes = sorted(r.pipe_flows.keys(),
                        key=lambda p: r.pipe_flows[p], reverse=True)
         t = self._pipe_res
@@ -248,6 +249,10 @@ class HydraulicReportWidget(QWidget):
                 else f"{pipe.length:.0f} px"
             )
 
+            # Node numbers for From / To columns
+            n1_num = str(nn.get(pipe.node1, "—")) if pipe.node1 else "—"
+            n2_num = str(nn.get(pipe.node2, "—")) if pipe.node2 else "—"
+
             vcol = _velocity_color(v)
             vstatus = (
                 "⚠️ HIGH" if v > 20 else
@@ -256,17 +261,18 @@ class HydraulicReportWidget(QWidget):
             )
 
             vals = [
-                str(row + 1), d, sc, cf, length_str,
+                str(row + 1), n1_num, n2_num, d, sc, cf, length_str,
                 f"{q:.1f}", f"{v:.1f}", f"{hf:.2f}", vstatus,
             ]
             for col, val in enumerate(vals):
-                color = vcol if col in (6, 8) else None
+                color = vcol if col in (8, 10) else None
                 t.setItem(row, col, _item(val, color))
 
         t.setSortingEnabled(True)
 
     def _fill_sprinkler_schedule(self):
         r   = self._result
+        nn  = r.node_numbers if hasattr(r, 'node_numbers') else {}
         sprs = list(self._scene.sprinkler_system.sprinklers)
         t = self._spr_sched
         t.setSortingEnabled(False)
@@ -293,14 +299,16 @@ class HydraulicReportWidget(QWidget):
             p_act_s = f"{p_act:.1f}"  if p_act  is not None else "—"
             q_act_s = f"{q_act:.1f}"  if q_act  is not None else "—"
 
+            node_num = str(nn.get(spr.node, "—"))
+
             pcol = _pressure_color(p_act, p_min)
 
             vals = [
-                str(row + 1), k_str, spr_model, orient, temp,
+                str(row + 1), node_num, k_str, spr_model, orient, temp,
                 p_min_s, p_act_s, q_act_s, coverage,
             ]
             for col, val in enumerate(vals):
-                color = pcol if col in (6, 7) else None
+                color = pcol if col in (7, 8) else None
                 t.setItem(row, col, _item(val, color))
 
         t.setSortingEnabled(True)
@@ -386,9 +394,10 @@ class HydraulicReportWidget(QWidget):
                 w.writerow([])
 
             # ── Pipe Results ──────────────────────────────────────────────
+            nn = r.node_numbers if hasattr(r, 'node_numbers') else {}
             w.writerow(["PIPE RESULTS"])
-            w.writerow(["#", "Diameter", "Schedule", "C-Factor", "Length",
-                        "Flow (gpm)", "Velocity (fps)", "hf (psi)"])
+            w.writerow(["#", "From", "To", "Diameter", "Schedule", "C-Factor",
+                        "Length", "Flow (gpm)", "Velocity (fps)", "hf (psi)"])
             for i, (pipe, q) in enumerate(
                 sorted(r.pipe_flows.items(), key=lambda x: x[1], reverse=True), 1
             ):
@@ -397,18 +406,20 @@ class HydraulicReportWidget(QWidget):
                 d  = pipe._properties["Diameter"]["value"]
                 sc = pipe._properties["Schedule"]["value"]
                 cf = pipe._properties["C-Factor"]["value"]
+                n1 = nn.get(pipe.node1, "") if pipe.node1 else ""
+                n2 = nn.get(pipe.node2, "") if pipe.node2 else ""
                 length_str = (
                     sm.scene_to_display(pipe.length)
                     if sm and sm.is_calibrated
                     else f"{pipe.length:.0f} px"
                 )
-                w.writerow([i, d, sc, cf, length_str,
+                w.writerow([i, n1, n2, d, sc, cf, length_str,
                             f"{q:.1f}", f"{v:.1f}", f"{hf:.2f}"])
             w.writerow([])
 
             # ── Sprinkler Schedule ────────────────────────────────────────
             w.writerow(["SPRINKLER SCHEDULE"])
-            w.writerow(["#", "K-Factor", "Model", "Orientation", "Temperature",
+            w.writerow(["#", "Node", "K-Factor", "Model", "Orientation", "Temperature",
                         "Min P (psi)", "Act P (psi)", "Act Q (gpm)", "Coverage (sq ft)"])
             for i, spr in enumerate(self._scene.sprinkler_system.sprinklers, 1):
                 p  = spr._properties
@@ -419,8 +430,9 @@ class HydraulicReportWidget(QWidget):
                     k = 5.6
                 p_act = r.node_pressures.get(spr.node, None)
                 q_act = k * (max(p_act, 0.0) ** 0.5) if p_act is not None else None
+                node_num = nn.get(spr.node, "")
                 w.writerow([
-                    i, k_str,
+                    i, node_num, k_str,
                     p["Model"]["value"], p["Orientation"]["value"], p["Temperature"]["value"],
                     p["Min Pressure"]["value"],
                     f"{p_act:.1f}" if p_act is not None else "",
@@ -498,11 +510,12 @@ class HydraulicReportWidget(QWidget):
             html += "</ul>"
 
         # Pipe results
+        nn = r.node_numbers if hasattr(r, 'node_numbers') else {}
         html += """<h3>Pipe Results</h3>
         <table>
-          <tr><th>#</th><th>Diameter</th><th>Schedule</th><th>C-Factor</th>
-              <th>Length</th><th>Flow (gpm)</th><th>Velocity (fps)</th>
-              <th>hf (psi)</th><th>Status</th></tr>"""
+          <tr><th>#</th><th>From</th><th>To</th><th>Diameter</th><th>Schedule</th>
+              <th>C-Factor</th><th>Length</th><th>Flow (gpm)</th>
+              <th>Velocity (fps)</th><th>hf (psi)</th><th>Status</th></tr>"""
         for i, (pipe, q) in enumerate(
             sorted(r.pipe_flows.items(), key=lambda x: x[1], reverse=True), 1
         ):
@@ -511,6 +524,8 @@ class HydraulicReportWidget(QWidget):
             d  = pipe._properties["Diameter"]["value"]
             sc = pipe._properties["Schedule"]["value"]
             cf = pipe._properties["C-Factor"]["value"]
+            n1 = nn.get(pipe.node1, "—") if pipe.node1 else "—"
+            n2 = nn.get(pipe.node2, "—") if pipe.node2 else "—"
             length_str = (
                 sm.scene_to_display(pipe.length)
                 if sm else f"{pipe.length:.0f} px"
@@ -518,7 +533,8 @@ class HydraulicReportWidget(QWidget):
             vcls = "bad" if v > 20 else "warn" if v > 12 else "ok"
             vstatus = "⚠ HIGH" if v > 20 else "⚠ ELEV" if v > 12 else "OK"
             html += (
-                f"<tr><td>{i}</td><td>{d}</td><td>{sc}</td><td>{cf}</td>"
+                f"<tr><td>{i}</td><td>{n1}</td><td>{n2}</td>"
+                f"<td>{d}</td><td>{sc}</td><td>{cf}</td>"
                 f"<td>{length_str}</td><td>{q:.1f}</td>"
                 f"<td class='{vcls}'>{v:.1f}</td><td>{hf:.2f}</td>"
                 f"<td class='{vcls}'>{vstatus}</td></tr>"
@@ -528,7 +544,7 @@ class HydraulicReportWidget(QWidget):
         # Sprinkler schedule
         html += """<h3>Sprinkler Schedule</h3>
         <table>
-          <tr><th>#</th><th>K-Factor</th><th>Model</th><th>Orientation</th>
+          <tr><th>#</th><th>Node</th><th>K-Factor</th><th>Model</th><th>Orientation</th>
               <th>Temperature</th><th>Min P (psi)</th><th>Act P (psi)</th>
               <th>Act Q (gpm)</th><th>Coverage (sq ft)</th></tr>"""
         for i, spr in enumerate(self._scene.sprinkler_system.sprinklers, 1):
@@ -543,13 +559,14 @@ class HydraulicReportWidget(QWidget):
             q_act = k * (max(p_act, 0.0) ** 0.5) if p_act is not None else None
             p_act_s = f"{p_act:.1f}" if p_act is not None else "—"
             q_act_s = f"{q_act:.1f}" if q_act is not None else "—"
+            node_num = nn.get(spr.node, "—")
             pcls = (
                 "bad"  if p_act is not None and p_act < p_min else
                 "warn" if p_act is not None and p_act < p_min * 1.5 else
                 "ok"   if p_act is not None else ""
             )
             html += (
-                f"<tr><td>{i}</td><td>{k_str}</td>"
+                f"<tr><td>{i}</td><td>{node_num}</td><td>{k_str}</td>"
                 f"<td>{p['Model']['value']}</td><td>{p['Orientation']['value']}</td>"
                 f"<td>{p['Temperature']['value']}</td>"
                 f"<td>{p['Min Pressure']['value']}</td>"
