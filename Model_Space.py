@@ -1148,12 +1148,14 @@ class Model_Space(QGraphicsScene):
     def add_pipe(self, n1, n2, template=None):
         pipe = Pipe(n1, n2)
         pipe.user_layer = self.active_user_layer
+        # Apply template first so non-level properties are copied
+        if template:
+            pipe.set_properties(template)
+        # Always override level with the active level
         pipe.level = self.active_level
         pipe.ceiling_level = self.active_level
         pipe._properties["Level"]["value"] = self.active_level
         pipe._properties["Ceiling Level"]["value"] = self.active_level
-        if template:
-            pipe.set_properties(template)
         self.sprinkler_system.add_pipe(pipe)
         self.addItem(pipe)
         pipe.update_label()   # re-run now that pipe.scene() is valid
@@ -2225,7 +2227,7 @@ class Model_Space(QGraphicsScene):
     # GEOMETRY HELPERS
 
     def get_snapped_position(self, x, y):
-        grid = 10
+        grid = 1
         return QPointF(round(x / grid) * grid, round(y / grid) * grid)
 
     def get_effective_position(self, scene_pos: QPointF) -> QPointF:

@@ -248,12 +248,12 @@ class Pipe(QGraphicsLineItem):
     def get_od_mm(self) -> float:
         """Return the visual outside diameter in mm for the current pipe size.
 
-        Returns 2× the nominal OD so pipes are easier to see on screen.
+        Returns 1.5× the nominal OD so pipes are easier to see on screen.
         Used by the 2D paint method to draw pipes at their real physical width.
         """
         nominal = self._properties["Diameter"]["value"]
         od_in = self.NOMINAL_OD_IN.get(nominal, 1.315)   # fallback to 1"
-        return od_in * 25.4 * 2  # inches → mm (= scene units), doubled for visibility
+        return od_in * 25.4 * 1.5  # inches → mm (= scene units), 1.5x for visibility
 
     def get_inner_diameter(self) -> float:
         """Return the actual inside diameter in inches for the current nominal size and schedule.
