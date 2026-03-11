@@ -303,9 +303,13 @@ class MainWindow(QMainWindow):
         self.coord_label = QLabel("X: —   Y: —")
         self.coord_label.setMinimumWidth(280)
         status_bar.addPermanentWidget(self.coord_label)
+        # Mode name badge — prominent indicator of active mode
         self.mode_name_label = QLabel("Select")
+        self.mode_name_label.setStyleSheet(
+            "font-weight: bold; color: #44aaff; padding: 2px 8px; "
+            "border: 1px solid #44aaff; border-radius: 3px;"
+        )
         self.mode_name_label.setMinimumWidth(100)
-        self.mode_name_label.setStyleSheet("font-weight: bold; padding: 0 8px;")
         status_bar.addWidget(self.mode_name_label)
         self.mode_label = QLabel("")
         status_bar.addWidget(self.mode_label)
@@ -1101,6 +1105,7 @@ class MainWindow(QMainWindow):
     def _update_mode_label(self, mode: str):
         text = self._MODE_INSTRUCTIONS.get(mode, mode.replace("_", " ").title())
         self.mode_label.setText(text)
+        # Update prominent mode name badge
         pretty = mode.replace("_", " ").title() if mode else "Select"
         self.mode_name_label.setText(pretty)
 
