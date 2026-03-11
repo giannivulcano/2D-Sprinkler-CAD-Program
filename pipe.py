@@ -279,15 +279,17 @@ class Pipe(QGraphicsLineItem):
         schedule_map = self.INNER_DIAMETER_IN.get(schedule, self.INNER_DIAMETER_IN["Sch 40"])
         return schedule_map.get(nominal, 2.067)
 
-    def get_length_ft(self) -> float:
+    def get_length_ft(self, sm=None) -> float:
         """Return the true 3D length in feet, accounting for elevation difference.
 
-        The horizontal distance comes from the 2D scene length converted to feet.
-        The vertical distance comes from the z_pos difference between endpoints.
-        The 3D length is the hypotenuse.
+        Parameters
+        ----------
+        sm : ScaleManager, optional
+            If provided, use this instead of looking up from scene.
         """
-        scene = self.scene()
-        sm = getattr(scene, 'scale_manager', None) if scene else None
+        if sm is None:
+            scene = self.scene()
+            sm = getattr(scene, 'scale_manager', None) if scene else None
         if not sm or not sm.is_calibrated:
             return 0.0
         # 2D horizontal distance in real-world mm, then feet

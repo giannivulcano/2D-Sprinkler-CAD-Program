@@ -20,6 +20,7 @@ class Node(QGraphicsEllipseItem):
         self.setPos(x, y)
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.setZValue(10)  # above walls (-50) and floors (-80)
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
             QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
@@ -190,19 +191,34 @@ class Node(QGraphicsEllipseItem):
     
     def boundingRect(self) -> QRectF:
         """Expand bounding rect to encompass selection highlight, coverage
-        overlay, and the pressure badge so Qt doesn't clip painted graphics."""
+        overlay, pressure badge, and node-number hexagon."""
         if self.has_sprinkler():
             r = self.sprinkler.TARGET_MM / 2.0 * 1.15
         else:
             r = 14.0 * 25.4 / 2.0  # 177.8 mm (7")
         r = max(r, self.RADIUS + 4)
-        # Pressure badge sits above the node: expand upward when results exist
+        # Coverage overlay can be much larger than the sprinkler graphic
+        if Node._coverage_visible and self.has_sprinkler():
+            try:
+                cov = float(self.sprinkler._properties.get(
+                    "Coverage Area", {}).get("value", 0))
+            except (ValueError, TypeError):
+                cov = 0.0
+            if cov > 0:
+                sm = getattr(self.scene(), "scale_manager", None) if self.scene() else None
+                if sm and sm.is_calibrated and sm.pixels_per_mm > 0:
+                    r = max(r, math.sqrt(cov * 92_903.0 / math.pi) * sm.pixels_per_mm + 10)
+                else:
+                    r = max(r, 50.0)
+        # Pressure badge (above) and hex badge (below) when results exist
+        top = r
+        bottom = r
         scene = self.scene()
         if scene and hasattr(scene, "hydraulic_result") and scene.hydraulic_result is not None:
             badge_r = 15.0 * 25.4  # 15 in radius
-            top = badge_r * 2.2 + badge_r  # centre offset + radius
-            return QRectF(-r, -top, r * 2, top + r)
-        return QRectF(-r, -r, r * 2, r * 2)
+            top = max(top, badge_r * 2.2 + badge_r)     # pressure badge above
+            bottom = max(bottom, badge_r * 2.2 + badge_r)  # hex badge below
+        return QRectF(-r, -top, r * 2, top + bottom)
 
     def shape(self) -> QPainterPath:
         """Expand clickable area to encompass the sprinkler graphic so
@@ -277,6 +293,43 @@ class Node(QGraphicsEllipseItem):
                     text_rect,
                     Qt.AlignmentFlag.AlignCenter,
                     f"{p:.0f}"
+                )
+
+            # Node-number hexagon badge below the node
+            nn = scene.hydraulic_result.node_numbers.get(self)
+            if nn is not None:
+                hex_r = 15.0 * 25.4          # 15 in radius → mm (same as pressure badge)
+                hex_cy = badge_r * 2.2       # below the node (mirror of pressure badge)
+                text_h_hex = 12.0 * 25.4     # 12 in text height
+
+                # Build hexagonal path (6 vertices, flat-top orientation)
+                hex_path = QPainterPath()
+                for vi in range(6):
+                    angle = math.radians(60 * vi)
+                    hx = hex_r * math.cos(angle)
+                    hy = hex_cy + hex_r * math.sin(angle)
+                    if vi == 0:
+                        hex_path.moveTo(hx, hy)
+                    else:
+                        hex_path.lineTo(hx, hy)
+                hex_path.closeSubpath()
+
+                painter.setBrush(QBrush(QColor(70, 130, 180, 200)))   # steel blue
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawPath(hex_path)
+
+                # Number text centred in the hexagon
+                font = painter.font()
+                font.setPixelSize(int(text_h_hex))
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(QPen(Qt.GlobalColor.white, 1))
+                hex_rect = QRectF(-hex_r, hex_cy - hex_r,
+                                  hex_r * 2, hex_r * 2)
+                painter.drawText(
+                    hex_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    str(nn),
                 )
 
         # Coverage overlay — translucent green circle sized from sprinkler’s
