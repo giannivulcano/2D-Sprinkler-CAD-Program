@@ -39,6 +39,18 @@ _GREEN  = QColor(210, 245, 215)
 _ORANGE = QColor(255, 235, 185)
 _RED    = QColor(255, 205, 205)
 
+# Dark text colours for coloured fills (legible on light cell backgrounds)
+_TEXT_GREEN  = QColor(0, 100, 0)       # dark green
+_TEXT_ORANGE = QColor(160, 120, 0)     # dark yellow / amber
+_TEXT_RED    = QColor(160, 0, 0)       # dark red
+
+# Map fill → text colour
+_TEXT_FOR_BG = {
+    _GREEN.rgb():  _TEXT_GREEN,
+    _ORANGE.rgb(): _TEXT_ORANGE,
+    _RED.rgb():    _TEXT_RED,
+}
+
 
 def _velocity_color(v: float) -> QColor | None:
     if v > 20:
@@ -67,6 +79,9 @@ def _item(text: str, color: QColor | None = None, bold: bool = False) -> QTableW
     it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
     if color:
         it.setBackground(color)
+        fg = _TEXT_FOR_BG.get(color.rgb())
+        if fg:
+            it.setForeground(fg)
     if bold:
         font = it.font()
         font.setBold(True)
@@ -229,7 +244,7 @@ class HydraulicReportWidget(QWidget):
             cf = pipe._properties["C-Factor"]["value"]
             length_str = (
                 sm.scene_to_display(pipe.length)
-                if sm and sm.is_calibrated
+                if sm
                 else f"{pipe.length:.0f} px"
             )
 
@@ -305,7 +320,7 @@ class HydraulicReportWidget(QWidget):
             cf  = props["C-Factor"]["value"]
             length_str = (
                 sm.scene_to_display(pipe.length)
-                if sm and sm.is_calibrated
+                if sm
                 else f"{pipe.length:.0f} px"
             )
             vals = [str(row + 1), d, sc, mat, cf, length_str]
@@ -449,9 +464,9 @@ class HydraulicReportWidget(QWidget):
         tr:nth-child(even) { background: #f5f5f5; }
         .pass { color: #007700; font-weight: bold; }
         .fail { color: #cc0000; font-weight: bold; }
-        .ok   { background: #d2f5d7; }
-        .warn { background: #ffebb8; }
-        .bad  { background: #ffcdcd; }
+        .ok   { background: #d2f5d7; color: #006400; }
+        .warn { background: #ffebb8; color: #a07800; }
+        .bad  { background: #ffcdcd; color: #a00000; }
         ul    { margin-top: 4px; }
         li    { margin-bottom: 3px; }
         """
@@ -498,7 +513,7 @@ class HydraulicReportWidget(QWidget):
             cf = pipe._properties["C-Factor"]["value"]
             length_str = (
                 sm.scene_to_display(pipe.length)
-                if sm and sm.is_calibrated else f"{pipe.length:.0f} px"
+                if sm else f"{pipe.length:.0f} px"
             )
             vcls = "bad" if v > 20 else "warn" if v > 12 else "ok"
             vstatus = "⚠ HIGH" if v > 20 else "⚠ ELEV" if v > 12 else "OK"
@@ -553,7 +568,7 @@ class HydraulicReportWidget(QWidget):
             p = pipe._properties
             length_str = (
                 sm.scene_to_display(pipe.length)
-                if sm and sm.is_calibrated else f"{pipe.length:.0f} px"
+                if sm else f"{pipe.length:.0f} px"
             )
             html += (
                 f"<tr><td>{i}</td><td>{p['Diameter']['value']}</td>"

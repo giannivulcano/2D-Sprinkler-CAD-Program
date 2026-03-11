@@ -189,13 +189,19 @@ class Node(QGraphicsEllipseItem):
 
     
     def boundingRect(self) -> QRectF:
-        """Expand bounding rect to encompass zoom-dependent selection highlight
-        and coverage overlay so Qt doesn't clip the painted graphics."""
+        """Expand bounding rect to encompass selection highlight, coverage
+        overlay, and the pressure badge so Qt doesn't clip painted graphics."""
         if self.has_sprinkler():
             r = self.sprinkler.TARGET_MM / 2.0 * 1.15
         else:
             r = 14.0 * 25.4 / 2.0  # 177.8 mm (7")
         r = max(r, self.RADIUS + 4)
+        # Pressure badge sits above the node: expand upward when results exist
+        scene = self.scene()
+        if scene and hasattr(scene, "hydraulic_result") and scene.hydraulic_result is not None:
+            badge_r = 15.0 * 25.4  # 15 in radius
+            top = badge_r * 2.2 + badge_r  # centre offset + radius
+            return QRectF(-r, -top, r * 2, top + r)
         return QRectF(-r, -r, r * 2, r * 2)
 
     def shape(self) -> QPainterPath:
@@ -235,11 +241,9 @@ class Node(QGraphicsEllipseItem):
         if scene and hasattr(scene, "hydraulic_result") and scene.hydraulic_result is not None:
             p = scene.hydraulic_result.node_pressures.get(self)
             if p is not None:
-                # Zoom-independent badge
-                views = scene.views() if scene else []
-                view_scale = abs(views[0].transform().m11()) if views else 1.0
-                badge_r = 14.0 / max(view_scale, 1e-6)
-                font_pt = max(5, int(14.0 * 0.55))
+                # 30-inch diameter model-space badge (scales with zoom like pipes)
+                badge_r = 15.0 * 25.4          # 15 in radius → mm
+                text_h  = 12.0 * 25.4          # 12 in text height (matches pipe labels)
 
                 # Pick badge color based on pressure vs. minimum
                 p_min = 7.0
@@ -255,17 +259,22 @@ class Node(QGraphicsEllipseItem):
                 else:
                     bg = QColor(0, 160, 60, 200)     # green – comfortable
 
+                # Draw badge circle centred above the node
+                badge_cy = -badge_r * 2.2
                 painter.setBrush(QBrush(bg))
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.drawEllipse(QPointF(0, -badge_r * 2.2), badge_r, badge_r)
+                painter.drawEllipse(QPointF(0, badge_cy), badge_r, badge_r)
 
+                # Draw pressure text centred in the badge
                 font = painter.font()
-                font.setPointSize(font_pt)
+                font.setPixelSize(int(text_h))
                 font.setBold(True)
                 painter.setFont(font)
                 painter.setPen(QPen(Qt.GlobalColor.white, 1))
+                text_rect = QRectF(-badge_r, badge_cy - badge_r,
+                                   badge_r * 2, badge_r * 2)
                 painter.drawText(
-                    QRectF(-badge_r, -badge_r * 3.2, badge_r * 2, badge_r * 2),
+                    text_rect,
                     Qt.AlignmentFlag.AlignCenter,
                     f"{p:.0f}"
                 )

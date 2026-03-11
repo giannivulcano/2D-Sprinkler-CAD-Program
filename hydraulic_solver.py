@@ -376,7 +376,7 @@ class HydraulicSolver:
     def _scene_to_ft(self, scene_px: float) -> float:
         """Convert scene-pixel length to feet using the scale manager."""
         if self.sm and self.sm.is_calibrated:
-            mm = scene_px / (self.sm.pixels_per_mm * self.sm.drawing_scale)
+            mm = scene_px / self.sm.pixels_per_mm
             return mm / 304.8          # mm → ft  (1 ft = 304.8 mm)
         # Fallback: assume 96 DPI screen, 1 px ≈ 1/96 inch
         return scene_px / 1152.0      # 96 dpi × 12 in/ft
