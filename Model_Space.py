@@ -844,6 +844,7 @@ class Model_Space(QGraphicsScene):
 
     def set_mode(self, mode, template=None):
         self.mode = mode
+        self._snap_result = None      # clear stale snap marker
         # Reset grip editing state (prevents stale grip after Escape mid-drag)
         self._grip_item = None
         self._grip_index = -1
@@ -1153,6 +1154,9 @@ class Model_Space(QGraphicsScene):
         pipe = Pipe(n1, n2)
         pipe.user_layer = self.active_user_layer
         pipe.level = self.active_level
+        pipe.ceiling_level = self.active_level
+        pipe._properties["Level"]["value"] = self.active_level
+        pipe._properties["Ceiling Level"]["value"] = self.active_level
         if template:
             pipe.set_properties(template)
         self.sprinkler_system.add_pipe(pipe)
@@ -2231,8 +2235,10 @@ class Model_Space(QGraphicsScene):
 
     def get_effective_position(self, scene_pos: QPointF) -> QPointF:
         """Return best-fit cursor position: OSNAP > underlay snap > grid snap."""
-        # OSNAP takes highest priority (disabled when no mode is active)
-        if self._osnap_enabled and self.mode is not None:
+        # OSNAP takes highest priority (disabled when no mode or select mode)
+        if (self._osnap_enabled
+                and self.mode is not None
+                and self.mode != "select"):
             views = self.views()
             if views:
                 result = self._snap_engine.find(scene_pos, self, views[0].transform())

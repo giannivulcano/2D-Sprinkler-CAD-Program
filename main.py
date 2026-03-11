@@ -241,13 +241,14 @@ class MainWindow(QMainWindow):
         # (Level combo removed from ribbon — levels managed via Levels tab)
         self.level_widget.duplicateLevel.connect(self.scene.duplicate_level_entities)
 
-        self.project_browser = ProjectBrowser()
+        self.project_browser = ProjectBrowser(level_manager=self.scene._level_manager)
         self.project_browser.activateModelSpace.connect(
             lambda: self.central_tabs.setCurrentWidget(self.view)
         )
         self.project_browser.activatePaperSheet.connect(
             self._activate_paper_sheet
         )
+        self.level_widget.levelsChanged.connect(self.project_browser.refresh_levels)
 
         self.model_browser = ModelBrowser()
         self.model_browser.set_scene(self.scene)
@@ -387,6 +388,17 @@ class MainWindow(QMainWindow):
         if self.settings.contains("display/precision"):
             self.scene.scale_manager.precision = self.settings.value(
                 "display/precision", 3, type=int)
+        # Restore pipe and sprinkler template settings
+        if self.settings.contains("template/pipe"):
+            pipe_props = self.settings.value("template/pipe", {})
+            if isinstance(pipe_props, dict):
+                for k, v in pipe_props.items():
+                    self.current_pipe_template.set_property(k, v)
+        if self.settings.contains("template/sprinkler"):
+            spr_props = self.settings.value("template/sprinkler", {})
+            if isinstance(spr_props, dict):
+                for k, v in spr_props.items():
+                    self.current_sprinkler_template.set_property(k, v)
 
     def _activate_paper_sheet(self, name: str):
         """Switch the central area to the paper space tab matching *name*."""
@@ -1559,6 +1571,17 @@ class MainWindow(QMainWindow):
         self.settings.setValue("dock/browser", self.browser_dock.isVisible())
         self.settings.setValue("dock/properties", self.prop_dock.isVisible())
         self.settings.setValue("dock/hydraulics", self.hydro_dock.isVisible())
+        # Persist pipe and sprinkler template settings
+        if self.current_pipe_template:
+            pipe_props = {k: v["value"]
+                          for k, v in self.current_pipe_template.get_properties().items()
+                          if k not in ("Level", "Ceiling Level", "Ceiling Offset (in)")}
+            self.settings.setValue("template/pipe", pipe_props)
+        if self.current_sprinkler_template:
+            spr_props = {k: v["value"]
+                         for k, v in self.current_sprinkler_template.get_properties().items()
+                         if k not in ("Level", "Ceiling Level", "Ceiling Offset (in)")}
+            self.settings.setValue("template/sprinkler", spr_props)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
