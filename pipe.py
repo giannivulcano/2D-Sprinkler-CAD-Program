@@ -290,8 +290,8 @@ class Pipe(QGraphicsLineItem):
         sm = getattr(scene, 'scale_manager', None) if scene else None
         if not sm or not sm.is_calibrated:
             return 0.0
-        # 2D horizontal distance in feet (matches _scene_to_ft formula)
-        horiz_mm = self.length / (sm.pixels_per_mm * sm.drawing_scale)
+        # 2D horizontal distance in real-world mm, then feet
+        horiz_mm = self.length / sm.pixels_per_mm
         horiz_ft = horiz_mm / 304.8
         # Vertical distance in feet (z_pos is already in feet)
         z1 = self.node1.z_pos if self.node1 else 0.0
