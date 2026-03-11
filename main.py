@@ -339,9 +339,9 @@ class MainWindow(QMainWindow):
         # Restore settings
         self._splash_progress(90, "Restoring settings...")
         self.restore_settings()
-        self._splash_progress(95, "Checking recovery...")
-        self._check_recovery()
         self._splash_progress(100, "Ready")
+        # Defer recovery check until after the window is fully shown
+        QTimer.singleShot(500, self._check_recovery)
 
     def _splash_progress(self, value: int, message: str = ""):
         """Update the splash screen progress bar if present."""
