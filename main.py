@@ -741,7 +741,7 @@ class MainWindow(QMainWindow):
         self._btn_scale.setToolTip("Scale selected items interactively (pick base, Tab for factor)")
         self._mode_buttons["scale"] = self._btn_scale
         _btn = g_xform.add_small_button(
-            "Mirror", _I("placeholder_icon.svg"),
+            "Mirror", _I("mirror_icon.svg"),
             lambda: self._require_selection(lambda: self.scene.set_mode("mirror")),
             checkable=True)
         _btn.setToolTip("Mirror selected items across an axis (2 clicks)")
@@ -1534,6 +1534,10 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def update_property_manager(self):
+        # Don't override template properties during placement modes
+        if self.scene.mode in ("pipe", "sprinkler", "wall", "floor",
+                                "floor_rect", "set_scale"):
+            return
         items = self.scene.selectedItems()
         if items:
             self.prop_manager.show_properties(items)
@@ -1574,13 +1578,11 @@ class MainWindow(QMainWindow):
         # Persist pipe and sprinkler template settings
         if self.current_pipe_template:
             pipe_props = {k: v["value"]
-                          for k, v in self.current_pipe_template.get_properties().items()
-                          if k not in ("Level", "Ceiling Level", "Ceiling Offset (in)")}
+                          for k, v in self.current_pipe_template.get_properties().items()}
             self.settings.setValue("template/pipe", pipe_props)
         if self.current_sprinkler_template:
             spr_props = {k: v["value"]
-                         for k, v in self.current_sprinkler_template.get_properties().items()
-                         if k not in ("Level", "Ceiling Level", "Ceiling Offset (in)")}
+                         for k, v in self.current_sprinkler_template.get_properties().items()}
             self.settings.setValue("template/sprinkler", spr_props)
 
 
