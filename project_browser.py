@@ -5,8 +5,15 @@ Revit-style Project Browser dock widget.
 
 Tree structure
 --------------
-  ▼ Model Space
-      ▶ Plans          (future: elevation-linked plan views)
+  ▼ 2D Model
+      ▼ Plans
+          Level 1          ← one item per defined level
+          Level 2 …
+      ▼ Elevations
+          North
+          South
+          East
+          West
       ▶ Schematics     (future: separate drawing canvas)
       ▶ Details        (future)
       ▶ Schedules      (future: tabular data)
@@ -35,8 +42,8 @@ import theme as th
 # Tree item role constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ROLE_TYPE  = Qt.ItemDataRole.UserRole         # "model_root" | "ms_stub" | "paper_root" | "sheet"
-_ROLE_NAME  = Qt.ItemDataRole.UserRole + 1     # str name for sheets
+_ROLE_TYPE  = Qt.ItemDataRole.UserRole         # "model_root" | "ms_stub" | "paper_root" | "sheet" | "plan" | "elevation"
+_ROLE_NAME  = Qt.ItemDataRole.UserRole + 1     # str name for sheets / levels / elevations
 
 
 class ProjectBrowser(QWidget):
@@ -51,11 +58,15 @@ class ProjectBrowser(QWidget):
     activateModelSpace = pyqtSignal()
     activatePaperSheet = pyqtSignal(str)   # sheet name
 
-    # Labels shown under Model Space as stub placeholders
-    _MS_STUBS = ["Plans", "Schematics", "Details", "Schedules"]
+    # Stub categories under 2D Model (Plans and Elevations are live)
+    _MS_STUBS = ["Schematics", "Details", "Schedules"]
 
-    def __init__(self, parent=None):
+    # Pre-defined elevation view names
+    _ELEVATIONS = ["North", "South", "East", "West"]
+
+    def __init__(self, level_manager=None, parent=None):
         super().__init__(parent)
+        self._level_manager = level_manager
 
         _t = th.detect()
 
@@ -109,26 +120,66 @@ class ProjectBrowser(QWidget):
             item.setData(0, _ROLE_NAME, name)
         self._paper_root.setExpanded(True)
 
+    def set_level_manager(self, level_manager):
+        """Set or replace the level manager and rebuild the Plans sub-tree."""
+        self._level_manager = level_manager
+        self.refresh_levels()
+
+    def refresh_levels(self):
+        """Rebuild the Plans sub-tree from the current level manager."""
+        if self._plans_root is None:
+            return
+        self._plans_root.takeChildren()
+        if self._level_manager is not None:
+            for lvl in self._level_manager.levels:
+                item = QTreeWidgetItem(self._plans_root, [lvl.name])
+                item.setData(0, _ROLE_TYPE, "plan")
+                item.setData(0, _ROLE_NAME, lvl.name)
+                item.setToolTip(0, f"Plan view — {lvl.name}  (elev {lvl.elevation} ft)")
+        self._plans_root.setExpanded(True)
+
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _build_tree(self):
         _t = th.detect()
         stub_brush = QBrush(QColor(_t.text_disabled if hasattr(_t, "text_disabled") else "#888888"))
+        f_bold = QFont(); f_bold.setBold(True)
 
         # ── Model Space root ─────────────────────────────────────────────────
         ms_root = QTreeWidgetItem(self._tree, ["2D Model"])
         ms_root.setData(0, _ROLE_TYPE, "model_root")
-        f_bold = QFont(); f_bold.setBold(True)
         ms_root.setFont(0, f_bold)
         ms_root.setExpanded(True)
+        self._ms_root = ms_root
 
+        # ── Plans (populated from level manager) ─────────────────────────────
+        plans_root = QTreeWidgetItem(ms_root, ["Plans"])
+        plans_root.setData(0, _ROLE_TYPE, "ms_stub")
+        plans_root.setData(0, _ROLE_NAME, "Plans")
+        plans_root.setFont(0, f_bold)
+        plans_root.setExpanded(True)
+        self._plans_root = plans_root
+        self.refresh_levels()
+
+        # ── Elevations ───────────────────────────────────────────────────────
+        elev_root = QTreeWidgetItem(ms_root, ["Elevations"])
+        elev_root.setData(0, _ROLE_TYPE, "ms_stub")
+        elev_root.setData(0, _ROLE_NAME, "Elevations")
+        elev_root.setFont(0, f_bold)
+        for elev_name in self._ELEVATIONS:
+            item = QTreeWidgetItem(elev_root, [elev_name])
+            item.setData(0, _ROLE_TYPE, "elevation")
+            item.setData(0, _ROLE_NAME, elev_name)
+            item.setToolTip(0, f"Elevation view — {elev_name}")
+        self._elev_root = elev_root
+
+        # ── Future stubs ─────────────────────────────────────────────────────
         for stub_name in self._MS_STUBS:
             stub = QTreeWidgetItem(ms_root, [stub_name])
             stub.setData(0, _ROLE_TYPE, "ms_stub")
             stub.setData(0, _ROLE_NAME, stub_name)
             stub.setForeground(0, stub_brush)
             stub.setToolTip(0, "Coming soon")
-        self._ms_root = ms_root
 
         # ── Paper Space root ─────────────────────────────────────────────────
         ps_root = QTreeWidgetItem(self._tree, ["Paper Space"])
@@ -142,8 +193,8 @@ class ProjectBrowser(QWidget):
 
     def _on_item_activated(self, item: QTreeWidgetItem, _col: int):
         role = item.data(0, _ROLE_TYPE)
-        if role in ("model_root", "ms_stub"):
-            # For now: stubs just activate model space (Plans maps to model space)
+        if role in ("model_root", "ms_stub", "plan", "elevation"):
+            # For now: plans and elevations activate model space
             self.activateModelSpace.emit()
         elif role == "sheet":
             name = item.data(0, _ROLE_NAME)

@@ -9,11 +9,6 @@ from CAD_Math import CAD_Math
 class Pipe(QGraphicsLineItem):
     SNAP_TOLERANCE_DEG = 7.5  # snap if within this angle
 
-    # Paper line-weight in mm for each "Line Weight" property value.
-    # Used when the scene has a calibrated scale; otherwise PX_FALLBACK is used.
-    LINE_WEIGHT_MM       = {"1": 0.35, "2": 0.50, "3": 0.70, "4": 1.00}
-    LINE_WEIGHT_PX_FALLBACK = {"1": 10.0,  "2": 12.0,  "3": 14.0,  "4": 16.0}
-
     # Nominal pipe OD in inches — used to set the 2D line width to the real
     # pipe size (1 scene unit = 1 mm, so OD_in × 25.4 = pen width in scene units).
     NOMINAL_OD_IN: dict[str, float] = {
@@ -50,7 +45,6 @@ class Pipe(QGraphicsLineItem):
             "Ceiling Level":      {"type": "level_ref", "value": "Level 1"},
             "Ceiling Offset (in)":{"type": "string", "value": "-2"},
             "Colour":      {"type": "enum",   "value": "Red",            "options": ["Black", "White", "Red", "Blue", "Grey"]},
-            "Line Weight": {"type": "enum",   "value": "1",              "options": ["1", "2", "3", "4"]},
             "Phase":       {"type": "enum",   "value": "New",            "options": ["New", "Existing", "Demo"]},
             "Show Label":  {"type": "enum",   "value": "True",           "options": ["True", "False"]},
         }
@@ -225,8 +219,8 @@ class Pipe(QGraphicsLineItem):
 
     def set_property(self, key, value):
         # Accept legacy names from old save files
-        if key in ("Elevation 1", "Elevation 2"):
-            return  # discard old elevation properties
+        if key in ("Elevation 1", "Elevation 2", "Line Weight"):
+            return  # discard old/removed properties
         if key in ("Elevation", "Elevation Offset", "Ceiling Offset"):
             key = "Ceiling Offset (in)"
         if key in self._properties:
@@ -234,7 +228,7 @@ class Pipe(QGraphicsLineItem):
 
             if key in ("Diameter", "Show Label"):
                 self.update_label()
-            if key in ("Colour", "Line Weight", "Diameter"):
+            if key in ("Colour", "Diameter"):
                 self.set_pipe_display()
             if key == "Level":
                 self.level = str(value)
