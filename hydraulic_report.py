@@ -146,11 +146,21 @@ class _HydraulicGraphWidget(QWidget):
         self.update()
 
     def _recalc_axes(self):
-        """Recompute axis ranges to encompass supply curve and demand point."""
-        q_hi = max(self._q_test, self._q_demand)
+        """Recompute axis ranges to tightly encompass supply curve and demand point."""
+        # Flow where the supply curve reaches 0 PSI:
+        # P = Ps - (Ps - Pr) * (Q / Qt)^1.85 = 0
+        # => Q_zero = Qt * (Ps / (Ps - Pr))^(1/1.85)
+        if self._p_static > self._p_residual > 0 and self._q_test > 0:
+            q_zero = self._q_test * (
+                self._p_static / (self._p_static - self._p_residual)
+            ) ** (1 / 1.85)
+        else:
+            q_zero = self._q_test
+
+        q_hi = max(q_zero, self._q_demand)
         p_hi = max(self._p_static, self._p_demand)
-        self._q_max = max(math.ceil((q_hi * 1.5) / 100) * 100, 500)
-        self._p_max = max(math.ceil((p_hi * 1.2) / 10) * 10, 50)
+        self._q_max = max(math.ceil(q_hi / 100) * 100, 100)
+        self._p_max = max(math.ceil(p_hi / 10) * 10, 10)
 
     # ── Coordinate mapping ──────────────────────────────────────────────
 
@@ -403,6 +413,7 @@ class HydraulicReportWidget(QWidget):
         self._spr_sched = _make_table([
             "#", "Node", "K-Factor", "Model", "Orientation", "Temp",
             "Min P (psi)", "Act P (psi)", "Act Q (gpm)", "Coverage (sq ft)",
+            "S Spacing", "L Spacing",
         ])
         self.tabs.addTab(self._spr_sched, "Sprinkler Schedule")
 
@@ -557,6 +568,8 @@ class HydraulicReportWidget(QWidget):
             temp     = props["Temperature"]["value"]
             p_min_s  = props["Min Pressure"]["value"]
             coverage = props["Coverage Area"]["value"]
+            s_spacing = props.get("S Spacing", {}).get("value", "---")
+            l_spacing = props.get("L Spacing", {}).get("value", "---")
 
             try:
                 k = float(k_str)
@@ -576,7 +589,7 @@ class HydraulicReportWidget(QWidget):
 
             vals = [
                 str(row + 1), node_num, k_str, spr_model, orient, temp,
-                p_min_s, p_act_s, q_act_s, coverage,
+                p_min_s, p_act_s, q_act_s, coverage, s_spacing, l_spacing,
             ]
             for col, val in enumerate(vals):
                 color = pcol if col in (7, 8) else None
