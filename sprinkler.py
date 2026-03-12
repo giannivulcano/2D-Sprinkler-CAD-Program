@@ -24,6 +24,8 @@ class Sprinkler(QGraphicsSvgItem):
             "Orientation":     {"type": "enum",   "value": "Upright",    "options": ["Upright", "Pendent", "Sidewall"]},
             "K-Factor":        {"type": "label",  "value": "5.6"},
             "Coverage Area":   {"type": "label",  "value": "130"},
+            "S Spacing":       {"type": "label",  "value": "---"},
+            "L Spacing":       {"type": "label",  "value": "---"},
             "Min Pressure":    {"type": "label",  "value": "7"},
             "Temperature":     {"type": "label",  "value": "155°F"},
             "Design Density":  {"type": "string", "value": "0.10"},
