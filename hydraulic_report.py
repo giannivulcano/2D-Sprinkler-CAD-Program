@@ -146,21 +146,16 @@ class _HydraulicGraphWidget(QWidget):
         self.update()
 
     def _recalc_axes(self):
-        """Recompute axis ranges to tightly encompass supply curve and demand point."""
-        # Flow where the supply curve reaches 0 PSI:
-        # P = Ps - (Ps - Pr) * (Q / Qt)^1.85 = 0
-        # => Q_zero = Qt * (Ps / (Ps - Pr))^(1/1.85)
-        if self._p_static > self._p_residual > 0 and self._q_test > 0:
-            q_zero = self._q_test * (
-                self._p_static / (self._p_static - self._p_residual)
-            ) ** (1 / 1.85)
-        else:
-            q_zero = self._q_test
+        """Recompute axis ranges to encompass plotted data points only.
 
-        q_hi = max(q_zero, self._q_demand)
+        X: nearest 100 GPM above the greatest plotted point (Q_test or Q_demand).
+           The extended supply-curve line is intentionally ignored.
+        Y: nearest 10 PSI above the greatest plotted point, plus 10 PSI padding.
+        """
+        q_hi = max(self._q_test, self._q_demand)
         p_hi = max(self._p_static, self._p_demand)
         self._q_max = max(math.ceil(q_hi / 100) * 100, 100)
-        self._p_max = max(math.ceil(p_hi / 10) * 10, 10)
+        self._p_max = max(math.ceil(p_hi / 10) * 10, 10) + 10
 
     # ── Coordinate mapping ──────────────────────────────────────────────
 
