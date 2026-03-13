@@ -113,11 +113,11 @@ class GridBubble(QGraphicsEllipseItem):
         parent = self.parentItem()
         if parent is not None and parent.isSelected():
             r = BUBBLE_RADIUS_MM
-            highlight = QPen(QColor("#ff8800"), 3)
-            highlight.setCosmetic(True)
+            highlight = QPen(QColor("#ff8800"), max(1, r * 0.04))
             painter.setPen(highlight)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(-r, -r, 2 * r, 2 * r)
+            from PyQt6.QtCore import QRectF
+            painter.drawEllipse(QRectF(-r, -r, 2 * r, 2 * r))
 
     def mousePressEvent(self, event):
         parent = self.parentItem()
