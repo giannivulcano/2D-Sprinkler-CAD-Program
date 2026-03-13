@@ -112,13 +112,37 @@ class ConstructionLine(QGraphicsLineItem):
 
     def get_properties(self) -> dict:
         return {
-            "Type": {"type": "label", "value": "Construction Line"},
-            "pt1": {"type": "label", "value": f"({self._pt1.x():.1f}, {self._pt1.y():.1f})"},
-            "pt2": {"type": "label", "value": f"({self._pt2.x():.1f}, {self._pt2.y():.1f})"},
+            "Type":  {"type": "label",     "value": "Construction Line"},
+            "pt1":   {"type": "label",     "value": f"({self._pt1.x():.1f}, {self._pt1.y():.1f})"},
+            "pt2":   {"type": "label",     "value": f"({self._pt2.x():.1f}, {self._pt2.y():.1f})"},
+            "Level": {"type": "level_ref", "value": self.level},
         }
 
     def set_property(self, key: str, value):
-        pass  # read-only for now
+        if key == "Level":
+            self.level = str(value)
+
+    # ── Grips ─────────────────────────────────────────────────────────────
+
+    def grip_points(self) -> list[QPointF]:
+        """Return [pt1, midpoint, pt2] as grip handles."""
+        mid = QPointF((self._pt1.x() + self._pt2.x()) / 2,
+                      (self._pt1.y() + self._pt2.y()) / 2)
+        return [self._pt1, mid, self._pt2]
+
+    def apply_grip(self, index: int, pos: QPointF):
+        """Move a grip handle to *pos*.  index 0=pt1, 1=midpoint, 2=pt2."""
+        if index == 0:
+            self._pt1 = pos
+        elif index == 1:
+            # Mid-grip: translate entire line
+            dx = pos.x() - (self._pt1.x() + self._pt2.x()) / 2
+            dy = pos.y() - (self._pt1.y() + self._pt2.y()) / 2
+            self._pt1 = QPointF(self._pt1.x() + dx, self._pt1.y() + dy)
+            self._pt2 = QPointF(self._pt2.x() + dx, self._pt2.y() + dy)
+        elif index == 2:
+            self._pt2 = pos
+        self._recompute_line()
 
     # ── Move ──────────────────────────────────────────────────────────────
 

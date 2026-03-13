@@ -28,21 +28,24 @@ import theme as th
 # ---------------------------------------------------------------------------
 
 _CATEGORIES: list[dict] = [
-    {"key": "Pipe",         "color": "#4488ff", "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Sprinkler",    "color": "#ff4444", "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Fitting",      "color": "#44cc44", "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Water Supply", "color": "#00cccc", "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Node",         "color": "#888888", "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Grid Line",    "color": "#4488cc", "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Pipe",         "color": "#4488ff", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Sprinkler",    "color": "#ff4444", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Fitting",      "color": "#44cc44", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Water Supply", "color": "#00cccc", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Node",         "color": "#888888", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Grid Line",    "color": "#4488cc", "fill": None,      "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Wall",         "color": "#cccccc", "fill": "#cccccc", "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Floor Slab",   "color": "#8888cc", "fill": "#8888cc", "scale": 1.0, "opacity": 100, "visible": True},
 ]
 
 # Tree-column indices
 _COL_NAME    = 0
 _COL_VIS     = 1
-_COL_COLOR   = 2
-_COL_SCALE   = 3
-_COL_OPACITY = 4
-_COL_RESET   = 5
+_COL_LINE    = 2
+_COL_FILL    = 3
+_COL_SCALE   = 4
+_COL_OPACITY = 5
+_COL_RESET   = 6
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -50,16 +53,19 @@ _COL_RESET   = 5
 # ──────────────────────────────────────────────────────────────────────────────
 
 def apply_display_to_item(item, color: str | None, scale: float,
-                          opacity: float, visible: bool):
+                          opacity: float, visible: bool,
+                          fill_color: str | None = None):
     """Apply display settings to *item* (Pipe, Sprinkler, Fitting, Node,
-    WaterSupply, or GridlineItem).  Called both by the live-preview loop
-    and at project load."""
+    WaterSupply, GridlineItem, WallSegment, or FloorSlab).
+    Called both by the live-preview loop and at project load."""
     from pipe import Pipe
     from sprinkler import Sprinkler
     from fitting import Fitting
     from water_supply import WaterSupply
     from node import Node
     from gridline import GridlineItem
+    from wall import WallSegment
+    from floor_slab import FloorSlab
 
     if isinstance(item, Pipe):
         _apply_pipe(item, color, scale, opacity, visible)
@@ -77,6 +83,10 @@ def apply_display_to_item(item, color: str | None, scale: float,
         _apply_node(item, color, scale, opacity, visible)
     elif isinstance(item, GridlineItem):
         _apply_gridline(item, color, scale, opacity, visible)
+    elif isinstance(item, WallSegment):
+        _apply_wall(item, color, fill_color, scale, opacity, visible)
+    elif isinstance(item, FloorSlab):
+        _apply_floor_slab(item, color, fill_color, scale, opacity, visible)
 
 
 def _apply_pipe(pipe, color, scale, opacity, visible):
@@ -155,6 +165,24 @@ def _apply_gridline(gl, color, scale, opacity, visible):
     gl.setVisible(visible)
 
 
+def _apply_wall(wall, color, fill_color, scale, opacity, visible):
+    """Apply display settings to a WallSegment."""
+    wall._display_color = color
+    wall._display_fill_color = fill_color
+    wall.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
+    wall.setVisible(visible)
+    wall.update()
+
+
+def _apply_floor_slab(slab, color, fill_color, scale, opacity, visible):
+    """Apply display settings to a FloorSlab."""
+    slab._display_color = color
+    slab._display_fill_color = fill_color
+    slab.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
+    slab.setVisible(visible)
+    slab.update()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # DisplayManager dialog
 # ──────────────────────────────────────────────────────────────────────────────
@@ -194,6 +222,7 @@ class DisplayManager(QDialog):
                 "opacity": item.opacity(),
                 "effect_color": None,
                 "display_color": getattr(item, "_display_color", None),
+                "display_fill_color": getattr(item, "_display_fill_color", None),
                 "display_scale": getattr(item, "_display_scale", 1.0),
                 "overrides": dict(getattr(item, "_display_overrides", {})),
             }
@@ -226,6 +255,8 @@ class DisplayManager(QDialog):
         from sprinkler import Sprinkler
         from water_supply import WaterSupply
         from gridline import GridlineItem
+        from wall import WallSegment
+        from floor_slab import FloorSlab
 
         for item in self._iter_all_items():
             snap = self._snapshot.get(id(item))
@@ -257,6 +288,10 @@ class DisplayManager(QDialog):
                 item._display_scale = snap.get("display_scale", 1.0)
                 item.bubble1.setScale(item._display_scale)
                 item.bubble2.setScale(item._display_scale)
+            elif isinstance(item, (WallSegment, FloorSlab)):
+                item._display_color = snap.get("display_color")
+                item._display_fill_color = snap.get("display_fill_color")
+                item.update()
 
         # Restore fittings
         for node in self._scene.sprinkler_system.nodes:
@@ -303,6 +338,8 @@ class DisplayManager(QDialog):
         if ws is not None:
             yield ws
         yield from getattr(self._scene, "_gridlines", [])
+        yield from getattr(self._scene, "_walls", [])
+        yield from getattr(self._scene, "_floor_slabs", [])
 
     def _items_for_category(self, key: str) -> list:
         """Return the list of items (or Fitting wrappers) for a category."""
@@ -320,7 +357,16 @@ class DisplayManager(QDialog):
             return list(ss.nodes)
         elif key == "Grid Line":
             return list(getattr(self._scene, "_gridlines", []))
+        elif key == "Wall":
+            return list(getattr(self._scene, "_walls", []))
+        elif key == "Floor Slab":
+            return list(getattr(self._scene, "_floor_slabs", []))
         return []
+
+    @staticmethod
+    def _category_has_fill(key: str) -> bool:
+        """Return True if the category supports a separate fill colour."""
+        return key in ("Wall", "Floor Slab")
 
     def _label_for_item(self, item, index: int, category: str) -> str:
         """Human-readable label for an instance row."""
@@ -341,6 +387,10 @@ class DisplayManager(QDialog):
         elif category == "Grid Line":
             lbl = getattr(item, "_label_text", "?")
             return f"Grid {lbl}"
+        elif category == "Wall":
+            return f"Wall {index}"
+        elif category == "Floor Slab":
+            return f"Floor Slab {index}"
         return f"{category} {index}"
 
     # ------------------------------------------------------------------
@@ -353,8 +403,8 @@ class DisplayManager(QDialog):
 
         # ── Tree widget ──────────────────────────────────────────────
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(6)
-        self._tree.setHeaderLabels(["Name", "Vis", "Colour", "Scale", "Opacity", ""])
+        self._tree.setColumnCount(7)
+        self._tree.setHeaderLabels(["Name", "Vis", "Line", "Fill", "Scale", "Opacity", ""])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(20)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -363,12 +413,14 @@ class DisplayManager(QDialog):
         hdr = self._tree.header()
         hdr.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(_COL_VIS, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(_COL_COLOR, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(_COL_LINE, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(_COL_FILL, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_SCALE, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_OPACITY, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_RESET, QHeaderView.ResizeMode.Fixed)
         self._tree.setColumnWidth(_COL_VIS, 40)
-        self._tree.setColumnWidth(_COL_COLOR, 60)
+        self._tree.setColumnWidth(_COL_LINE, 60)
+        self._tree.setColumnWidth(_COL_FILL, 60)
         self._tree.setColumnWidth(_COL_SCALE, 90)
         self._tree.setColumnWidth(_COL_OPACITY, 90)
         self._tree.setColumnWidth(_COL_RESET, 40)
@@ -404,6 +456,8 @@ class DisplayManager(QDialog):
             # Read saved category settings from QSettings (or defaults)
             saved_color = self._settings.value(
                 f"display/{key}/color", cat_def["color"])
+            saved_fill = self._settings.value(
+                f"display/{key}/fill", cat_def["fill"])
             saved_scale = float(self._settings.value(
                 f"display/{key}/scale", cat_def["scale"]))
             saved_opacity = int(float(self._settings.value(
@@ -413,6 +467,8 @@ class DisplayManager(QDialog):
             if isinstance(saved_visible, str):
                 saved_visible = saved_visible.lower() not in ("false", "0")
 
+            has_fill = self._category_has_fill(key)
+
             # ── Category row ─────────────────────────────────────────
             cat_item = QTreeWidgetItem(self._tree)
             cat_item.setText(_COL_NAME, f"{key}  ({len(items)})")
@@ -420,8 +476,10 @@ class DisplayManager(QDialog):
             cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
 
             cat_widgets = self._make_row_widgets(
-                cat_item, saved_visible, saved_color, saved_scale,
-                saved_opacity, is_category=True, category_key=key)
+                cat_item, saved_visible, saved_color, saved_fill,
+                saved_scale, saved_opacity,
+                is_category=True, category_key=key,
+                has_fill=has_fill)
 
             self._cat_data[key] = {
                 "items": items,
@@ -433,6 +491,7 @@ class DisplayManager(QDialog):
             for i, obj in enumerate(items, 1):
                 overrides = getattr(obj, "_display_overrides", {})
                 inst_color = overrides.get("color", saved_color)
+                inst_fill = overrides.get("fill", saved_fill)
                 inst_scale = overrides.get("scale", saved_scale)
                 inst_opacity = overrides.get("opacity", saved_opacity)
                 inst_visible = overrides.get("visible", saved_visible)
@@ -442,9 +501,10 @@ class DisplayManager(QDialog):
                 child.setFlags(Qt.ItemFlag.ItemIsEnabled)
 
                 inst_widgets = self._make_row_widgets(
-                    child, inst_visible, inst_color, inst_scale,
-                    inst_opacity, is_category=False, category_key=key,
-                    item_ref=obj)
+                    child, inst_visible, inst_color, inst_fill,
+                    inst_scale, inst_opacity,
+                    is_category=False, category_key=key,
+                    item_ref=obj, has_fill=has_fill)
 
                 self._inst_data[id(obj)] = {
                     "tree_item": child,
@@ -454,10 +514,13 @@ class DisplayManager(QDialog):
                 }
 
     def _make_row_widgets(self, tree_item: QTreeWidgetItem,
-                          visible: bool, color: str, scale: float,
+                          visible: bool, color: str,
+                          fill: str | None,
+                          scale: float,
                           opacity: int, *, is_category: bool,
                           category_key: str,
-                          item_ref=None) -> dict:
+                          item_ref=None,
+                          has_fill: bool = False) -> dict:
         """Create and embed widgets for one tree row. Returns widget dict."""
         _t = th.detect()
 
@@ -471,14 +534,30 @@ class DisplayManager(QDialog):
         vis_layout.addWidget(vis_cb)
         self._tree.setItemWidget(tree_item, _COL_VIS, vis_container)
 
-        # ── Colour swatch ────────────────────────────────────────────
+        # ── Line colour swatch ───────────────────────────────────────
         color_btn = QPushButton()
         color_btn.setFixedSize(40, 20)
         color_btn.setProperty("_color", color)
         color_btn.setStyleSheet(
             f"background: {color}; border: 1px solid {_t.border_subtle}; "
             f"border-radius: 2px;")
-        self._tree.setItemWidget(tree_item, _COL_COLOR, color_btn)
+        self._tree.setItemWidget(tree_item, _COL_LINE, color_btn)
+
+        # ── Fill colour swatch ───────────────────────────────────────
+        fill_btn = QPushButton()
+        fill_btn.setFixedSize(40, 20)
+        if has_fill and fill:
+            fill_btn.setProperty("_color", fill)
+            fill_btn.setStyleSheet(
+                f"background: {fill}; border: 1px solid {_t.border_subtle}; "
+                f"border-radius: 2px;")
+        else:
+            fill_btn.setProperty("_color", "")
+            fill_btn.setEnabled(False)
+            fill_btn.setStyleSheet(
+                f"background: #555555; border: 1px solid {_t.border_subtle}; "
+                f"border-radius: 2px;")
+        self._tree.setItemWidget(tree_item, _COL_FILL, fill_btn)
 
         # ── Scale spinbox ────────────────────────────────────────────
         scale_spin = QDoubleSpinBox()
@@ -513,6 +592,9 @@ class DisplayManager(QDialog):
                 lambda v, k=category_key: self._on_category_changed(k, "visible", v))
             color_btn.clicked.connect(
                 lambda _, k=category_key: self._pick_category_color(k))
+            if has_fill:
+                fill_btn.clicked.connect(
+                    lambda _, k=category_key: self._pick_category_fill(k))
             scale_spin.valueChanged.connect(
                 lambda v, k=category_key: self._on_category_changed(k, "scale", v))
             opacity_spin.valueChanged.connect(
@@ -522,6 +604,9 @@ class DisplayManager(QDialog):
                 lambda v, ref=item_ref: self._on_instance_changed(ref, "visible", v))
             color_btn.clicked.connect(
                 lambda _, ref=item_ref: self._pick_instance_color(ref))
+            if has_fill:
+                fill_btn.clicked.connect(
+                    lambda _, ref=item_ref: self._pick_instance_fill(ref))
             scale_spin.valueChanged.connect(
                 lambda v, ref=item_ref: self._on_instance_changed(ref, "scale", v))
             opacity_spin.valueChanged.connect(
@@ -533,6 +618,7 @@ class DisplayManager(QDialog):
         return {
             "vis": vis_cb,
             "color_btn": color_btn,
+            "fill_btn": fill_btn,
             "scale": scale_spin,
             "opacity": opacity_spin,
             "reset": reset_btn,
@@ -560,6 +646,25 @@ class DisplayManager(QDialog):
         if color.isValid():
             self._update_color_btn(widgets["color_btn"], color.name())
             self._on_instance_changed(item_ref, "color", color.name())
+
+    def _pick_category_fill(self, category_key: str):
+        widgets = self._cat_data[category_key]["widgets"]
+        cur = QColor(widgets["fill_btn"].property("_color") or "#cccccc")
+        color = QColorDialog.getColor(cur, self, f"{category_key} fill colour")
+        if color.isValid():
+            self._update_color_btn(widgets["fill_btn"], color.name())
+            self._on_category_changed(category_key, "fill", color.name())
+
+    def _pick_instance_fill(self, item_ref):
+        data = self._inst_data.get(id(item_ref))
+        if data is None:
+            return
+        widgets = data["widgets"]
+        cur = QColor(widgets["fill_btn"].property("_color") or "#cccccc")
+        color = QColorDialog.getColor(cur, self, "Instance fill colour")
+        if color.isValid():
+            self._update_color_btn(widgets["fill_btn"], color.name())
+            self._on_instance_changed(item_ref, "fill", color.name())
 
     def _update_color_btn(self, btn: QPushButton, hex_color: str):
         _t = th.detect()
@@ -618,6 +723,10 @@ class DisplayManager(QDialog):
             w["vis"].setChecked(cat_widgets["vis"].isChecked())
             self._update_color_btn(w["color_btn"],
                                    cat_widgets["color_btn"].property("_color"))
+            if w["fill_btn"].isEnabled():
+                cat_fill = cat_widgets["fill_btn"].property("_color")
+                if cat_fill:
+                    self._update_color_btn(w["fill_btn"], cat_fill)
             w["scale"].setValue(cat_widgets["scale"].value())
             w["opacity"].setValue(cat_widgets["opacity"].value())
         finally:
@@ -633,6 +742,8 @@ class DisplayManager(QDialog):
                 cw = self._cat_data[key]["widgets"]
                 cw["vis"].setChecked(cat_def["visible"])
                 self._update_color_btn(cw["color_btn"], cat_def["color"])
+                if cat_def["fill"] and cw["fill_btn"].isEnabled():
+                    self._update_color_btn(cw["fill_btn"], cat_def["fill"])
                 cw["scale"].setValue(cat_def["scale"])
                 cw["opacity"].setValue(cat_def["opacity"])
 
@@ -644,6 +755,8 @@ class DisplayManager(QDialog):
                         iw = inst["widgets"]
                         iw["vis"].setChecked(cat_def["visible"])
                         self._update_color_btn(iw["color_btn"], cat_def["color"])
+                        if cat_def["fill"] and iw["fill_btn"].isEnabled():
+                            self._update_color_btn(iw["fill_btn"], cat_def["fill"])
                         iw["scale"].setValue(cat_def["scale"])
                         iw["opacity"].setValue(cat_def["opacity"])
         finally:
@@ -660,6 +773,9 @@ class DisplayManager(QDialog):
             widgets["vis"].setChecked(value)
         elif prop == "color":
             self._update_color_btn(widgets["color_btn"], value)
+        elif prop == "fill":
+            if widgets["fill_btn"].isEnabled() and value:
+                self._update_color_btn(widgets["fill_btn"], value)
         elif prop == "scale":
             widgets["scale"].setValue(value)
         elif prop == "opacity":
@@ -668,9 +784,11 @@ class DisplayManager(QDialog):
     def _read_category_settings(self, key: str) -> dict:
         """Read current widget values for a category row."""
         w = self._cat_data[key]["widgets"]
+        fill_val = w["fill_btn"].property("_color") if w["fill_btn"].isEnabled() else None
         return {
             "visible": w["vis"].isChecked(),
             "color": w["color_btn"].property("_color"),
+            "fill": fill_val if fill_val else None,
             "scale": w["scale"].value(),
             "opacity": w["opacity"].value(),
         }
@@ -690,12 +808,14 @@ class DisplayManager(QDialog):
             for obj in self._cat_data[key]["items"]:
                 overrides = getattr(obj, "_display_overrides", {})
                 eff_color = overrides.get("color", cat_settings["color"])
+                eff_fill = overrides.get("fill", cat_settings.get("fill"))
                 eff_scale = overrides.get("scale", cat_settings["scale"])
                 eff_opacity = overrides.get("opacity", cat_settings["opacity"])
                 eff_visible = overrides.get("visible", cat_settings["visible"])
 
                 apply_display_to_item(obj, eff_color, eff_scale,
-                                      eff_opacity, eff_visible)
+                                      eff_opacity, eff_visible,
+                                      fill_color=eff_fill)
 
         self._scene.update()
 
@@ -709,6 +829,8 @@ class DisplayManager(QDialog):
             key = cat_def["key"]
             s = self._read_category_settings(key)
             self._settings.setValue(f"display/{key}/color", s["color"])
+            if s.get("fill") is not None:
+                self._settings.setValue(f"display/{key}/fill", s["fill"])
             self._settings.setValue(f"display/{key}/scale", s["scale"])
             self._settings.setValue(f"display/{key}/opacity", s["opacity"])
             self._settings.setValue(f"display/{key}/visible", s["visible"])
@@ -726,18 +848,12 @@ class DisplayManager(QDialog):
 
 def apply_saved_display_settings(scene):
     """Read QSettings + per-item overrides and apply to all FS items."""
-    from pipe import Pipe
-    from sprinkler import Sprinkler
-    from fitting import Fitting
-    from water_supply import WaterSupply
-    from node import Node
-
     settings = QSettings("GV", "FirePro3D")
-    cat_defaults = {c["key"]: c for c in _CATEGORIES}
 
     for cat_def in _CATEGORIES:
         key = cat_def["key"]
         color = settings.value(f"display/{key}/color", cat_def["color"])
+        fill = settings.value(f"display/{key}/fill", cat_def["fill"])
         scale = float(settings.value(f"display/{key}/scale", cat_def["scale"]))
         opacity = int(float(settings.value(
             f"display/{key}/opacity", cat_def["opacity"])))
@@ -749,11 +865,13 @@ def apply_saved_display_settings(scene):
         for obj in items:
             overrides = getattr(obj, "_display_overrides", {})
             eff_color = overrides.get("color", color)
+            eff_fill = overrides.get("fill", fill)
             eff_scale = overrides.get("scale", scale)
             eff_opacity = overrides.get("opacity", opacity)
             eff_visible = overrides.get("visible", visible)
             apply_display_to_item(obj, eff_color, eff_scale,
-                                  eff_opacity, eff_visible)
+                                  eff_opacity, eff_visible,
+                                  fill_color=eff_fill)
 
 
 def _items_for_category_static(scene, key: str) -> list:
@@ -772,4 +890,8 @@ def _items_for_category_static(scene, key: str) -> list:
         return list(ss.nodes)
     elif key == "Grid Line":
         return list(getattr(scene, "_gridlines", []))
+    elif key == "Wall":
+        return list(getattr(scene, "_walls", []))
+    elif key == "Floor Slab":
+        return list(getattr(scene, "_floor_slabs", []))
     return []

@@ -114,6 +114,7 @@ class SnapEngine:
         cursor_scene:   QPointF,
         scene:          QGraphicsScene,
         view_transform: QTransform,
+        exclude:        QGraphicsItem | None = None,
     ) -> OsnapResult | None:
         """
         Return the nearest snappable point within tolerance, or *None*.
@@ -126,6 +127,8 @@ class SnapEngine:
             Active QGraphicsScene.
         view_transform :
             View's current QTransform (used to convert screen-px → scene units).
+        exclude :
+            Optional item to skip (e.g. the item being grip-dragged).
         """
         if not self.enabled:
             return None
@@ -163,6 +166,9 @@ class SnapEngine:
                 best_result = OsnapResult(point=pt, snap_type=snap_type, source_item=src_item)
 
         for item in scene.items(search_rect):
+            # Skip excluded item (e.g. the item being grip-dragged)
+            if exclude is not None and item is exclude:
+                continue
             # Skip child items (parts of groups) — underlay children handled below
             if item.parentItem() is not None:
                 continue
@@ -236,24 +242,31 @@ class SnapEngine:
 
         # ── Geometry-to-geometry intersection snaps ─────────────────────
         # Check line-based items near the cursor for pairwise intersections.
-        if self.snap_endpoint:
+        if self.snap_endpoint or self.snap_midpoint:
             try:
                 from construction_geometry import (
                     LineItem as _LI, PolylineItem as _PLI,
                     ConstructionLine as _CL,
+                    RectangleItem as _RI, CircleItem as _CI2,
                 )
             except ImportError:
-                _LI = _PLI = _CL = None
+                _LI = _PLI = _CL = _RI = _CI2 = None
             try:
                 from wall import WallSegment as _WS2
             except ImportError:
                 _WS2 = None
 
             _segments: list[tuple[QPointF, QPointF, QGraphicsItem]] = []
+            _circles: list[tuple[QPointF, float, QGraphicsItem]] = []
             for item in scene.items(search_rect):
+                if exclude is not None and item is exclude:
+                    continue
                 if item.parentItem() is not None:
                     continue
-                if isinstance(item, QGraphicsLineItem):
+                # ConstructionLine: use anchor points, not extended line
+                if _CL and isinstance(item, _CL):
+                    _segments.append((item.pt1, item.pt2, item))
+                elif isinstance(item, QGraphicsLineItem):
                     line = item.line()
                     _segments.append((item.mapToScene(line.p1()),
                                      item.mapToScene(line.p2()), item))
@@ -262,6 +275,16 @@ class SnapEngine:
                     for j in range(len(verts) - 1):
                         _segments.append((item.mapToScene(verts[j]),
                                          item.mapToScene(verts[j + 1]), item))
+                elif _RI and isinstance(item, _RI):
+                    r = item.rect()
+                    corners = [
+                        item.mapToScene(QPointF(r.left(),  r.top())),
+                        item.mapToScene(QPointF(r.right(), r.top())),
+                        item.mapToScene(QPointF(r.right(), r.bottom())),
+                        item.mapToScene(QPointF(r.left(),  r.bottom())),
+                    ]
+                    for j in range(4):
+                        _segments.append((corners[j], corners[(j + 1) % 4], item))
                 elif _WS2 and isinstance(item, _WS2):
                     try:
                         p1l, p1r, p2r, p2l = item.quad_points()
@@ -269,7 +292,10 @@ class SnapEngine:
                         _segments.append((p1r, p2r, item))
                     except Exception:
                         pass
+                elif _CI2 and isinstance(item, _CI2):
+                    _circles.append((item._center, item._radius, item))
 
+            # Segment–segment intersections
             for i, (sa1, sa2, src1) in enumerate(_segments):
                 for sb1, sb2, src2 in _segments[i + 1:]:
                     if src1 is src2:
@@ -280,6 +306,16 @@ class SnapEngine:
                                        ix.y() - cursor_scene.y())
                         if d <= tol:
                             _check("intersection", ix, src1)
+
+            # Segment–circle intersections
+            for center, radius, c_item in _circles:
+                for sa1, sa2, src in _segments:
+                    for ix in self._line_circle_intersect(
+                            sa1, sa2, center, radius):
+                        d = math.hypot(ix.x() - cursor_scene.x(),
+                                       ix.y() - cursor_scene.y())
+                        if d <= tol:
+                            _check("intersection", ix, src)
 
         return best_result
 
@@ -503,6 +539,32 @@ class SnapEngine:
         if 0.0 <= t <= 1.0 and 0.0 <= s <= 1.0:
             return QPointF(a1.x() + t * dx1, a1.y() + t * dy1)
         return None
+
+    # ── Line–circle intersection ────────────────────────────────────────
+
+    @staticmethod
+    def _line_circle_intersect(
+        seg_a: QPointF, seg_b: QPointF,
+        center: QPointF, radius: float,
+    ) -> list[QPointF]:
+        """Return 0–2 intersection points of a line segment with a circle."""
+        dx = seg_b.x() - seg_a.x()
+        dy = seg_b.y() - seg_a.y()
+        fx = seg_a.x() - center.x()
+        fy = seg_a.y() - center.y()
+        a = dx * dx + dy * dy
+        b = 2.0 * (fx * dx + fy * dy)
+        c = fx * fx + fy * fy - radius * radius
+        disc = b * b - 4.0 * a * c
+        pts: list[QPointF] = []
+        if disc < 0 or a < 1e-12:
+            return pts
+        disc_sqrt = math.sqrt(disc)
+        for sign in (-1, 1):
+            t = (-b + sign * disc_sqrt) / (2.0 * a)
+            if 0.0 <= t <= 1.0:
+                pts.append(QPointF(seg_a.x() + t * dx, seg_a.y() + t * dy))
+        return pts
 
     # ── Perpendicular / Tangent snaps ─────────────────────────────────────
 

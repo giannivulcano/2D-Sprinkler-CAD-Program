@@ -56,6 +56,11 @@ class FloorSlab(QGraphicsPathItem):
         self.user_layer: str = "Default"
         self.name: str = ""
 
+        # Display Manager overrides
+        self._display_color: str | None = None       # line/pen override
+        self._display_fill_color: str | None = None  # fill/brush override
+        self._display_overrides: dict = {}
+
         self.setZValue(-80)      # behind walls and pipes
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
@@ -96,12 +101,17 @@ class FloorSlab(QGraphicsPathItem):
     def paint(self, painter, option, widget=None):
         option.state &= ~QStyle.StateFlag.State_Selected
 
-        pen = QPen(self._color, 1)
+        line_col = QColor(self._display_color) if self._display_color else self._color
+        pen = QPen(line_col, 1)
         pen.setCosmetic(True)
         painter.setPen(pen)
 
-        fill_color = QColor(self._color)
-        fill_color.setAlpha(_FILL_ALPHA)
+        if self._display_fill_color:
+            fill_color = QColor(self._display_fill_color)
+            fill_color.setAlpha(_FILL_ALPHA)
+        else:
+            fill_color = QColor(self._color)
+            fill_color.setAlpha(_FILL_ALPHA)
         painter.setBrush(QBrush(fill_color))
 
         if len(self._points) >= 3:

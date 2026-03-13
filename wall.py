@@ -130,6 +130,11 @@ class WallSegment(QGraphicsPathItem):
         # Wall openings (doors / windows)
         self.openings: list[WallOpening] = []
 
+        # Display Manager overrides
+        self._display_color: str | None = None       # line/pen override
+        self._display_fill_color: str | None = None  # fill/brush override
+        self._display_overrides: dict = {}
+
         # Cosmetic / user layer
         self.user_layer: str = "Default"
         self.name: str = ""
@@ -237,13 +242,18 @@ class WallSegment(QGraphicsPathItem):
         option.state &= ~QStyle.StateFlag.State_Selected
 
         p1l, p1r, p2r, p2l = self.mitered_quad()
-        pen = QPen(self._color, 1)
+        line_col = QColor(self._display_color) if self._display_color else self._color
+        pen = QPen(line_col, 1)
         pen.setCosmetic(True)
 
         # Fill
         if self._fill_mode == FILL_SOLID:
-            fill_color = QColor(self._color)
-            fill_color.setAlpha(80)
+            if self._display_fill_color:
+                fill_color = QColor(self._display_fill_color)
+                fill_color.setAlpha(80)
+            else:
+                fill_color = QColor(self._color)
+                fill_color.setAlpha(80)
             painter.setBrush(QBrush(fill_color))
         elif self._fill_mode == FILL_HATCH:
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -268,7 +278,8 @@ class WallSegment(QGraphicsPathItem):
 
     def _draw_hatch(self, painter, p1l, p1r, p2r, p2l):
         """Draw diagonal hatch lines inside the wall quad."""
-        pen = QPen(self._color, 0.5)
+        hatch_col = QColor(self._display_fill_color) if self._display_fill_color else self._color
+        pen = QPen(hatch_col, 0.5)
         pen.setCosmetic(True)
         painter.setPen(pen)
 

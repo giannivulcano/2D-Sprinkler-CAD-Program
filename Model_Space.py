@@ -2551,13 +2551,16 @@ class Model_Space(QGraphicsScene):
 
     def get_effective_position(self, scene_pos: QPointF) -> QPointF:
         """Return best-fit cursor position: OSNAP > underlay snap > grid snap."""
-        # OSNAP takes highest priority (disabled when no mode or select mode)
+        # OSNAP takes highest priority (disabled when no mode or select mode,
+        # but enabled during grip-drag even in select mode)
         if (self._osnap_enabled
                 and self.mode is not None
-                and self.mode != "select"):
+                and (self.mode != "select" or self._grip_dragging)):
+            exclude = self._grip_item if self._grip_dragging else None
             views = self.views()
             if views:
-                result = self._snap_engine.find(scene_pos, self, views[0].transform())
+                result = self._snap_engine.find(
+                    scene_pos, self, views[0].transform(), exclude=exclude)
                 self._snap_result = result
                 if result is not None:
                     return result.point
