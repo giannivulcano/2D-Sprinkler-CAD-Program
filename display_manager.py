@@ -49,7 +49,7 @@ _CATEGORIES: list[dict] = [
     {"key": "Fitting",      "color": "#44cc44", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True},
     {"key": "Water Supply", "color": "#00cccc", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True},
     {"key": "Node",         "color": "#888888", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Grid Line",    "color": "#4488cc", "fill": "#1a1a2e", "font": 10,   "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Grid Line",    "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
 ]
 
 # Tree-column indices
@@ -167,19 +167,15 @@ def _apply_gridline(gl, color, scale, opacity, visible, fill_color, font_size=No
         pen = gl.pen()
         pen.setColor(QColor(color))
         gl.setPen(pen)
-        gl.bubble1.setPen(QPen(QColor(color), 2))
-        gl.bubble2.setPen(QPen(QColor(color), 2))
-        gl.bubble1._label.setDefaultTextColor(QColor(color).lighter(150))
-        gl.bubble2._label.setDefaultTextColor(QColor(color).lighter(150))
+        # Preserve the bubble's original pen width, just change color
+        for bubble in (gl.bubble1, gl.bubble2):
+            bp = bubble.pen()
+            bp.setColor(QColor(color))
+            bubble.setPen(bp)
+            bubble._label.setDefaultTextColor(QColor(color).lighter(150))
     if fill_color:
         gl.bubble1.setBrush(QBrush(QColor(fill_color)))
         gl.bubble2.setBrush(QBrush(QColor(fill_color)))
-    if font_size is not None:
-        for bubble in (gl.bubble1, gl.bubble2):
-            font = bubble._label.font()
-            font.setPointSize(int(font_size))
-            bubble._label.setFont(font)
-            bubble._center_label()
     gl.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
     gl.setVisible(visible)
 
@@ -978,6 +974,12 @@ class DisplayManager(QDialog):
 
 def apply_saved_display_settings(scene):
     """Read QSettings + per-item overrides and apply to all FS items."""
+    # Clean up stale font key for Grid Line (was wrongly set to 10pt in
+    # earlier versions, causing bubble labels to shrink to near-invisible)
+    _s = QSettings()
+    _s.remove("display/Grid Line/font")
+    _s.remove("display/Grid Line/default_font")
+
     from pipe import Pipe
     from sprinkler import Sprinkler
     from fitting import Fitting
@@ -1022,6 +1024,9 @@ def apply_default_display_settings(scene):
     Called when creating a new project to apply the user's preferred defaults.
     """
     settings = QSettings()
+    # Clean up stale font keys for Grid Line
+    settings.remove("display/Grid Line/font")
+    settings.remove("display/Grid Line/default_font")
 
     for cat_def in _CATEGORIES:
         key = cat_def["key"]
