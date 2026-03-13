@@ -176,6 +176,14 @@ def _apply_gridline(gl, color, scale, opacity, visible, fill_color, font_size=No
     if fill_color:
         gl.bubble1.setBrush(QBrush(QColor(fill_color)))
         gl.bubble2.setBrush(QBrush(QColor(fill_color)))
+    # Scale the bubbles (child transforms around their position on the line)
+    if scale and scale != 1.0:
+        gl.bubble1.setScale(scale)
+        gl.bubble2.setScale(scale)
+    elif scale == 1.0:
+        gl.bubble1.setScale(1.0)
+        gl.bubble2.setScale(1.0)
+    gl._display_scale = scale if scale else 1.0
     gl.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
     gl.setVisible(visible)
 
@@ -314,6 +322,7 @@ class DisplayManager(QDialog):
                     "bubble_brush": item.bubble1.brush().color().name(),
                     "label_color": item.bubble1._label.defaultTextColor().name(),
                     "bubble_font_px": item.bubble1._label.font().pixelSize(),
+                    "bubble_scale": item.bubble1.scale(),
                     "overrides": dict(getattr(item, "_display_overrides", {})),
                 }
 
@@ -352,6 +361,9 @@ class DisplayManager(QDialog):
                         f.setPixelSize(snap["bubble_font_px"])
                         bubble._label.setFont(f)
                         bubble._center_label()
+                if "bubble_scale" in snap:
+                    item.bubble1.setScale(snap["bubble_scale"])
+                    item.bubble2.setScale(snap["bubble_scale"])
                 item._display_overrides = snap.get("overrides", {})
                 continue
 
@@ -1168,6 +1180,95 @@ def apply_default_display_settings(scene):
         for obj in items:
             apply_display_to_item(obj, color, scale, opacity, visible,
                                   fill_color=fill, font_size=font)
+
+
+def get_display_settings_for_save() -> dict:
+    """Return the current category-level display settings as a dict
+    suitable for embedding in a project file.
+    """
+    settings = QSettings("GV", "FirePro3D")
+    result: dict = {}
+    for cat_def in _CATEGORIES:
+        key = cat_def["key"]
+        entry: dict = {}
+        entry["color"] = settings.value(
+            f"display/{key}/color", cat_def["color"])
+        entry["scale"] = float(settings.value(
+            f"display/{key}/scale", cat_def["scale"]))
+        entry["opacity"] = int(float(settings.value(
+            f"display/{key}/opacity", cat_def["opacity"])))
+        vis = settings.value(f"display/{key}/visible", cat_def["visible"])
+        if isinstance(vis, str):
+            vis = vis.lower() not in ("false", "0")
+        entry["visible"] = vis
+        fill = settings.value(f"display/{key}/fill", cat_def.get("fill"))
+        if fill:
+            entry["fill"] = fill
+        font = cat_def.get("font")
+        if font is not None:
+            font = int(float(settings.value(
+                f"display/{key}/font", font)))
+            entry["font"] = font
+        result[key] = entry
+    return result
+
+
+def apply_project_display_settings(scene, display_dict: dict):
+    """Apply display settings loaded from a project file to all items.
+
+    *display_dict* maps category key → {color, scale, opacity, visible, fill, font}.
+    Per-instance overrides stored on items take precedence.
+    Falls back to QSettings for any category not present in *display_dict*.
+    """
+    settings = QSettings("GV", "FirePro3D")
+
+    for cat_def in _CATEGORIES:
+        key = cat_def["key"]
+        proj = display_dict.get(key, {})
+        # Read from project dict, fall back to QSettings, then factory default
+        color = proj.get("color",
+                         settings.value(f"display/{key}/color", cat_def["color"]))
+        scale = float(proj.get("scale",
+                               settings.value(f"display/{key}/scale", cat_def["scale"])))
+        opacity = int(float(proj.get("opacity",
+                                     settings.value(f"display/{key}/opacity", cat_def["opacity"]))))
+        visible = proj.get("visible",
+                           settings.value(f"display/{key}/visible", cat_def["visible"]))
+        if isinstance(visible, str):
+            visible = visible.lower() not in ("false", "0")
+        fill = proj.get("fill",
+                        settings.value(f"display/{key}/fill", cat_def.get("fill")))
+        font = proj.get("font")
+        if font is None:
+            f_def = cat_def.get("font")
+            if f_def is not None:
+                font = int(float(settings.value(
+                    f"display/{key}/font", f_def)))
+
+        # Also update QSettings so Display Manager shows these values
+        settings.setValue(f"display/{key}/color", color)
+        settings.setValue(f"display/{key}/scale", scale)
+        settings.setValue(f"display/{key}/opacity", opacity)
+        settings.setValue(f"display/{key}/visible", visible)
+        if fill:
+            settings.setValue(f"display/{key}/fill", fill)
+        if font is not None:
+            settings.setValue(f"display/{key}/font", font)
+
+        items = _items_for_category_static(scene, key)
+        for obj in items:
+            overrides = getattr(obj, "_display_overrides", {})
+            eff_color = overrides.get("color", color)
+            eff_scale = overrides.get("scale", scale)
+            eff_opacity = overrides.get("opacity", opacity)
+            eff_visible = overrides.get("visible", visible)
+            eff_fill = overrides.get("fill", fill)
+            eff_font = overrides.get("font", font)
+            apply_display_to_item(obj, eff_color, eff_scale,
+                                  eff_opacity, eff_visible,
+                                  fill_color=eff_fill,
+                                  font_size=eff_font)
+    settings.sync()
 
 
 def _items_for_category_static(scene, key: str) -> list:

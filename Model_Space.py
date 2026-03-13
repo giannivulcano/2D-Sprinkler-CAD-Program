@@ -45,6 +45,9 @@ class Model_Space(QGraphicsScene):
     def __init__(self):
         super().__init__()
         self.setSceneRect(QRectF(-500000, -500000, 1000000, 1000000))
+        # Disable BSP-tree indexing — cosmetic-pen items (gridlines) are
+        # culled incorrectly by the spatial index at high zoom levels.
+        self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
         self.sprinkler_system = SprinklerSystem()
         self.annotations = Annotation()
         self.underlays: list[tuple[Underlay, QGraphicsItem]] = []  # (data, scene_item)
@@ -376,11 +379,16 @@ class Model_Space(QGraphicsScene):
         walls_data = [w.to_dict() for w in self._walls]
         floor_slabs_data = [fs.to_dict() for fs in self._floor_slabs]
 
+        # --- Display settings (per-project) ---
+        from display_manager import get_display_settings_for_save
+        display_settings_data = get_display_settings_for_save()
+
         # --- Assemble and write ---
         payload = {
             "version":             self.SAVE_VERSION,
             "project_info":        self._project_info,
             "scale":               self.scale_manager.to_dict(),
+            "display_settings":    display_settings_data,
             "user_layers":         layers_data,
             "levels":              levels_data,
             "nodes":               nodes_data,
@@ -432,6 +440,9 @@ class Model_Space(QGraphicsScene):
 
         version = payload.get("version", 1)
         self._clear_scene()
+
+        # --- Display settings (per-project, may be absent in old files) ---
+        self._loaded_display_settings = payload.get("display_settings", None)
 
         # --- Scale ---
         if "scale" in payload:
