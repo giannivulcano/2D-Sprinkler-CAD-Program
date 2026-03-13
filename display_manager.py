@@ -862,10 +862,15 @@ class DisplayManager(QDialog):
         self._apply_preview()
 
     def _set_as_default(self):
-        """Save current category settings as defaults for new projects."""
+        """Save current category settings as defaults for new projects.
+
+        Also saves to regular keys so the Display Manager shows them on
+        next open, and calls sync() to force immediate persistence.
+        """
         for cat_def in _CATEGORIES:
             key = cat_def["key"]
             s = self._read_category_settings(key)
+            # Save as defaults for new projects
             self._settings.setValue(f"display/{key}/default_color", s["color"])
             self._settings.setValue(f"display/{key}/default_scale", s["scale"])
             self._settings.setValue(f"display/{key}/default_opacity", s["opacity"])
@@ -874,6 +879,16 @@ class DisplayManager(QDialog):
                 self._settings.setValue(f"display/{key}/default_fill", s["fill"])
             if s.get("font") is not None:
                 self._settings.setValue(f"display/{key}/default_font", s["font"])
+            # Also save as current settings so they persist across sessions
+            self._settings.setValue(f"display/{key}/color", s["color"])
+            self._settings.setValue(f"display/{key}/scale", s["scale"])
+            self._settings.setValue(f"display/{key}/opacity", s["opacity"])
+            self._settings.setValue(f"display/{key}/visible", s["visible"])
+            if s.get("fill"):
+                self._settings.setValue(f"display/{key}/fill", s["fill"])
+            if s.get("font") is not None:
+                self._settings.setValue(f"display/{key}/font", s["font"])
+        self._settings.sync()
 
     # ------------------------------------------------------------------
     # Widget value helpers
@@ -960,6 +975,7 @@ class DisplayManager(QDialog):
                 self._settings.setValue(f"display/{key}/fill", s["fill"])
             if s.get("font") is not None:
                 self._settings.setValue(f"display/{key}/font", s["font"])
+        self._settings.sync()
         super().accept()
 
     def reject(self):
@@ -974,12 +990,6 @@ class DisplayManager(QDialog):
 
 def apply_saved_display_settings(scene):
     """Read QSettings + per-item overrides and apply to all FS items."""
-    # Clean up stale font key for Grid Line (was wrongly set to 10pt in
-    # earlier versions, causing bubble labels to shrink to near-invisible)
-    _s = QSettings()
-    _s.remove("display/Grid Line/font")
-    _s.remove("display/Grid Line/default_font")
-
     from pipe import Pipe
     from sprinkler import Sprinkler
     from fitting import Fitting
@@ -1024,9 +1034,6 @@ def apply_default_display_settings(scene):
     Called when creating a new project to apply the user's preferred defaults.
     """
     settings = QSettings()
-    # Clean up stale font keys for Grid Line
-    settings.remove("display/Grid Line/font")
-    settings.remove("display/Grid Line/default_font")
 
     for cat_def in _CATEGORIES:
         key = cat_def["key"]
