@@ -112,7 +112,7 @@ class GridBubble(QGraphicsEllipseItem):
         super().paint(painter, option, widget)
         parent = self.parentItem()
         if parent is not None and parent.isSelected():
-            r = BUBBLE_RADIUS
+            r = BUBBLE_RADIUS_MM
             highlight = QPen(QColor("#ff8800"), 3)
             highlight.setCosmetic(True)
             painter.setPen(highlight)
