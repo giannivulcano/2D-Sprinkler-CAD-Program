@@ -1522,9 +1522,14 @@ class MainWindow(QMainWindow):
         self._modified = False
         self._update_title()
         self._add_recent_file(file)
-        # Apply saved display settings (QSettings + per-item overrides)
-        from display_manager import apply_saved_display_settings
-        apply_saved_display_settings(self.scene)
+        # Apply display settings: prefer project-embedded settings, fall back to QSettings
+        project_ds = getattr(self.scene, '_loaded_display_settings', None)
+        if project_ds:
+            from display_manager import apply_project_display_settings
+            apply_project_display_settings(self.scene, project_ds)
+        else:
+            from display_manager import apply_saved_display_settings
+            apply_saved_display_settings(self.scene)
 
     # ── Recent files ──────────────────────────────────────────────────────
 
