@@ -1738,11 +1738,15 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def update_property_manager(self):
-        # Don't override template properties during placement modes
-        if self.scene.mode in ("pipe", "sprinkler", "wall", "floor",
-                                "floor_rect", "set_scale", "design_area"):
+        # Guard against the scene's C++ object being deleted during shutdown
+        try:
+            # Don't override template properties during placement modes
+            if self.scene.mode in ("pipe", "sprinkler", "wall", "floor",
+                                    "floor_rect", "set_scale", "design_area"):
+                return
+            items = self.scene.selectedItems()
+        except RuntimeError:
             return
-        items = self.scene.selectedItems()
         if items:
             self.prop_manager.show_properties(items)
         else:
