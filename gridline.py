@@ -227,7 +227,8 @@ class GridlineItem(QGraphicsLineItem):
         sx = max(abs(vt.m11()), abs(vt.m22()), 1e-9)
         pen_w = GRID_WIDTH / sx
 
-        # Shorten line to meet visible bubbles at their edge
+        # Shorten line to meet visible bubbles at their edge.
+        # Account for bubble scale (display manager may call setScale()).
         line = self.line()
         p1, p2 = line.p1(), line.p2()
         dx = p2.x() - p1.x()
@@ -235,9 +236,10 @@ class GridlineItem(QGraphicsLineItem):
         length = math.sqrt(dx * dx + dy * dy)
         if length > 1e-9:
             ux, uy = dx / length, dy / length
-            r = BUBBLE_RADIUS_MM
-            draw_p1 = QPointF(p1.x() + ux * r, p1.y() + uy * r) if self.bubble1.isVisible() else p1
-            draw_p2 = QPointF(p2.x() - ux * r, p2.y() - uy * r) if self.bubble2.isVisible() else p2
+            r1 = BUBBLE_RADIUS_MM * self.bubble1.scale()
+            r2 = BUBBLE_RADIUS_MM * self.bubble2.scale()
+            draw_p1 = QPointF(p1.x() + ux * r1, p1.y() + uy * r1) if self.bubble1.isVisible() else p1
+            draw_p2 = QPointF(p2.x() - ux * r2, p2.y() - uy * r2) if self.bubble2.isVisible() else p2
         else:
             draw_p1, draw_p2 = p1, p2
 
