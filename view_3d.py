@@ -23,6 +23,7 @@ from vispy.geometry import create_cylinder
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
 from PyQt6.QtCore import pyqtSignal, QTimer, Qt
 
+from constants import DEFAULT_LEVEL
 from node import Node
 from pipe import Pipe
 from sprinkler import Sprinkler
@@ -557,7 +558,7 @@ class View3D(QWidget):
 
         # Lines
         for item in getattr(self._scene, "_draw_lines", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             p1 = item._pt1
             p2 = item._pt2
@@ -566,7 +567,7 @@ class View3D(QWidget):
 
         # Construction lines
         for item in getattr(self._scene, "_construction_lines", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             p1 = item._pt1
             p2 = item._pt2
@@ -575,7 +576,7 @@ class View3D(QWidget):
 
         # Rectangles (4 edges)
         for item in getattr(self._scene, "_draw_rects", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             r = item.rect()
             corners = [
@@ -590,7 +591,7 @@ class View3D(QWidget):
 
         # Circles (polygon approximation)
         for item in getattr(self._scene, "_draw_circles", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             cx = item._center.x() / ppm
             cy = -item._center.y() / ppm
@@ -603,7 +604,7 @@ class View3D(QWidget):
 
         # Arcs
         for item in getattr(self._scene, "_draw_arcs", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             cx = item._center.x() / ppm
             cy = -item._center.y() / ppm
@@ -619,7 +620,7 @@ class View3D(QWidget):
 
         # Polylines
         for item in getattr(self._scene, "_polylines", []):
-            z = self._level_z_mm(getattr(item, "level", "Level 1"))
+            z = self._level_z_mm(getattr(item, "level", DEFAULT_LEVEL))
             ppm = self._sm.pixels_per_mm if self._sm.is_calibrated else 1.0
             pts = item._points
             for i in range(len(pts) - 1):

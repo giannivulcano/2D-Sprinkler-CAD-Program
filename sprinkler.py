@@ -4,6 +4,7 @@ from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtCore import Qt
 
+from constants import DEFAULT_LEVEL
 
 class Sprinkler(QGraphicsSvgItem):
     GRAPHICS = {
@@ -34,8 +35,8 @@ class Sprinkler(QGraphicsSvgItem):
             "Temperature":     {"type": "label",  "value": "155°F"},
             "Design Density":  {"type": "string", "value": "0.10"},
             "Graphic":         {"type": "enum",   "value": "Sprinkler0", "options": ["Sprinkler0", "Sprinkler1", "Sprinkler2"]},
-            "Level":           {"type": "level_ref", "value": "Level 1"},
-            "Ceiling Level":   {"type": "level_ref", "value": "Level 1"},
+            "Level":           {"type": "level_ref", "value": DEFAULT_LEVEL},
+            "Ceiling Level":   {"type": "level_ref", "value": DEFAULT_LEVEL},
             "Ceiling Offset (in)":  {"type": "string", "value": "-2"},
         }
 

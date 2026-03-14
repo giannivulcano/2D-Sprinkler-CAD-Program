@@ -59,6 +59,7 @@ except ImportError:
 
 from dxf_import_worker import _sanitize_dxf
 from snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
+from constants import DEFAULT_USER_LAYER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ class ImportParams:
         self.scale: float = 1.0            # multiplier applied to all coordinates
         self.base_x: float = 0.0           # base point (subtracted before scaling)
         self.base_y: float = 0.0
-        self.user_layer: str = "Default"   # destination layer (colour derived from it)
+        self.user_layer: str = DEFAULT_USER_LAYER   # destination layer (colour derived from it)
         self.selected_layers: list[str] | None = None  # None = all
         self.rotation: float = 0.0         # degrees (applied to final group)
         self.insert_at_origin: bool = True
@@ -495,7 +496,7 @@ class UnderlayImportDialog(QDialog):
             for lyr in self._user_layer_manager.layers:
                 self._dest_layer_combo.addItem(lyr.name)
         else:
-            self._dest_layer_combo.addItem("Default")
+            self._dest_layer_combo.addItem(DEFAULT_USER_LAYER)
         dest_lay.addWidget(self._dest_layer_combo)
         self._layer_colour_lbl = QLabel("")
         self._layer_colour_lbl.setStyleSheet("font-size: 11px; color: #aaa;")

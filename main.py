@@ -3,9 +3,9 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QFileDialog, QDockWidget, QInputDialog,
                               QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
-                              QTabWidget, QMenu, QWidget,
+                              QTabWidget, QMenu, QWidget, QMessageBox,
                               QComboBox, QDoubleSpinBox, QFormLayout,
-                              QProgressBar)
+                              QProgressBar, QToolButton)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut, QFont
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF, QTimer
 from PyQt6.QtWidgets import QGraphicsTextItem
@@ -28,6 +28,7 @@ from array_dialog import ArrayDialog
 from project_browser import ProjectBrowser
 from model_browser import ModelBrowser
 from grid_lines_dialog import GridLinesDialog
+from constants import DEFAULT_GRIDLINE_SPACING_IN, DEFAULT_GRIDLINE_LENGTH_IN
 import theme as th
 
 
@@ -590,8 +591,7 @@ class MainWindow(QMainWindow):
         _line_menu.addAction("Construction Line").triggered.connect(
             lambda: self.scene.set_mode("construction_line"))
         _line_btn.setMenu(_line_menu)
-        from PyQt6.QtWidgets import QToolButton as _QTB
-        _line_btn.setPopupMode(_QTB.ToolButtonPopupMode.MenuButtonPopup)
+        _line_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["draw_line"] = _line_btn
         self._mode_buttons["construction_line"] = _line_btn
         # Rectangle split-menu: main click → draw_rectangle, dropdown → Corner/Center mode
@@ -605,7 +605,6 @@ class MainWindow(QMainWindow):
         _rect_corner_act.triggered.connect(lambda: self._set_rect_mode(False))
         _rect_center_act.triggered.connect(lambda: self._set_rect_mode(True))
         _rect_btn.setMenu(_rect_menu)
-        from PyQt6.QtWidgets import QToolButton
         _rect_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["draw_rectangle"] = _rect_btn
         _mode_btn(g_geom, "Circle", _I("circle_icon.svg"), "draw_circle").setToolTip("Draw a circle")
@@ -678,7 +677,6 @@ class MainWindow(QMainWindow):
         _floor_rect_act = _floor_menu.addAction("Floor (Rectangle)")
         _floor_poly_act.triggered.connect(lambda: self.scene.set_mode("floor"))
         _floor_rect_act.triggered.connect(lambda: self.scene.set_mode("floor_rect"))
-        from PyQt6.QtWidgets import QToolButton
         _floor_btn.setMenu(_floor_menu)
         _floor_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["floor"] = _floor_btn
@@ -1454,11 +1452,11 @@ class MainWindow(QMainWindow):
         sm = self.scene.scale_manager
         # Convert a sensible display-unit spacing to scene units
         if sm:
-            spacing = sm.display_to_scene(7315.2)  # 288 in / 24 ft
-            length  = sm.display_to_scene(21945.6) # 864 in / 72 ft
+            spacing = sm.display_to_scene(DEFAULT_GRIDLINE_SPACING_IN)  # 288 in / 24 ft
+            length  = sm.display_to_scene(DEFAULT_GRIDLINE_LENGTH_IN)   # 864 in / 72 ft
         else:
-            spacing = 7315.2
-            length  = 21945.6
+            spacing = DEFAULT_GRIDLINE_SPACING_IN
+            length  = DEFAULT_GRIDLINE_LENGTH_IN
 
         specs: list[dict] = []
         # 3 vertical gridlines: labels 1, 2, 3
@@ -1590,7 +1588,6 @@ class MainWindow(QMainWindow):
 
     def _open_recent(self, path: str):
         if not os.path.isfile(path):
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "File Not Found", f"Cannot find:\n{path}")
             if path in self._recent_files:
                 self._recent_files.remove(path)
@@ -1617,7 +1614,6 @@ class MainWindow(QMainWindow):
         path = self._autosave_path()
         if not os.path.isfile(path):
             return
-        from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Recover Unsaved Work",
             "An auto-save recovery file was found.\n"
@@ -1636,21 +1632,27 @@ class MainWindow(QMainWindow):
         if os.path.isfile(path):
             os.remove(path)
 
+    def _ask_save_changes(self, action="proceeding"):
+        """Show unsaved-changes dialog. Returns True to proceed, False to cancel."""
+        if not self._modified:
+            return True
+        reply = QMessageBox.question(
+            self, "Unsaved Changes",
+            f"You have unsaved changes. Save before {action}?",
+            QMessageBox.StandardButton.Save |
+            QMessageBox.StandardButton.Discard |
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Save:
+            self.save_file()
+        elif reply == QMessageBox.StandardButton.Cancel:
+            return False
+        return True
+
     def new_file(self):
         """Clear the scene and start a fresh project."""
-        if self._modified:
-            from PyQt6.QtWidgets import QMessageBox
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before starting a new project?",
-                QMessageBox.StandardButton.Save |
-                QMessageBox.StandardButton.Discard |
-                QMessageBox.StandardButton.Cancel,
-            )
-            if reply == QMessageBox.StandardButton.Save:
-                self.save_file()
-            elif reply == QMessageBox.StandardButton.Cancel:
-                return
+        if not self._ask_save_changes("starting a new project"):
+            return
         self._current_file = None
         self.scene._clear_scene()
         self.level_widget.populate()
@@ -1780,20 +1782,9 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        if self._modified:
-            from PyQt6.QtWidgets import QMessageBox
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before closing?",
-                QMessageBox.StandardButton.Save |
-                QMessageBox.StandardButton.Discard |
-                QMessageBox.StandardButton.Cancel,
-            )
-            if reply == QMessageBox.StandardButton.Save:
-                self.save_file()
-            elif reply == QMessageBox.StandardButton.Cancel:
-                event.ignore()
-                return
+        if not self._ask_save_changes("closing"):
+            event.ignore()
+            return
         self.save_settings()
         self._cleanup_autosave()
         super().closeEvent(event)

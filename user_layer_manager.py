@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush, QFont
 import theme as th
+from constants import DEFAULT_USER_LAYER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +64,7 @@ class UserLayer:
 
 # Defaults shipped with every new document
 DEFAULT_LAYERS: list[UserLayer] = [
-    UserLayer("Default",      "#ffffff", 0.35, True,  False, True),
+    UserLayer(DEFAULT_USER_LAYER,      "#ffffff", 0.35, True,  False, True),
     UserLayer("Underlay",     "#aaaaaa", 0.18, True,  False, False),
     UserLayer("Annotations",  "#cccccc", 0.25, True,  False, True),
     UserLayer("Gridlines",    "#888888", 0.25, True,  False, True),
@@ -113,7 +114,7 @@ class UserLayerManager:
         self._layers: list[UserLayer] = [
             UserLayer(**vars(l)) for l in DEFAULT_LAYERS
         ]
-        self._active: str = "Default"
+        self._active: str = DEFAULT_USER_LAYER
 
     # ── Layer list API ───────────────────────────────────────────────────────
 
@@ -261,7 +262,7 @@ class UserLayerManager:
         annotations = getattr(scene, "annotations", None)
         if annotations is not None:
             for dim in getattr(annotations, "dimensions", []):
-                lyr_name = getattr(dim, "user_layer", "Default")
+                lyr_name = getattr(dim, "user_layer", DEFAULT_USER_LAYER)
                 ldef = lyr_map.get(lyr_name)
                 if ldef is None:
                     continue
@@ -280,7 +281,7 @@ class UserLayerManager:
                     if child:
                         child.setPen(dim._dim_pen)
             for note in getattr(annotations, "notes", []):
-                lyr_name = getattr(note, "user_layer", "Default")
+                lyr_name = getattr(note, "user_layer", DEFAULT_USER_LAYER)
                 ldef = lyr_map.get(lyr_name)
                 if ldef is None:
                     continue
@@ -293,7 +294,7 @@ class UserLayerManager:
                 note.setDefaultTextColor(_QColor(ldef.color))
 
         for item in getattr(scene, "_hatch_items", []):
-            lyr_name = getattr(item, "user_layer", "Default")
+            lyr_name = getattr(item, "user_layer", DEFAULT_USER_LAYER)
             ldef = lyr_map.get(lyr_name)
             if ldef is None:
                 continue

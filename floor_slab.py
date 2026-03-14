@@ -18,6 +18,7 @@ from PyQt6.QtGui import (
     QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF,
 )
 
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -52,8 +53,8 @@ class FloorSlab(QGraphicsPathItem):
         self._color = QColor(color) if isinstance(color, str) else QColor(color)
         self._thickness_ft: float = DEFAULT_THICKNESS_FT
 
-        self.level: str = "Level 1"
-        self.user_layer: str = "Default"
+        self.level: str = DEFAULT_LEVEL
+        self.user_layer: str = DEFAULT_USER_LAYER
         self.name: str = ""
 
         # Display Manager overrides
@@ -227,8 +228,8 @@ class FloorSlab(QGraphicsPathItem):
         points = [QPointF(p[0], p[1]) for p in data.get("points", [])]
         slab = cls(points=points, color=data.get("color", "#8888cc"))
         slab._thickness_ft = data.get("thickness_ft", DEFAULT_THICKNESS_FT)
-        slab.level = data.get("level", "Level 1")
-        slab.user_layer = data.get("user_layer", "Default")
+        slab.level = data.get("level", DEFAULT_LEVEL)
+        slab.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
         slab.name = data.get("name", "")
         return slab
 

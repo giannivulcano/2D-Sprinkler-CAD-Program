@@ -5,6 +5,7 @@ from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainterPathStroker
 from PyQt6.QtCore import Qt, QPointF
 from CAD_Math import CAD_Math
 
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 class Pipe(QGraphicsLineItem):
     SNAP_TOLERANCE_DEG = 7.5  # snap if within this angle
@@ -41,8 +42,8 @@ class Pipe(QGraphicsLineItem):
             "Schedule":    {"type": "enum",   "value": "Sch 40",         "options": ["Sch 10", "Sch 40", "Sch 80", "Sch 40S", "Sch 10S"]},
             "C-Factor":    {"type": "string", "value": "120"},
             "Material":    {"type": "enum",   "value": "Galvanized Steel","options": ["Galvanized Steel", "Stainless Steel", "Black Steel", "PVC"]},
-            "Level":              {"type": "level_ref", "value": "Level 1"},
-            "Ceiling Level":      {"type": "level_ref", "value": "Level 1"},
+            "Level":              {"type": "level_ref", "value": DEFAULT_LEVEL},
+            "Ceiling Level":      {"type": "level_ref", "value": DEFAULT_LEVEL},
             "Ceiling Offset (in)":{"type": "string", "value": "-2"},
             "Colour":      {"type": "enum",   "value": "Red",            "options": ["Black", "White", "Red", "Blue", "Grey"]},
             "Phase":       {"type": "enum",   "value": "New",            "options": ["New", "Existing", "Demo"]},
@@ -55,9 +56,9 @@ class Pipe(QGraphicsLineItem):
         self.node2 = node2
         self.colour = None
         self.length = 0.0
-        self.user_layer: str = "Default"   # user-defined layer name
-        self.level: str = "Level 1"          # floor level name
-        self.ceiling_level: str = "Level 1"  # ceiling level (3D elevation)
+        self.user_layer: str = DEFAULT_USER_LAYER   # user-defined layer name
+        self.level: str = DEFAULT_LEVEL          # floor level name
+        self.ceiling_level: str = DEFAULT_LEVEL  # ceiling level (3D elevation)
         self.ceiling_offset: float = -2.0    # inches below ceiling (default -2")
 
 
@@ -121,7 +122,7 @@ class Pipe(QGraphicsLineItem):
         if scene and hasattr(scene, "scale_manager"):
             length = scene.scale_manager.scene_to_display(getattr(self, "length", 0.0))
         else:
-            length = f"{self.length:.1f} px"
+            length = f"{self.length:.1f} mm"
 
         # Text height from Label Size property (inches → mm for scene units)
         try:

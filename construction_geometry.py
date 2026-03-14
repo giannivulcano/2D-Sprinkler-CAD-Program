@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF
+from constants import DEFAULT_USER_LAYER
+from constants import DEFAULT_LEVEL
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +77,7 @@ class ConstructionLine(QGraphicsLineItem):
         self.setZValue(-5)          # drawn behind all model items
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
-        self.level: str = "Level 1"
+        self.level: str = DEFAULT_LEVEL
 
         self._recompute_line()
 
@@ -105,7 +107,7 @@ class ConstructionLine(QGraphicsLineItem):
         pt1 = QPointF(data["pt1"][0], data["pt1"][1])
         pt2 = QPointF(data["pt2"][0], data["pt2"][1])
         obj = cls(pt1, pt2)
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Properties ─────────────────────────────────────────────────────────
@@ -220,8 +222,8 @@ class PolylineItem(QGraphicsPathItem):
                  lineweight: float = 1.0):
         super().__init__()
         self._points: list[QPointF] = [start]
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -329,7 +331,7 @@ class PolylineItem(QGraphicsPathItem):
         for p in pts[1:]:
             obj.append_point(p)
         obj.user_layer = data.get("user_layer", "0")
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Internal ─────────────────────────────────────────────────────────────
@@ -382,8 +384,8 @@ class LineItem(QGraphicsLineItem):
         super().__init__()
         self._pt1 = pt1
         self._pt2 = pt2
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -431,7 +433,7 @@ class LineItem(QGraphicsLineItem):
         obj = cls(pt1, pt2, data.get("color", "#ffffff"),
                   data.get("lineweight", 1.0))
         obj.user_layer = data.get("user_layer", "0")
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Grip protocol ─────────────────────────────────────────────────────────
@@ -515,8 +517,8 @@ class RectangleItem(QGraphicsRectItem):
                  color: str | QColor = "#ffffff", lineweight: float = 1.0):
         rect = QRectF(pt1, pt2).normalized()
         super().__init__(rect)
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -568,7 +570,7 @@ class RectangleItem(QGraphicsRectItem):
         obj = cls(pt1, pt2, data.get("color", "#ffffff"),
                   data.get("lineweight", 1.0))
         obj.user_layer = data.get("user_layer", "0")
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Grip protocol ─────────────────────────────────────────────────────────
@@ -670,8 +672,8 @@ class CircleItem(QGraphicsEllipseItem):
         self._radius = radius
         r = radius
         super().__init__(center.x() - r, center.y() - r, 2 * r, 2 * r)
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         pen = QPen(QColor(color) if isinstance(color, str) else color)
         pen.setWidthF(lineweight)
@@ -719,7 +721,7 @@ class CircleItem(QGraphicsEllipseItem):
         obj = cls(center, data["radius"],
                   data.get("color", "#ffffff"), data.get("lineweight", 1.0))
         obj.user_layer = data.get("user_layer", "0")
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Grip protocol ─────────────────────────────────────────────────────────
@@ -809,8 +811,8 @@ class ArcItem(QGraphicsPathItem):
         self._radius = max(radius, 0.01)
         self._start_deg = start_deg
         self._span_deg = span_deg
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
         pen = QPen(QColor(color), lineweight)
         pen.setCosmetic(True)
         self.setPen(pen)
@@ -851,7 +853,7 @@ class ArcItem(QGraphicsPathItem):
         obj = cls(center, data["radius"], data["start_deg"], data["span_deg"],
                   data.get("color", "#ffffff"), data.get("lineweight", 1.0))
         obj.user_layer = data.get("user_layer", "0")
-        obj.level = data.get("level", "Level 1")
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     # ── Grip protocol ─────────────────────────────────────────────────────────
@@ -934,8 +936,8 @@ class GeometryTemplate:
     """
 
     def __init__(self):
-        self.level: str = "Level 1"
-        self.user_layer: str = "Default"
+        self.level: str = DEFAULT_LEVEL
+        self.user_layer: str = DEFAULT_USER_LAYER
         self.name: str = "(Template)"
 
     def get_properties(self) -> dict:
