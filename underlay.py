@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal
+from constants import DEFAULT_USER_LAYER
 
 
 @dataclass
@@ -25,7 +26,7 @@ class Underlay:
     colour: str = "#ffffff"
     line_weight: float = 0.0
     # Layer assignment (colour/lineweight derived from this layer at runtime)
-    user_layer: str = "Default"
+    user_layer: str = DEFAULT_USER_LAYER
 
     def to_dict(self) -> dict:
         d = {
@@ -62,5 +63,5 @@ class Underlay:
             dpi         = d.get("dpi", 150),
             colour      = d.get("colour", "#ffffff"),
             line_weight = d.get("line_weight", 0),
-            user_layer  = d.get("user_layer", "Default"),
+            user_layer  = d.get("user_layer", DEFAULT_USER_LAYER),
         )

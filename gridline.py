@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem, QStyle,
 )
 from PyQt6.QtGui import QPen, QColor, QFont, QBrush, QPainterPath
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from PyQt6.QtCore import Qt, QPointF, QRectF
 
 
@@ -171,8 +172,8 @@ class GridlineItem(QGraphicsLineItem):
         self._update_bubble_positions()
 
         # User layer
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
         self._display_overrides: dict = {}  # per-instance display overrides
         self._display_scale: float = 1.0    # display scale for bubbles
 
@@ -328,7 +329,7 @@ class GridlineItem(QGraphicsLineItem):
         item.bubble1.setVisible(d.get("bubble1_vis", True))
         item.bubble2.setVisible(d.get("bubble2_vis", True))
         item.user_layer = d.get("user_layer", "0")
-        item.level = d.get("level", "Level 1")
+        item.level = d.get("level", DEFAULT_LEVEL)
         item._display_overrides = d.get("display_overrides", {})
         return item
 

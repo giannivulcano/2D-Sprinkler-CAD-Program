@@ -28,6 +28,7 @@ from construction_geometry import (
 from snap_engine import SnapEngine, OsnapResult
 from display_manager import apply_category_defaults
 from gridline import GridlineItem, reset_grid_counters
+from constants import Z_BELOW_GEOMETRY, DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_IN
 from floor_slab import FloorSlab
 from wall_opening import WallOpening, DoorOpening, WindowOpening
@@ -74,8 +75,8 @@ class Model_Space(QGraphicsScene):
         self.hydraulic_result = None                          # last solver run (Sprint 2)
         self.design_areas: list = []                          # list[DesignArea]
         self.active_design_area = None                        # DesignArea | None
-        self.active_user_layer: str = "Default"                  # Sprint 4A active layer
-        self.active_level: str = "Level 1"                     # floor level
+        self.active_user_layer: str = DEFAULT_USER_LAYER                  # Sprint 4A active layer
+        self.active_level: str = DEFAULT_LEVEL                     # floor level
         self._design_area_corner1: "QPointF | None" = None
         self._design_area_rect_item = None                    # QGraphicsRectItem preview
         # Construction geometry (Sprint C)
@@ -246,8 +247,8 @@ class Model_Space(QGraphicsScene):
                 "elevation":      node.z_pos,
                 "z_offset":       getattr(node, "z_offset", node.z_pos),
                 "user_layer":     getattr(node, "user_layer", "0"),
-                "level":          getattr(node, "level", "Level 1"),
-                "ceiling_level":  getattr(node, "ceiling_level", "Level 1"),
+                "level":          getattr(node, "level", DEFAULT_LEVEL),
+                "ceiling_level":  getattr(node, "ceiling_level", DEFAULT_LEVEL),
                 "ceiling_offset": getattr(node, "ceiling_offset", -2.0),
                 "sprinkler":      node.sprinkler.get_properties() if node.has_sprinkler() else None,
             }
@@ -275,7 +276,7 @@ class Model_Space(QGraphicsScene):
                 "node1_id":   node_id[pipe.node1],
                 "node2_id":   node_id[pipe.node2],
                 "user_layer": getattr(pipe, "user_layer", "0"),
-                "level":      getattr(pipe, "level", "Level 1"),
+                "level":      getattr(pipe, "level", DEFAULT_LEVEL),
                 "properties": {k: v["value"] for k, v in pipe.get_properties().items()},
             }
             pipe_ovr = getattr(pipe, "_display_overrides", {})
@@ -293,8 +294,8 @@ class Model_Space(QGraphicsScene):
                 "offset_dist": getattr(dim, "_offset_dist", 10),
                 "witness_ext_override": getattr(dim, "_witness_ext_override", None),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
-                "user_layer": getattr(dim, "user_layer", "Default"),
-                "level":      getattr(dim, "level", "Level 1"),
+                "user_layer": getattr(dim, "user_layer", DEFAULT_USER_LAYER),
+                "level":      getattr(dim, "level", DEFAULT_LEVEL),
             })
         for note in self.annotations.notes:
             annotations_data.append({
@@ -303,8 +304,8 @@ class Model_Space(QGraphicsScene):
                 "y":    note.scenePos().y(),
                 "text_width": note.textWidth(),
                 "properties": {k: v["value"] for k, v in note.get_properties().items()},
-                "user_layer": getattr(note, "user_layer", "Default"),
-                "level":      getattr(note, "level", "Level 1"),
+                "user_layer": getattr(note, "user_layer", DEFAULT_USER_LAYER),
+                "level":      getattr(note, "level", DEFAULT_LEVEL),
             })
 
         # --- Hatch items ---
@@ -475,7 +476,7 @@ class Model_Space(QGraphicsScene):
             # Restore node properties
             node.z_offset = entry.get("z_offset", entry.get("elevation", 0))
             node.user_layer = entry.get("user_layer", "0")
-            node.level = entry.get("level", "Level 1")
+            node.level = entry.get("level", DEFAULT_LEVEL)
             node.ceiling_level = entry.get("ceiling_level", node.level)
             node.ceiling_offset = entry.get("ceiling_offset", -2.0)
             node._properties["Level"]["value"] = node.level
@@ -514,7 +515,7 @@ class Model_Space(QGraphicsScene):
             if n1 and n2:
                 pipe = self.add_pipe(n1, n2)
                 pipe.user_layer = entry.get("user_layer", "0")
-                pipe.level = entry.get("level", "Level 1")
+                pipe.level = entry.get("level", DEFAULT_LEVEL)
                 for key, value in entry.get("properties", {}).items():
                     pipe.set_property(key, value)
                 pipe._display_overrides = entry.get("display_overrides", {})
@@ -543,8 +544,8 @@ class Model_Space(QGraphicsScene):
                 for key, value in entry.get("properties", {}).items():
                     dim.set_property(key, value)
                 dim.update_geometry()
-                dim.user_layer = entry.get("user_layer", "Default")
-                dim.level = entry.get("level", "Level 1")
+                dim.user_layer = entry.get("user_layer", DEFAULT_USER_LAYER)
+                dim.level = entry.get("level", DEFAULT_LEVEL)
             elif ann_type == "note":
                 tw = entry.get("text_width", -1)
                 note = NoteAnnotation(
@@ -554,8 +555,8 @@ class Model_Space(QGraphicsScene):
                 self.annotations.add_note(note)
                 for key, value in entry.get("properties", {}).items():
                     note.set_property(key, value)
-                note.user_layer = entry.get("user_layer", "Default")
-                note.level = entry.get("level", "Level 1")
+                note.user_layer = entry.get("user_layer", DEFAULT_USER_LAYER)
+                note.level = entry.get("level", DEFAULT_LEVEL)
 
         # --- Underlays (re-link from path) ---
         for entry in payload.get("underlays", []):
@@ -738,7 +739,7 @@ class Model_Space(QGraphicsScene):
         self._dim_preview_line = None
         self._dim_preview_label = None
         self._dim_pending = None
-        self.active_level = "Level 1"
+        self.active_level = DEFAULT_LEVEL
         if self._level_manager:
             self._level_manager.reset()
         self.clear()
@@ -777,7 +778,7 @@ class Model_Space(QGraphicsScene):
             item.setFlag(item.GraphicsItemFlag.ItemIsMovable, False)
             item.setFlag(item.GraphicsItemFlag.ItemIgnoresTransformations, True)
             item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
             item.setData(0, "origin")  # tag so snap engine skips it
         self.addItem(h_line)
         self.addItem(v_line)
@@ -1512,7 +1513,7 @@ class Model_Space(QGraphicsScene):
 
         # Derive colour/lineweight from user_layer
         color, lw = self._underlay_color_lw(
-            getattr(params, "user_layer", "Default"))
+            getattr(params, "user_layer", DEFAULT_USER_LAYER))
         pen = QPen(color, lw)
         pen.setCosmetic(True)
 
@@ -1531,7 +1532,7 @@ class Model_Space(QGraphicsScene):
         for item in items:
             self.addItem(item)
         group = self.createItemGroup(items)
-        group.setZValue(-100)
+        group.setZValue(Z_BELOW_GEOMETRY)
         group.setPos(insert_pt)
         group.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
@@ -1544,7 +1545,7 @@ class Model_Space(QGraphicsScene):
         group.setData(2, all_layers)
         self.setItemIndexMethod(old_method)
 
-        user_layer = getattr(params, "user_layer", "Default")
+        user_layer = getattr(params, "user_layer", DEFAULT_USER_LAYER)
         rotation = getattr(params, "rotation", 0.0)
         record = Underlay(
             type=file_type, path=params.file_path,
@@ -1562,7 +1563,7 @@ class Model_Space(QGraphicsScene):
 
     def import_dxf(self, file_path, color=QColor("white"), line_weight=0,
                    x=0.0, y=0.0, layers=None, _record: Underlay = None,
-                   user_layer: str = "Default"):
+                   user_layer: str = DEFAULT_USER_LAYER):
         """
         Import a DXF file as an underlay using a background thread.
 
@@ -1623,10 +1624,10 @@ class Model_Space(QGraphicsScene):
             return
 
         # Derive colour from user_layer if available, otherwise use params["color"]
-        ul = params.get("user_layer", "Default")
+        ul = params.get("user_layer", DEFAULT_USER_LAYER)
         color, lw = self._underlay_color_lw(ul)
         # Fall back to explicit color if the layer lookup returned default white
-        if params.get("color") and ul == "Default":
+        if params.get("color") and ul == DEFAULT_USER_LAYER:
             color = params["color"]
             lw = 1.5
         pen = QPen(color, lw)
@@ -1653,7 +1654,7 @@ class Model_Space(QGraphicsScene):
         for item in items:
             self.addItem(item)
         group = self.createItemGroup(items)
-        group.setZValue(-100)
+        group.setZValue(Z_BELOW_GEOMETRY)
         group.setPos(params["x"], params["y"])
         group.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
@@ -1694,12 +1695,12 @@ class Model_Space(QGraphicsScene):
         if kind == "line":
             item = QGraphicsLineItem(geom["x1"], geom["y1"], geom["x2"], geom["y2"])
             item.setPen(pen)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
 
         elif kind == "circle":
             item = QGraphicsEllipseItem(geom["x"], geom["y"], geom["w"], geom["h"])
             item.setPen(pen)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
 
         elif kind == "arc":
             path = QPainterPath()
@@ -1708,12 +1709,12 @@ class Model_Space(QGraphicsScene):
             path.arcTo(rect, geom["start"], geom["span"])
             item = QGraphicsPathItem(path)
             item.setPen(pen)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
 
         elif kind == "ellipse_full":
             item = QGraphicsEllipseItem(geom["x"], geom["y"], geom["w"], geom["h"])
             item.setPen(pen)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
             item.setPos(geom["pos_cx"], geom["pos_cy"])
             item.setRotation(geom["rotation"])
 
@@ -1729,7 +1730,7 @@ class Model_Space(QGraphicsScene):
                 path.closeSubpath()
             item = QGraphicsPathItem(path)
             item.setPen(pen)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
 
         elif kind == "text":
             item = QGraphicsTextItem(geom["text"])
@@ -1739,7 +1740,7 @@ class Model_Space(QGraphicsScene):
                 f = QFont()
                 f.setPointSizeF(geom["size"])
                 item.setFont(f)
-            item.setZValue(-100)
+            item.setZValue(Z_BELOW_GEOMETRY)
 
         else:
             return None
@@ -1832,7 +1833,7 @@ class Model_Space(QGraphicsScene):
             return
 
         item = QGraphicsPixmapItem(pixmap)
-        item.setZValue(-100)
+        item.setZValue(Z_BELOW_GEOMETRY)
         item.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
@@ -1965,8 +1966,8 @@ class Model_Space(QGraphicsScene):
                 "z_offset":       getattr(node, "z_offset", node.z_pos),
                 "sprinkler":      node.sprinkler.get_properties() if node.has_sprinkler() else None,
                 "user_layer":     getattr(node, "user_layer", "0"),
-                "level":          getattr(node, "level", "Level 1"),
-                "ceiling_level":  getattr(node, "ceiling_level", "Level 1"),
+                "level":          getattr(node, "level", DEFAULT_LEVEL),
+                "ceiling_level":  getattr(node, "ceiling_level", DEFAULT_LEVEL),
                 "ceiling_offset": getattr(node, "ceiling_offset", -2.0),
             }
             node_ovr = getattr(node, "_display_overrides", {})
@@ -1991,7 +1992,7 @@ class Model_Space(QGraphicsScene):
                 "node2_id":   node_id[pipe.node2],
                 "properties": {k: v["value"] for k, v in pipe.get_properties().items()},
                 "user_layer": getattr(pipe, "user_layer", "0"),
-                "level":     getattr(pipe, "level", "Level 1"),
+                "level":     getattr(pipe, "level", DEFAULT_LEVEL),
             }
             pipe_ovr = getattr(pipe, "_display_overrides", {})
             if pipe_ovr:
@@ -2006,8 +2007,8 @@ class Model_Space(QGraphicsScene):
                 "offset_dist": getattr(dim, "_offset_dist", 10),
                 "witness_ext_override": getattr(dim, "_witness_ext_override", None),
                 "properties": {k: v["value"] for k, v in dim.get_properties().items()},
-                "user_layer": getattr(dim, "user_layer", "Default"),
-                "level":     getattr(dim, "level", "Level 1"),
+                "user_layer": getattr(dim, "user_layer", DEFAULT_USER_LAYER),
+                "level":     getattr(dim, "level", DEFAULT_LEVEL),
             })
         for note in self.annotations.notes:
             annotations_data.append({
@@ -2016,8 +2017,8 @@ class Model_Space(QGraphicsScene):
                 "y":    note.scenePos().y(),
                 "text_width": note.textWidth(),
                 "properties": {k: v["value"] for k, v in note.get_properties().items()},
-                "user_layer": getattr(note, "user_layer", "Default"),
-                "level":     getattr(note, "level", "Level 1"),
+                "user_layer": getattr(note, "user_layer", DEFAULT_USER_LAYER),
+                "level":     getattr(note, "level", DEFAULT_LEVEL),
             })
         ws = self.water_supply_node
         ws_data = None
@@ -2125,7 +2126,7 @@ class Model_Space(QGraphicsScene):
                 node._fitting_display_overrides_pending = entry.get(
                     "fitting_display_overrides", {})
                 node.user_layer = entry.get("user_layer", "0")
-                node.level = entry.get("level", "Level 1")
+                node.level = entry.get("level", DEFAULT_LEVEL)
                 node.ceiling_level = entry.get("ceiling_level", node.level)
                 node.ceiling_offset = entry.get("ceiling_offset", -2.0)
                 node._properties["Level"]["value"] = node.level
@@ -2151,7 +2152,7 @@ class Model_Space(QGraphicsScene):
                     for key, value in entry.get("properties", {}).items():
                         pipe.set_property(key, value)
                     pipe.user_layer = entry.get("user_layer", "0")
-                    pipe.level = entry.get("level", "Level 1")
+                    pipe.level = entry.get("level", DEFAULT_LEVEL)
                     pipe._display_overrides = entry.get("display_overrides", {})
 
             for node in id_to_node.values():
@@ -2174,16 +2175,16 @@ class Model_Space(QGraphicsScene):
                     for key, value in entry.get("properties", {}).items():
                         dim.set_property(key, value)
                     dim.update_geometry()
-                    dim.user_layer = entry.get("user_layer", "Default")
-                    dim.level = entry.get("level", "Level 1")
+                    dim.user_layer = entry.get("user_layer", DEFAULT_USER_LAYER)
+                    dim.level = entry.get("level", DEFAULT_LEVEL)
                 elif ann_type == "note":
                     note = NoteAnnotation(x=entry["x"], y=entry["y"])
                     self.addItem(note)
                     self.annotations.add_note(note)
                     for key, value in entry.get("properties", {}).items():
                         note.set_property(key, value)
-                    note.user_layer = entry.get("user_layer", "Default")
-                    note.level = entry.get("level", "Level 1")
+                    note.user_layer = entry.get("user_layer", DEFAULT_USER_LAYER)
+                    note.level = entry.get("level", DEFAULT_LEVEL)
 
             # Restore water supply
             ws_data = state.get("water_supply")
@@ -2656,7 +2657,7 @@ class Model_Space(QGraphicsScene):
                 return ldef.color, lw_mm_to_cosmetic_px(ldef.lineweight)
         return "#ffffff", 2.0
 
-    def _underlay_color_lw(self, user_layer: str = "Default"):
+    def _underlay_color_lw(self, user_layer: str = DEFAULT_USER_LAYER):
         """Return (QColor, lineweight_px) derived from a user layer name."""
         if hasattr(self, "_user_layer_manager") and self._user_layer_manager:
             ldef = self._user_layer_manager.get(user_layer)
@@ -3291,7 +3292,7 @@ class Model_Space(QGraphicsScene):
             new_p2 = QPointF(p2.x() + signed_dist * nx, p2.y() + signed_dist * ny)
             item = LineItem(new_p1, new_p2, color, lw)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
-            item.level = getattr(source, "level", "Level 1")
+            item.level = getattr(source, "level", DEFAULT_LEVEL)
             return item
 
         if isinstance(source, PolylineItem):
@@ -3303,7 +3304,7 @@ class Model_Space(QGraphicsScene):
             for p in new_pts[1:]:
                 item.append_point(p)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
-            item.level = getattr(source, "level", "Level 1")
+            item.level = getattr(source, "level", DEFAULT_LEVEL)
             return item
 
         if isinstance(source, CircleItem):
@@ -3317,7 +3318,7 @@ class Model_Space(QGraphicsScene):
             cy = scene_rect.center().y()
             item = CircleItem(QPointF(cx, cy), new_r, color, lw)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
-            item.level = getattr(source, "level", "Level 1")
+            item.level = getattr(source, "level", DEFAULT_LEVEL)
             return item
 
         if isinstance(source, RectangleItem):
@@ -3327,7 +3328,7 @@ class Model_Space(QGraphicsScene):
                 return None
             item = RectangleItem(new_r.topLeft(), new_r.bottomRight(), color, lw)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
-            item.level = getattr(source, "level", "Level 1")
+            item.level = getattr(source, "level", DEFAULT_LEVEL)
             return item
 
         if isinstance(source, ArcItem):
@@ -3337,7 +3338,7 @@ class Model_Space(QGraphicsScene):
             item = ArcItem(source._center, new_r,
                            source._start_deg, source._span_deg, color, lw)
             item.user_layer = getattr(source, "user_layer", self.active_user_layer)
-            item.level = getattr(source, "level", "Level 1")
+            item.level = getattr(source, "level", DEFAULT_LEVEL)
             return item
         return None
 
@@ -5584,8 +5585,8 @@ class Model_Space(QGraphicsScene):
                     "x": item.pos().x(), "y": item.pos().y(),
                     "elevation": item.z_pos,
                     "z_offset": getattr(item, "z_offset", item.z_pos),
-                    "level": getattr(item, "level", "Level 1"),
-                    "user_layer": getattr(item, "user_layer", "Default"),
+                    "level": getattr(item, "level", DEFAULT_LEVEL),
+                    "user_layer": getattr(item, "user_layer", DEFAULT_USER_LAYER),
                     "sprinkler": sprinkler,
                     "pipes": pipes,
                 })
@@ -5933,7 +5934,7 @@ class Model_Space(QGraphicsScene):
                     pl.append_point(pt)
                 pl.finalize()
                 pl.user_layer = getattr(item, "user_layer", "0")
-                pl.level = getattr(item, "level", "Level 1")
+                pl.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(pl)
                 self._polylines.append(pl)
                 # Remove original rect
@@ -6000,7 +6001,7 @@ class Model_Space(QGraphicsScene):
                 ln = LineItem(p1, p2, color=item.pen().color().name(),
                               lineweight=item.pen().widthF())
                 ln.user_layer = getattr(item, "user_layer", "0")
-                ln.level = getattr(item, "level", "Level 1")
+                ln.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(ln)
                 self._draw_lines.append(ln)
                 new_items.append(ln)
@@ -6012,7 +6013,7 @@ class Model_Space(QGraphicsScene):
                     pl.append_point(pt)
                 pl.finalize()
                 pl.user_layer = getattr(item, "user_layer", "0")
-                pl.level = getattr(item, "level", "Level 1")
+                pl.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(pl)
                 self._polylines.append(pl)
                 new_items.append(pl)
@@ -6021,7 +6022,7 @@ class Model_Space(QGraphicsScene):
                 ci = CircleItem(c, item._radius, color=item.pen().color().name(),
                                 lineweight=item.pen().widthF())
                 ci.user_layer = getattr(item, "user_layer", "0")
-                ci.level = getattr(item, "level", "Level 1")
+                ci.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(ci)
                 self._draw_circles.append(ci)
                 new_items.append(ci)
@@ -6032,7 +6033,7 @@ class Model_Space(QGraphicsScene):
                 ri = RectangleItem(tl, br, color=item.pen().color().name(),
                                    lineweight=item.pen().widthF())
                 ri.user_layer = getattr(item, "user_layer", "0")
-                ri.level = getattr(item, "level", "Level 1")
+                ri.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(ri)
                 self._draw_rects.append(ri)
                 new_items.append(ri)
@@ -6043,7 +6044,7 @@ class Model_Space(QGraphicsScene):
                              -item._span_deg, color=item.pen().color().name(),
                              lineweight=item.pen().widthF())
                 ai.user_layer = getattr(item, "user_layer", "0")
-                ai.level = getattr(item, "level", "Level 1")
+                ai.level = getattr(item, "level", DEFAULT_LEVEL)
                 self.addItem(ai)
                 self._draw_arcs.append(ai)
                 new_items.append(ai)
@@ -6107,7 +6108,7 @@ class Model_Space(QGraphicsScene):
             pl.append_point(pt)
         pl.finalize()
         pl.user_layer = getattr(items[0], "user_layer", "0")
-        pl.level = getattr(items[0], "level", "Level 1")
+        pl.level = getattr(items[0], "level", DEFAULT_LEVEL)
         # Remove originals
         for item in items:
             if item.scene() is self:
@@ -6199,7 +6200,7 @@ class Model_Space(QGraphicsScene):
                           color=item.pen().color().name(),
                           lineweight=item.pen().widthF())
             arc.user_layer = getattr(item, "user_layer", "0")
-            arc.level = getattr(item, "level", "Level 1")
+            arc.level = getattr(item, "level", DEFAULT_LEVEL)
             if item.scene() is self:
                 self.removeItem(item)
             if item in self._draw_circles:
@@ -6233,7 +6234,7 @@ class Model_Space(QGraphicsScene):
                           color=item.pen().color().name(),
                           lineweight=item.pen().widthF())
             arc.user_layer = getattr(item, "user_layer", "0")
-            arc.level = getattr(item, "level", "Level 1")
+            arc.level = getattr(item, "level", DEFAULT_LEVEL)
             if item.scene() is self:
                 self.removeItem(item)
             if item in self._draw_circles:
@@ -6257,8 +6258,8 @@ class Model_Space(QGraphicsScene):
                          lineweight=item.pen().widthF())
             a1.user_layer = getattr(item, "user_layer", "0")
             a2.user_layer = getattr(item, "user_layer", "0")
-            a1.level = getattr(item, "level", "Level 1")
-            a2.level = getattr(item, "level", "Level 1")
+            a1.level = getattr(item, "level", DEFAULT_LEVEL)
+            a2.level = getattr(item, "level", DEFAULT_LEVEL)
             if item.scene() is self:
                 self.removeItem(item)
             if item in self._draw_arcs:
@@ -6326,7 +6327,7 @@ class Model_Space(QGraphicsScene):
                       color=data["item1"].pen().color().name(),
                       lineweight=data["item1"].pen().widthF())
         arc.user_layer = getattr(data["item1"], "user_layer", "0")
-        arc.level = getattr(data["item1"], "level", "Level 1")
+        arc.level = getattr(data["item1"], "level", DEFAULT_LEVEL)
         self.addItem(arc)
         self._draw_arcs.append(arc)
         # Trim lines to tangent points
@@ -6367,7 +6368,7 @@ class Model_Space(QGraphicsScene):
                       color=data["item1"].pen().color().name(),
                       lineweight=data["item1"].pen().widthF())
         ln.user_layer = getattr(data["item1"], "user_layer", "0")
-        ln.level = getattr(data["item1"], "level", "Level 1")
+        ln.level = getattr(data["item1"], "level", DEFAULT_LEVEL)
         self.addItem(ln)
         self._draw_lines.append(ln)
         setattr(data["item1"], data["near1"], QPointF(data["cp1"]))

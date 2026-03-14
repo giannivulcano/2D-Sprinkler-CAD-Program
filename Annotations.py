@@ -15,13 +15,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption, QPainterPath, QPainterPathStroker, QBrush
 from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 class Annotation:
     """Base class for CAD annotations."""
 
     def __init__(self):
         self._properties = {
-            "Layer": {"type": "enum", "options": ["Default", "Notes", "Dimensions"], "value": "Default"},
+            "Layer": {"type": "enum", "options": [DEFAULT_USER_LAYER, "Notes", "Dimensions"], "value": DEFAULT_USER_LAYER},
             "Color": {"type": "enum", "options": ["Black", "Red", "Blue"], "value": "Black"},
         }
         self.dimensions = [] #list of dimensions
@@ -59,15 +60,15 @@ class NoteAnnotation(QGraphicsTextItem, Annotation):
         self.setPos(x, y)
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(self.GraphicsItemFlag.ItemIsMovable, True)
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         # Enable word wrap if width was specified
         if text_width > 0:
             self.setTextWidth(text_width)
 
         self._properties.update({
-            "Layer":     {"type": "label", "value": "Default"},
+            "Layer":     {"type": "label", "value": DEFAULT_USER_LAYER},
             "Text":      {"type": "string", "value": text},
             "Color":     {"type": "enum",
                           "options": ["White", "Black", "Red", "Blue"],
@@ -147,12 +148,12 @@ class DimensionAnnotation(QGraphicsLineItem, Annotation):
     def __init__(self, p1: QPointF, p2: QPointF):
         super().__init__(p1.x(), p1.y(), p2.x(), p2.y())
 
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
         # Properties
         self._properties = {
-            "Layer": {"type": "label", "value": "Default"},
+            "Layer": {"type": "label", "value": DEFAULT_USER_LAYER},
             "Text Size": {"type": "string", "value": "10"},
             "Colour": {"type": "enum", "options": ["Black", "Red", "Blue", "White"], "value": "White"},
             "Line Weight": {"type": "enum", "options": ["2", "4", "6"], "value": "2"},
@@ -492,8 +493,8 @@ class HatchItem(QGraphicsPathItem):
         self.setZValue(0)  # sits between geometry and annotations
         self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(self.GraphicsItemFlag.ItemIsMovable, False)
-        self.user_layer: str = "Default"
-        self.level: str = "Level 1"
+        self.user_layer: str = DEFAULT_USER_LAYER
+        self.level: str = DEFAULT_LEVEL
 
     # ── Public properties ────────────────────────────────────────────────────
 
@@ -620,8 +621,8 @@ class HatchItem(QGraphicsPathItem):
             spacing=data.get("spacing", 8.0),
             colour=data.get("colour", "#888888"),
         )
-        obj.user_layer = data.get("user_layer", "Default")
-        obj.level = data.get("level", "Level 1")
+        obj.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
+        obj.level = data.get("level", DEFAULT_LEVEL)
         return obj
 
     @staticmethod

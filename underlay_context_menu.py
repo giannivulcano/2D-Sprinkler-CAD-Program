@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QAction, QPen, QColor
 from underlay import Underlay
+from constants import DEFAULT_USER_LAYER
 
 
 class UnderlayContextMenu:
@@ -145,7 +146,7 @@ class UnderlayContextMenu:
     def _change_layer(scene, data: Underlay, item: QGraphicsItem):
         """Let the user pick a new layer for this underlay."""
         # Gather layer names from UserLayerManager
-        layer_names = ["Default"]
+        layer_names = [DEFAULT_USER_LAYER]
         if hasattr(scene, "_user_layer_manager") and scene._user_layer_manager:
             layer_names = [lyr.name for lyr in scene._user_layer_manager.layers]
 

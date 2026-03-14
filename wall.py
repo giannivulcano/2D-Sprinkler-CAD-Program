@@ -22,6 +22,7 @@ from PyQt6.QtGui import (
 if TYPE_CHECKING:
     from wall_opening import WallOpening
 
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -117,8 +118,8 @@ class WallSegment(QGraphicsPathItem):
         self._fill_mode: str = FILL_NONE
 
         # Level / height
-        self.level: str = "Level 1"               # also the base level
-        self._base_level: str = "Level 1"
+        self.level: str = DEFAULT_LEVEL               # also the base level
+        self._base_level: str = DEFAULT_LEVEL
         self._top_level: str = "Level 2"
         self._height_ft: float = 10.0              # fallback when top_level is "Custom"
         self._base_offset_ft: float = 0.0          # offset from base level elevation
@@ -136,7 +137,7 @@ class WallSegment(QGraphicsPathItem):
         self._display_overrides: dict = {}
 
         # Cosmetic / user layer
-        self.user_layer: str = "Default"
+        self.user_layer: str = DEFAULT_USER_LAYER
         self.name: str = ""
 
         self.setZValue(-50)                         # behind pipes, above underlays
@@ -450,13 +451,13 @@ class WallSegment(QGraphicsPathItem):
                    color=data.get("color", "#cccccc"))
         wall._fill_mode = data.get("fill_mode", FILL_NONE)
         wall._alignment = data.get("alignment", ALIGN_CENTER)
-        wall._base_level = data.get("base_level", "Level 1")
+        wall._base_level = data.get("base_level", DEFAULT_LEVEL)
         wall._top_level = data.get("top_level", "Level 2")
         wall._height_ft = data.get("height_ft", 10.0)
         wall._base_offset_ft = data.get("base_offset_ft", 0.0)
         wall._top_offset_ft = data.get("top_offset_ft", 0.0)
-        wall.level = data.get("level", "Level 1")
-        wall.user_layer = data.get("user_layer", "Default")
+        wall.level = data.get("level", DEFAULT_LEVEL)
+        wall.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
         wall.name = data.get("name", "")
         # Openings restored by caller after wall_opening module is available
         return wall

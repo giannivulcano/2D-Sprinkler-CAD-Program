@@ -198,20 +198,19 @@ _COL_FONT    = 6
 _COL_RESET   = 7
 
 
+_CATEGORY_MAP: dict[str, dict] = {c["key"]: c for c in _CATEGORIES}
+
+
 def _category_has_fill(key: str) -> bool:
     """Return True if this category supports a fill colour column."""
-    for c in _CATEGORIES:
-        if c["key"] == key:
-            return c["fill"] is not None
-    return False
+    c = _CATEGORY_MAP.get(key)
+    return c is not None and c["fill"] is not None
 
 
 def _category_has_font(key: str) -> bool:
     """Return True if this category supports a font size column."""
-    for c in _CATEGORIES:
-        if c["key"] == key:
-            return c["font"] is not None
-    return False
+    c = _CATEGORY_MAP.get(key)
+    return c is not None and c["font"] is not None
 
 
 # ──────────────────────────────────────────────────────────────────────────────

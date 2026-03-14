@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
 from PyQt6.QtGui import QBrush, QPen, QColor, QPainterPath
 from fitting import Fitting
 from sprinkler import Sprinkler
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 class Node(QGraphicsEllipseItem):
     RADIUS = 13
@@ -33,17 +34,17 @@ class Node(QGraphicsEllipseItem):
         self.sprinkler = None
         self.fitting = Fitting(self)
         self.pipes = []
-        self.user_layer: str = "Default"   # user-defined layer name
-        self.level: str = "Level 1"          # floor level (visibility)
-        self.ceiling_level: str = "Level 1"  # ceiling level (3D elevation)
+        self.user_layer: str = DEFAULT_USER_LAYER   # user-defined layer name
+        self.level: str = DEFAULT_LEVEL          # floor level (visibility)
+        self.ceiling_level: str = DEFAULT_LEVEL  # ceiling level (3D elevation)
         self.ceiling_offset: float = -2.0    # inches below ceiling (default -2")
         self._hydraulic_badge = None         # HydraulicNodeBadge child (transient)
         self._display_overrides: dict = {}  # per-instance display overrides
 
         # Property panel support — shown for plain (non-sprinkler) nodes
         self._properties: dict = {
-            "Level":          {"type": "level_ref", "value": "Level 1"},
-            "Ceiling Level":  {"type": "level_ref", "value": "Level 1"},
+            "Level":          {"type": "level_ref", "value": DEFAULT_LEVEL},
+            "Ceiling Level":  {"type": "level_ref", "value": DEFAULT_LEVEL},
             "Ceiling Offset (in)": {"type": "string", "value": "-2"},
         }
 

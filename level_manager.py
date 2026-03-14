@@ -33,6 +33,7 @@ import theme as th
 
 FADE_OPACITY = 0.25  # opacity for faded levels
 
+from constants import DEFAULT_LEVEL
 # Display mode options (stored in Level.display_mode)
 DISPLAY_MODES = ["Auto", "Hidden", "Faded", "Visible"]
 
@@ -67,7 +68,7 @@ class Level:
 
 # Defaults shipped with every new document
 DEFAULT_LEVELS: list[Level] = [
-    Level("Level 1", elevation=0.0),
+    Level(DEFAULT_LEVEL, elevation=0.0),
     Level("Level 2", elevation=10.0),
     Level("Level 3", elevation=20.0),
 ]
@@ -84,7 +85,7 @@ class LevelManager:
         self._levels: list[Level] = [
             Level(**vars(l)) for l in DEFAULT_LEVELS
         ]
-        self._active: str = "Level 1"
+        self._active: str = DEFAULT_LEVEL
 
     # ── Level list API ────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ class LevelManager:
     def reset(self):
         """Reset to default levels (used on new file)."""
         self._levels = [Level(**vars(l)) for l in DEFAULT_LEVELS]
-        self._active = "Level 1"
+        self._active = DEFAULT_LEVEL
 
     # ── Elevation helpers ───────────────────────────────────────────────────
 
@@ -169,7 +170,7 @@ class LevelManager:
         lvl_map = {l.name: l for l in self._levels}
         for node in scene.sprinkler_system.nodes:
             # 3D elevation = ceiling level elevation + ceiling offset (inches → feet)
-            ceil_lvl = lvl_map.get(getattr(node, "ceiling_level", "Level 1"))
+            ceil_lvl = lvl_map.get(getattr(node, "ceiling_level", DEFAULT_LEVEL))
             ceil_elev = ceil_lvl.elevation if ceil_lvl else 0.0
             ceil_off_ft = getattr(node, "ceiling_offset", -2.0) / 12.0
             node.z_pos = ceil_elev + ceil_off_ft
@@ -184,7 +185,7 @@ class LevelManager:
         lvl_map = {l.name: l for l in self._levels}
 
         def _set_level_vis(item):
-            lvl_name = getattr(item, "level", "Level 1")
+            lvl_name = getattr(item, "level", DEFAULT_LEVEL)
             lvl_def = lvl_map.get(lvl_name)
             mode = lvl_def.display_mode if lvl_def else "Auto"
 
@@ -300,7 +301,7 @@ class LevelManager:
         def _fix(item):
             if not item.isVisible():
                 return
-            if getattr(item, "level", "Level 1") in faded_levels:
+            if getattr(item, "level", DEFAULT_LEVEL) in faded_levels:
                 item.setOpacity(FADE_OPACITY)
 
         for node in scene.sprinkler_system.nodes:
