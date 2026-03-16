@@ -21,9 +21,11 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QMessageBox,
     QAbstractItemView, QLabel, QGraphicsItem, QComboBox, QMenu,
+    QStyledItemDelegate,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+from dimension_edit import DimensionEdit
 import theme as th
 
 
@@ -353,6 +355,39 @@ _COL_DISPLAY = 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Elevation cell delegate (DimensionEdit editor)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _ElevationDelegate(QStyledItemDelegate):
+    """Provides a DimensionEdit widget when editing elevation cells."""
+
+    def __init__(self, get_scale_manager, parent=None):
+        super().__init__(parent)
+        self._get_sm = get_scale_manager  # callable → ScaleManager | None
+
+    def createEditor(self, parent, option, index):
+        sm = self._get_sm()
+        editor = DimensionEdit(sm, initial_mm=0.0, parent=parent)
+        return editor
+
+    def setEditorData(self, editor, index):
+        # Read elevation stored in Qt.ItemDataRole.UserRole
+        val = index.data(Qt.ItemDataRole.UserRole)
+        if val is not None:
+            editor.set_value_mm(float(val))
+
+    def setModelData(self, editor, model, index):
+        mm = editor.value_mm()
+        model.setData(index, mm, Qt.ItemDataRole.UserRole)
+        # Format for display
+        sm = self._get_sm()
+        if sm:
+            model.setData(index, sm.format_length(mm), Qt.ItemDataRole.DisplayRole)
+        else:
+            model.setData(index, f"{mm:.1f} mm", Qt.ItemDataRole.DisplayRole)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Widget
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -403,6 +438,21 @@ class LevelWidget(QWidget):
         )
         layout.addWidget(hdr)
 
+        # Active level dropdown
+        active_row = QHBoxLayout()
+        active_row.setContentsMargins(0, 0, 0, 0)
+        active_lbl = QLabel("Active Level:")
+        active_lbl.setStyleSheet(f"color: {_t.text_primary}; font-size: 11px;")
+        active_row.addWidget(active_lbl)
+        self._active_combo = QComboBox()
+        self._active_combo.setStyleSheet(
+            f"QComboBox {{ background: {_t.bg_raised}; color: {_t.text_primary}; "
+            f"border: 1px solid {_t.border_subtle}; border-radius: 2px; }}"
+        )
+        self._active_combo.currentIndexChanged.connect(self._on_active_combo_changed)
+        active_row.addWidget(self._active_combo, stretch=1)
+        layout.addLayout(active_row)
+
         # Toolbar row
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -413,18 +463,18 @@ class LevelWidget(QWidget):
             f"border-radius: 2px; font-weight: bold; }}"
             f"QPushButton:hover {{ background: {_t.btn_hover}; }}"
         )
-        add_btn = QPushButton("+")
-        add_btn.setFixedSize(24, 24)
+        add_btn = QPushButton("+ Add")
+        add_btn.setFixedHeight(24)
         add_btn.setToolTip("Add new level")
         add_btn.setStyleSheet(_btn_ss)
         add_btn.clicked.connect(self._add_level)
-        del_btn = QPushButton("-")
-        del_btn.setFixedSize(24, 24)
+        del_btn = QPushButton("− Delete")
+        del_btn.setFixedHeight(24)
         del_btn.setToolTip("Delete selected level")
         del_btn.setStyleSheet(_btn_ss)
         del_btn.clicked.connect(self._delete_level)
-        dup_btn = QPushButton("\u29C9")
-        dup_btn.setFixedSize(24, 24)
+        dup_btn = QPushButton("⧉ Duplicate")
+        dup_btn.setFixedHeight(24)
         dup_btn.setToolTip("Duplicate level (copy all entities to new level)")
         dup_btn.setStyleSheet(_btn_ss)
         dup_btn.clicked.connect(self._duplicate_level)
@@ -466,7 +516,14 @@ class LevelWidget(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.itemChanged.connect(self._on_item_changed)
-        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        # Note: active level is now controlled by the dropdown combo above,
+        # not by table row selection.
+        # DimensionEdit delegate for elevation column
+        self._elev_delegate = _ElevationDelegate(
+            lambda: getattr(self.scene, "scale_manager", None) if self.scene else None,
+            parent=self.table,
+        )
+        self.table.setItemDelegateForColumn(_COL_ELEV, self._elev_delegate)
         layout.addWidget(self.table)
 
         # Assign button
@@ -480,11 +537,24 @@ class LevelWidget(QWidget):
     # ── Populate ──────────────────────────────────────────────────────────────
 
     def populate(self):
-        """Rebuild the table from manager.levels."""
+        """Rebuild the table and active-level combo from manager.levels."""
         self._building = True
         self.table.setRowCount(0)
         for lvl in self.manager.levels:
             self._append_row(lvl)
+        # Refresh active-level combo
+        self._active_combo.blockSignals(True)
+        self._active_combo.clear()
+        active = self.manager.active_level
+        active_idx = 0
+        for i, lvl in enumerate(self.manager.levels):
+            self._active_combo.addItem(
+                f"{lvl.name}  ({self._fmt_elev(lvl.elevation)})", lvl.name
+            )
+            if lvl.name == active:
+                active_idx = i
+        self._active_combo.setCurrentIndex(active_idx)
+        self._active_combo.blockSignals(False)
         self._building = False
         self._highlight_active()
 
@@ -499,12 +569,14 @@ class LevelWidget(QWidget):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        # Name
+        # Name (store canonical name in UserRole for reliable lookup)
         name_it = QTableWidgetItem(lvl.name)
+        name_it.setData(Qt.ItemDataRole.UserRole, lvl.name)
         self.table.setItem(row, _COL_NAME, name_it)
 
-        # Elevation
+        # Elevation (store mm value in UserRole for the delegate)
         elev_it = QTableWidgetItem(self._fmt_elev(lvl.elevation))
+        elev_it.setData(Qt.ItemDataRole.UserRole, lvl.elevation)
         self.table.setItem(row, _COL_ELEV, elev_it)
 
         # Display mode combo
@@ -563,6 +635,7 @@ class LevelWidget(QWidget):
 
         if col == _COL_NAME:
             new_name = item.text().strip()
+            print(f"[LEVEL] name edit: lvl.name={lvl.name!r}, new_name={new_name!r}")
             if new_name and new_name != lvl.name:
                 ok = self.manager.rename_level(
                     lvl.name, new_name, self._all_scene_items()
@@ -572,35 +645,47 @@ class LevelWidget(QWidget):
                     item.setText(lvl.name)
                     self._building = False
                 else:
+                    # Update canonical name in UserRole to match new name
+                    item.setData(Qt.ItemDataRole.UserRole, new_name)
                     self._highlight_active()
+                    self._refresh_active_combo()
                     self.levelsChanged.emit()
                     if self.manager.active_level == new_name:
                         self.activeLevelChanged.emit(new_name)
 
         elif col == _COL_ELEV:
-            # Try to parse dimension text (e.g. "10' 0\"", "3048mm", or bare number)
-            sm = getattr(self.scene, "scale_manager", None) if self.scene else None
-            text = item.text().strip()
-            parsed_mm = None
-            if sm:
-                from scale_manager import ScaleManager
-                fallback = sm.bare_number_unit()
-                parsed_mm = ScaleManager.parse_dimension(text, fallback)
-            if parsed_mm is not None:
-                new_elev = parsed_mm  # already mm
-            else:
-                # Fallback: try plain float (legacy behaviour, assumes mm)
+            # Check if the DimensionEdit delegate set the value via UserRole
+            user_val = item.data(Qt.ItemDataRole.UserRole)
+            if user_val is not None:
                 try:
-                    new_elev = float(text)
+                    new_elev = float(user_val)
                 except (ValueError, TypeError):
-                    self._building = True
-                    item.setText(self._fmt_elev(lvl.elevation))
-                    self._building = False
                     return
+            else:
+                # Fallback: parse dimension text (manual edit without delegate)
+                sm = getattr(self.scene, "scale_manager", None) if self.scene else None
+                text = item.text().strip()
+                parsed_mm = None
+                if sm:
+                    from scale_manager import ScaleManager
+                    fallback = sm.bare_number_unit()
+                    parsed_mm = ScaleManager.parse_dimension(text, fallback)
+                if parsed_mm is not None:
+                    new_elev = parsed_mm
+                else:
+                    try:
+                        new_elev = float(text)
+                    except (ValueError, TypeError):
+                        self._building = True
+                        item.setText(self._fmt_elev(lvl.elevation))
+                        self._building = False
+                        return
+            print(f"[LEVEL] setting {lvl.name} elevation: {lvl.elevation} -> {new_elev}")
             lvl.elevation = new_elev
             # Reformat the cell to the canonical display
             self._building = True
             item.setText(self._fmt_elev(new_elev))
+            item.setData(Qt.ItemDataRole.UserRole, new_elev)
             self._building = False
             if self.scene:
                 self.manager.update_elevations(self.scene)
@@ -617,14 +702,33 @@ class LevelWidget(QWidget):
         self.levelsChanged.emit()
 
     def _on_selection_changed(self):
-        rows = self.table.selectedItems()
-        if not rows:
+        """Legacy table selection handler — no longer sets active level."""
+        pass
+
+    def _on_active_combo_changed(self, idx: int):
+        """Handle active-level dropdown selection."""
+        if self._building or idx < 0:
             return
-        lvl = self._level_at_row(rows[0].row())
-        if lvl:
-            self.manager.active_level = lvl.name
+        name = self._active_combo.itemData(idx)
+        if name and name != self.manager.active_level:
+            self.manager.active_level = name
             self._highlight_active()
-            self.activeLevelChanged.emit(lvl.name)
+            self.activeLevelChanged.emit(name)
+
+    def _refresh_active_combo(self):
+        """Rebuild the active-level combo after add/delete/rename."""
+        self._active_combo.blockSignals(True)
+        self._active_combo.clear()
+        active = self.manager.active_level
+        active_idx = 0
+        for i, lvl in enumerate(self.manager.levels):
+            self._active_combo.addItem(
+                f"{lvl.name}  ({self._fmt_elev(lvl.elevation)})", lvl.name
+            )
+            if lvl.name == active:
+                active_idx = i
+        self._active_combo.setCurrentIndex(active_idx)
+        self._active_combo.blockSignals(False)
 
     # ── Buttons ───────────────────────────────────────────────────────────────
 
@@ -633,6 +737,7 @@ class LevelWidget(QWidget):
         self._building = True
         self._append_row(lvl)
         self._building = False
+        self._refresh_active_combo()
         self.levelsChanged.emit()
 
     def _delete_level(self):
@@ -711,6 +816,14 @@ class LevelWidget(QWidget):
         it = self.table.item(row, _COL_NAME)
         if it is None:
             return None
+        # Use UserRole (canonical name) for reliable lookup — display text
+        # may already reflect an in-progress edit that hasn't been committed.
+        canonical = it.data(Qt.ItemDataRole.UserRole)
+        if canonical:
+            lvl = self.manager.get(canonical)
+            if lvl is not None:
+                return lvl
+        # Fallback to display text
         return self.manager.get(it.text())
 
     def _all_scene_items(self) -> list:

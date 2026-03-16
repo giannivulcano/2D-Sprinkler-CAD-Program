@@ -36,6 +36,7 @@ class ModelBrowser(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._scene = None
+        self._syncing = False  # guard against selection-change recursion
 
         _t = th.detect()
 
@@ -91,6 +92,39 @@ class ModelBrowser(QWidget):
         if scene is not None and hasattr(scene, "sceneModified"):
             scene.sceneModified.connect(self.schedule_refresh)
         self.refresh()
+
+    def sync_from_scene(self):
+        """Highlight tree items matching the current scene selection.
+
+        Called when selection changes in the 2D scene or 3D view so the
+        model browser stays in sync.
+        """
+        if self._syncing or self._scene is None:
+            return
+        self._syncing = True
+        try:
+            selected = self._scene.selectedItems()
+            sel_ids = {id(item) for item in selected}
+
+            self._tree.blockSignals(True)
+            self._tree.clearSelection()
+
+            # Walk tree and select matching items
+            def _walk(parent_item):
+                for i in range(parent_item.childCount()):
+                    child = parent_item.child(i)
+                    entity_id = child.data(0, _ROLE_ENTITY)
+                    if entity_id is not None and entity_id in sel_ids:
+                        child.setSelected(True)
+                    _walk(child)
+
+            root = self._tree.invisibleRootItem()
+            _walk(root)
+            self._tree.blockSignals(False)
+        except RuntimeError:
+            pass  # scene C++ object deleted during shutdown
+        finally:
+            self._syncing = False
 
     def schedule_refresh(self):
         """Schedule a debounced refresh."""
@@ -271,6 +305,8 @@ class ModelBrowser(QWidget):
     def _on_selection_changed(self):
         """Handle tree selection changes — supports multi-select via
         Ctrl+click and Shift+click."""
+        if self._syncing:
+            return
         selected_items = self._tree.selectedItems()
         entities = []
         for tree_item in selected_items:

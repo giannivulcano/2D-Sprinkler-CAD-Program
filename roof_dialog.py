@@ -132,12 +132,17 @@ class RoofDialog(QDialog):
     """Modal dialog for setting roof parameters."""
 
     def __init__(self, parent=None, *, defaults: dict | None = None,
-                 levels: list | None = None, scale_manager=None):
+                 levels: list | None = None, scale_manager=None,
+                 level_manager=None):
         super().__init__(parent)
         self.setWindowTitle("Roof Properties")
         self.setMinimumWidth(580)
         self._defaults = defaults or {}
-        self._levels = levels or []
+        self._level_manager = level_manager
+        if self._level_manager is not None:
+            self._levels = self._level_manager.levels
+        else:
+            self._levels = levels or []
         self._sm = scale_manager
         self._build_ui()
 

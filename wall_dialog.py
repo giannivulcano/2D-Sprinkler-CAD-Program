@@ -35,12 +35,18 @@ class WallDialog(QDialog):
     """
 
     def __init__(self, parent=None, *, defaults: dict | None = None,
-                 levels: list | None = None, scale_manager=None):
+                 levels: list | None = None, scale_manager=None,
+                 level_manager=None):
         super().__init__(parent)
         self.setWindowTitle("Wall Properties")
         self.setMinimumWidth(380)
         self._defaults = defaults or {}
-        self._levels = levels or []
+        self._level_manager = level_manager
+        # Support both new level_manager and legacy levels list
+        if self._level_manager is not None:
+            self._levels = self._level_manager.levels
+        else:
+            self._levels = levels or []
         self._sm = scale_manager
         self._build_ui()
 

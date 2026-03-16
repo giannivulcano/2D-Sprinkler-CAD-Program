@@ -13,7 +13,9 @@ Property types recognised from ``get_properties()`` dict:
     combo      — alias for enum
     color      — colour swatch + QColorDialog picker
     level_ref  — QComboBox populated from LevelManager
+    layer_ref  — QComboBox populated from UserLayerManager
     button     — QPushButton that calls meta["callback"] when clicked
+    dimension  — DimensionEdit for mm-based values (requires value_mm in meta)
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from node import Node
 from pipe import Pipe
 from sprinkler import Sprinkler
 from sprinkler_db import SprinklerDatabase
+from dimension_edit import DimensionEdit
 import theme as th
 
 # Lazy-loaded singleton sprinkler database
@@ -108,7 +111,13 @@ class PropertyManager(QWidget):
     def show_properties(self, item):
         """Display properties for *item* (single entity, list, or None)."""
         self._refreshing = True
+        try:
+            self._show_properties_inner(item)
+        finally:
+            self._refreshing = False
 
+    def _show_properties_inner(self, item):
+        """Internal: build the property form (called inside _refreshing guard)."""
         # Clear existing rows
         for i in reversed(range(self._form.count())):
             w = self._form.itemAt(i).widget()
@@ -210,6 +219,17 @@ class PropertyManager(QWidget):
                 )
                 widget = combo
 
+            # ── dimension (DimensionEdit for mm values) ─────────────────
+            elif prop_type == "dimension":
+                sm = self._get_scale_manager()
+                val_mm = meta.get("value_mm", 0.0)
+                dim_edit = DimensionEdit(sm, initial_mm=float(val_mm))
+                dim_edit.editingFinished.connect(
+                    lambda k=key, de=dim_edit: self._apply_property(
+                        k, de.value_mm())
+                )
+                widget = dim_edit
+
             # ── enum (fixed option list) ──────────────────────────────────
             elif prop_type == "enum":
                 widget = QComboBox()
@@ -298,8 +318,6 @@ class PropertyManager(QWidget):
             )
             self._form.addRow(QLabel("Absolute Elev."), abs_field)
 
-        self._refreshing = False
-
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _on_button_callback(self, callback):
@@ -334,6 +352,14 @@ class PropertyManager(QWidget):
         # Auto-refresh so dependent fields (e.g. elevation) update immediately
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()
+
+    def _get_scale_manager(self):
+        """Return the ScaleManager from the first target's scene, or None."""
+        for t in self._targets:
+            sc = t.scene() if callable(getattr(t, "scene", None)) else None
+            if sc is not None and hasattr(sc, "scale_manager"):
+                return sc.scale_manager
+        return None
 
     def _do_refresh(self):
         """Re-display properties for the current targets."""

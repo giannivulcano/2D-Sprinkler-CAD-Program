@@ -203,6 +203,7 @@ class FloorSlab(QGraphicsPathItem):
         return {
             "Type":       {"type": "label",  "value": "Floor Slab"},
             "Name":       {"type": "string", "value": self.name},
+            "Level":      {"type": "level_ref", "value": self.level},
             "Colour":     {"type": "color",  "value": self._color.name()},
             "Thickness":  {"type": "string", "value": self._fmt(self._thickness_mm)},
             "Points":     {"type": "label",  "value": str(len(self._points))},
@@ -211,6 +212,8 @@ class FloorSlab(QGraphicsPathItem):
     def set_property(self, key: str, value):
         if key == "Name":
             self.name = str(value)
+        elif key == "Level":
+            self.level = str(value)
         elif key == "Colour":
             self._color = QColor(value)
             self.update()

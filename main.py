@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QPushButton, QSpinBox, QDialogButtonBox, QLineEdit,
                               QTabWidget, QMenu, QWidget, QMessageBox,
                               QComboBox, QDoubleSpinBox, QFormLayout,
-                              QProgressBar, QToolButton)
+                              QProgressBar, QToolButton, QProgressDialog)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut, QFont
 from PyQt6.QtCore import Qt, QSettings, QSize, QPointF, QTimer
 from PyQt6.QtWidgets import QGraphicsTextItem
@@ -19,6 +19,7 @@ from property_manager import PropertyManager
 from scale_manager import DisplayUnit
 from layer_manager import LayerManager
 from hydraulic_report import HydraulicReportWidget
+from thermal_radiation_report import ThermalRadiationReportWidget
 from user_layer_manager import UserLayerManager, UserLayerWidget
 from level_manager import LevelManager, LevelWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         self.level_widget.levelsChanged.connect(
             lambda: self.level_mgr.apply_to_scene(self.scene)
         )
+        self.level_widget.levelsChanged.connect(self.update_property_manager)
         # (Level combo removed from ribbon — levels managed via Levels tab)
         self.level_widget.duplicateLevel.connect(self.scene.duplicate_level_entities)
 
@@ -250,6 +252,7 @@ class MainWindow(QMainWindow):
         self.model_browser = ModelBrowser()
         self.model_browser.set_scene(self.scene)
         self.model_browser.entitySelected.connect(self.prop_manager.show_properties)
+        self.scene.selectionChanged.connect(self.model_browser.sync_from_scene)
 
         self._left_tabs = QTabWidget()
         self._left_tabs.setTabPosition(QTabWidget.TabPosition.West)
@@ -296,6 +299,25 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.hydro_dock)
         self.hydro_dock.hide()   # hidden until the user runs hydraulics
 
+        # Thermal Radiation report dock
+        self.radiation_report = ThermalRadiationReportWidget()
+        self.radiation_dock = QDockWidget("Thermal Radiation Report", self)
+        self.radiation_dock.setObjectName("RadiationDock")
+        self.radiation_dock.setWidget(self.radiation_report)
+        self.radiation_dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea |
+            Qt.DockWidgetArea.TopDockWidgetArea |
+            Qt.DockWidgetArea.RightDockWidgetArea |
+            Qt.DockWidgetArea.LeftDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.radiation_dock)
+        self.radiation_dock.hide()
+
+        # Radiation selection state
+        self._radiation_step = 0
+        self._radiation_emitters = None
+        self._radiation_receivers = None
+
         # Status bar with cursor coordinates
         status_bar = self.statusBar()
         self.coord_label = QLabel("X: —   Y: —")
@@ -319,6 +341,8 @@ class MainWindow(QMainWindow):
         self.scene.modeChanged.connect(self._sync_mode_buttons)
         self.scene.modeChanged.connect(self._on_mode_changed_template)
         self.scene.sceneModified.connect(self._on_scene_modified)
+        self.scene.radiationConfirm.connect(self._radiation_on_confirm)
+        self.scene.radiationCancel.connect(self._radiation_on_cancel)
         self.scene.instructionChanged.connect(
             lambda text: self.mode_label.setText(text)
         )
@@ -580,11 +604,18 @@ class MainWindow(QMainWindow):
         self.browser_dock.visibilityChanged.connect(browser_btn.setChecked)
 
         report_btn = g_pan.add_small_button(
-            "Report Panel", _I("report_icon.svg"), None, checkable=True)
+            "Hydraulic\nReport", _I("report_icon.svg"), None, checkable=True)
         report_btn.setToolTip("Toggle Hydraulic Report panel")
         report_btn.toggled.connect(
             lambda on: self.hydro_dock.show() if on else self.hydro_dock.hide())
         self.hydro_dock.visibilityChanged.connect(report_btn.setChecked)
+
+        rad_report_btn = g_pan.add_small_button(
+            "Radiation\nReport", _I("report_icon.svg"), None, checkable=True)
+        rad_report_btn.setToolTip("Toggle Thermal Radiation Report panel")
+        rad_report_btn.toggled.connect(
+            lambda on: self.radiation_dock.show() if on else self.radiation_dock.hide())
+        self.radiation_dock.visibilityChanged.connect(rad_report_btn.setChecked)
 
     def _init_draw_tab(self, _I, _mode_btn):
         """Build Tab 2: Draw — geometry tools, style, snap, annotations."""
@@ -679,7 +710,15 @@ class MainWindow(QMainWindow):
             lambda: self.scene.set_mode("wall"),
             checkable=True)
         _wall_btn.setToolTip("Draw a wall segment")
+        _wall_menu = QMenu(_wall_btn)
+        _wall_poly_act = _wall_menu.addAction("Wall (Polyline)")
+        _wall_rect_act = _wall_menu.addAction("Wall (Rectangle)")
+        _wall_poly_act.triggered.connect(lambda: self.scene.set_mode("wall"))
+        _wall_rect_act.triggered.connect(lambda: self.scene.set_mode("wall_rect"))
+        _wall_btn.setMenu(_wall_menu)
+        _wall_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["wall"] = _wall_btn
+        self._mode_buttons["wall_rect"] = _wall_btn
         _floor_btn = g_3d.add_large_button(
             "Floor", _I("placeholder_icon.svg"),
             lambda: self.scene.set_mode("floor"),
@@ -945,6 +984,20 @@ class MainWindow(QMainWindow):
             "Clear\nResults", _I("clear_icon.svg"),
             self.clear_hydraulics)
         _btn.setToolTip("Clear hydraulic overlay and results")
+
+        # --- Thermal Radiation ---
+        g_rad = analyze_page.add_group("Thermal Radiation")
+        _rad_btn = g_rad.add_large_button(
+            "Run\nRadiation", _I("placeholder_icon.svg"),
+            lambda: self._radiation_step1_start(), shortcut="F6",
+            checkable=True)
+        _rad_btn.setToolTip("Run thermal radiation analysis [F6]")
+        self._mode_buttons["radiation_emitter"] = _rad_btn
+        self._mode_buttons["radiation_receiver"] = _rad_btn
+        _btn = g_rad.add_large_button(
+            "Clear\nRadiation", _I("clear_icon.svg"),
+            self._clear_radiation)
+        _btn.setToolTip("Clear radiation overlay and results")
 
         # --- Export ---
         g_exp = analyze_page.add_group("Export")
@@ -1284,7 +1337,7 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed_template(self, mode: str):
         """Show pre-placement template properties when entering wall/floor/geometry mode."""
-        if mode == "wall":
+        if mode in ("wall", "wall_rect"):
             template = self.scene._get_wall_template()
             template._alignment = self.scene._wall_alignment
             self.prop_manager.show_properties(template)
@@ -1328,6 +1381,8 @@ class MainWindow(QMainWindow):
         "design_area":    "Click two corners to define design area",
         "water_supply":   "Click to place water supply",
         "paste":          "Click to place pasted items",
+        "radiation_emitter":  "Select EMITTING surfaces (walls / roofs), then press Enter",
+        "radiation_receiver": "Select RECEIVING surfaces, then press Enter",
     }
 
     def _update_mode_label(self, mode: str):
@@ -1803,6 +1858,167 @@ class MainWindow(QMainWindow):
         self.hydro_report.clear()
 
     # ─────────────────────────────────────────────────────────────────────────
+    # THERMAL RADIATION HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _radiation_step1_start(self):
+        """Begin two-step radiation surface selection."""
+        self.scene.clearSelection()
+        self.scene._radiation_selecting = True
+        self._radiation_step = 1
+        self._radiation_emitters = None
+        self._radiation_receivers = None
+        self.scene.set_mode("radiation_emitter")
+
+    def _radiation_on_confirm(self):
+        """Called when user presses Enter during radiation selection."""
+        from wall import WallSegment
+        from roof import RoofItem
+        from floor_slab import FloorSlab
+
+        surface_types = (WallSegment, RoofItem, FloorSlab)
+
+        if self._radiation_step == 1:
+            items = [i for i in self.scene.selectedItems()
+                     if isinstance(i, surface_types)]
+            if not items:
+                self.statusBar().showMessage(
+                    "No surfaces selected. Select at least one wall, roof, "
+                    "or floor slab, then press Enter.")
+                return
+            self._radiation_emitters = items
+            self.scene.clearSelection()
+            self._radiation_step = 2
+            self.scene.set_mode("radiation_receiver")
+
+        elif self._radiation_step == 2:
+            items = [i for i in self.scene.selectedItems()
+                     if isinstance(i, surface_types)]
+            if not items:
+                self.statusBar().showMessage(
+                    "No surfaces selected. Select at least one receiving "
+                    "surface, then press Enter.")
+                return
+            self._radiation_receivers = items
+            self._radiation_step = 0
+            self.scene._radiation_selecting = False
+            self.scene.set_mode(None)
+            self._open_radiation_dialog()
+
+    def _open_radiation_dialog(self):
+        from thermal_radiation_dialog import ThermalRadiationDialog
+        dlg = ThermalRadiationDialog(
+            self,
+            scale_manager=self.scene.scale_manager,
+            num_emitters=len(self._radiation_emitters),
+            num_receivers=len(self._radiation_receivers),
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._run_radiation(dlg.get_params())
+        else:
+            self.statusBar().showMessage("Radiation analysis cancelled.", 3000)
+
+    def _run_radiation(self, params):
+        from thermal_radiation_solver import (
+            StandardSurfaceRadiationModel, extract_surface_mesh,
+        )
+        lm = self.scene._level_manager
+        sm = self.scene.scale_manager
+
+        # Show progress dialog
+        progress = QProgressDialog(
+            "Running thermal radiation analysis...", None, 0, 0, self)
+        progress.setWindowTitle("Thermal Radiation")
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+        QApplication.processEvents()
+
+        try:
+            progress.setLabelText("Extracting surface meshes...")
+            QApplication.processEvents()
+
+            emitter_meshes = [
+                (e, extract_surface_mesh(e, lm, sm))
+                for e in self._radiation_emitters
+            ]
+            receiver_meshes = [
+                (e, extract_surface_mesh(e, lm, sm))
+                for e in self._radiation_receivers
+            ]
+
+            # Collect blocking geometry from OTHER surfaces not in analysis
+            from wall import WallSegment
+            from roof import RoofItem
+            from floor_slab import FloorSlab
+            selected_ids = set(
+                id(e) for e in self._radiation_emitters + self._radiation_receivers
+            )
+            blocking_meshes = []
+            all_surfaces = (
+                list(getattr(self.scene, '_walls', []))
+                + list(getattr(self.scene, '_roofs', []))
+                + list(getattr(self.scene, '_floor_slabs', []))
+            )
+            for surf in all_surfaces:
+                if id(surf) not in selected_ids:
+                    mesh = extract_surface_mesh(surf, lm, sm)
+                    if mesh is not None:
+                        blocking_meshes.append(mesh)
+            params["blocking_meshes"] = blocking_meshes
+
+            progress.setLabelText("Computing radiation view factors...")
+            QApplication.processEvents()
+
+            model = StandardSurfaceRadiationModel()
+            result = model.compute(emitter_meshes, receiver_meshes, params)
+
+            progress.setLabelText("Generating results...")
+            QApplication.processEvents()
+
+            self.radiation_report.populate(result, self.scene, sm)
+            self.radiation_dock.show()
+            self.radiation_dock.raise_()
+
+            # Show heatmap in 3D view
+            self.view_3d.show_radiation_heatmap(result)
+
+            if result.passed:
+                self.statusBar().showMessage(
+                    f"Radiation PASS \u2014 Max {result.max_radiation:.2f} kW/m\u00b2",
+                    10000)
+            else:
+                self.statusBar().showMessage(
+                    f"Radiation FAIL \u2014 Max {result.max_radiation:.2f} kW/m\u00b2 "
+                    f"exceeds {result.threshold:.1f} kW/m\u00b2", 10000)
+        except Exception as exc:
+            self.statusBar().showMessage(
+                f"Radiation analysis error: {exc}", 10000)
+            import traceback
+            traceback.print_exc()
+        finally:
+            progress.close()
+
+    def _radiation_on_cancel(self):
+        """Called when user presses Escape during radiation selection."""
+        self._radiation_step = 0
+        self._radiation_emitters = None
+        self._radiation_receivers = None
+        self.scene._radiation_selecting = False
+        self.scene.set_mode(None)
+        self.statusBar().showMessage("Radiation analysis cancelled.", 3000)
+
+    def _clear_radiation(self):
+        """Clear the radiation overlay and report dock."""
+        self.radiation_report.clear()
+        self.view_3d.clear_radiation_heatmap()
+        self._radiation_step = 0
+        self._radiation_emitters = None
+        self._radiation_receivers = None
+        self.scene._radiation_selecting = False
+        self.statusBar().clearMessage()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # PROPERTY MANAGER HELPERS
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -1810,8 +2026,8 @@ class MainWindow(QMainWindow):
         # Guard against the scene's C++ object being deleted during shutdown
         try:
             # Don't override template properties during placement modes
-            if self.scene.mode in ("pipe", "sprinkler", "wall", "floor",
-                                    "floor_rect", "roof", "roof_rect",
+            if self.scene.mode in ("pipe", "sprinkler", "wall", "wall_rect",
+                                    "floor", "floor_rect", "roof", "roof_rect",
                                     "set_scale", "design_area"):
                 return
             items = self.scene.selectedItems()
@@ -1834,7 +2050,7 @@ class MainWindow(QMainWindow):
         self._cleanup_autosave()
         super().closeEvent(event)
 
-    _STATE_VERSION = 3  # bump when dock layout changes between sprints
+    _STATE_VERSION = 4  # bump when dock layout changes between sprints
 
     def save_settings(self):
         self.settings.setValue("geometry", self.saveGeometry())
@@ -1842,6 +2058,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("dock/browser", self.browser_dock.isVisible())
         self.settings.setValue("dock/properties", self.prop_dock.isVisible())
         self.settings.setValue("dock/hydraulics", self.hydro_dock.isVisible())
+        self.settings.setValue("dock/radiation", self.radiation_dock.isVisible())
         # Persist pipe and sprinkler template settings
         if self.current_pipe_template:
             pipe_props = {k: v["value"]

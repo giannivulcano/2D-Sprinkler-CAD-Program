@@ -389,19 +389,22 @@ class WallSegment(QGraphicsPathItem):
     def get_properties(self) -> dict:
         height_mm = self._computed_height_mm()
         return {
-            "Type":         {"type": "label",  "value": "Wall"},
-            "Name":         {"type": "string", "value": self.name},
-            "Colour":       {"type": "color",  "value": self._color.name()},
-            "Thickness":    {"type": "label",  "value": self._fmt(self._thickness_mm)},
-            "Fill Mode":    {"type": "label",  "value": self._fill_mode},
-            "Alignment":    {"type": "label",  "value": self._alignment},
-            "Base Level":   {"type": "label",  "value": self._base_level},
-            "Base Offset":  {"type": "label",  "value": self._fmt(self._base_offset_mm)},
-            "Top Level":    {"type": "label",  "value": self._top_level},
-            "Top Offset":   {"type": "label",  "value": self._fmt(self._top_offset_mm)},
-            "Height":       {"type": "label",  "value": self._fmt(height_mm)},
-            "":             {"type": "button", "value": "Edit Wall\u2026",
-                             "callback": self._open_edit_dialog},
+            "Type":         {"type": "label",     "value": "Wall"},
+            "Name":         {"type": "string",    "value": self.name},
+            "Colour":       {"type": "color",     "value": self._color.name()},
+            "Thickness":    {"type": "dimension", "value": self._fmt(self._thickness_mm),
+                             "value_mm": self._thickness_mm},
+            "Fill Mode":    {"type": "enum",      "value": self._fill_mode,
+                             "options": ["None", "Solid", "Hatch"]},
+            "Alignment":    {"type": "enum",      "value": self._alignment,
+                             "options": ["Center", "Interior", "Exterior"]},
+            "Base Level":   {"type": "level_ref", "value": self._base_level},
+            "Base Offset":  {"type": "dimension", "value": self._fmt(self._base_offset_mm),
+                             "value_mm": self._base_offset_mm},
+            "Top Level":    {"type": "level_ref", "value": self._top_level},
+            "Top Offset":   {"type": "dimension", "value": self._fmt(self._top_offset_mm),
+                             "value_mm": self._top_offset_mm},
+            "Height":       {"type": "label",     "value": self._fmt(height_mm)},
         }
 
     def _open_edit_dialog(self):
@@ -412,7 +415,6 @@ class WallSegment(QGraphicsPathItem):
             return
 
         lm = getattr(sc, "_level_manager", None)
-        levels = lm.levels if lm else []
 
         parent = sc.views()[0] if sc.views() else None
         sm = getattr(sc, "scale_manager", None)
@@ -429,7 +431,7 @@ class WallSegment(QGraphicsPathItem):
                 "top_level":      self._top_level,
                 "top_offset_mm":  self._top_offset_mm,
             },
-            levels=levels,
+            level_manager=lm,
             scale_manager=sm,
         )
         from PyQt6.QtWidgets import QDialog
@@ -459,6 +461,47 @@ class WallSegment(QGraphicsPathItem):
         elif key == "Colour":
             self._color = QColor(value)
             self.update()
+        elif key == "Thickness":
+            try:
+                self._thickness_mm = float(value)
+                self._rebuild_path()
+                self.update()
+            except (ValueError, TypeError):
+                pass
+        elif key == "Fill Mode":
+            self._fill_mode = str(value)
+            self.update()
+        elif key == "Alignment":
+            self._alignment = str(value)
+            self._rebuild_path()
+            self.update()
+        elif key == "Base Level":
+            self._base_level = str(value)
+            self.level = str(value)
+            self._height_mm = self._computed_height_mm()
+            self._rebuild_path()
+            self.update()
+        elif key == "Base Offset":
+            try:
+                self._base_offset_mm = float(value)
+                self._height_mm = self._computed_height_mm()
+                self._rebuild_path()
+                self.update()
+            except (ValueError, TypeError):
+                pass
+        elif key == "Top Level":
+            self._top_level = str(value)
+            self._height_mm = self._computed_height_mm()
+            self._rebuild_path()
+            self.update()
+        elif key == "Top Offset":
+            try:
+                self._top_offset_mm = float(value)
+                self._height_mm = self._computed_height_mm()
+                self._rebuild_path()
+                self.update()
+            except (ValueError, TypeError):
+                pass
 
     # ── Serialisation ────────────────────────────────────────────────────────
 

@@ -457,7 +457,6 @@ class RoofItem(QGraphicsPathItem):
             return
 
         lm = getattr(sc, "_level_manager", None)
-        levels = lm.levels if lm else []
 
         parent = sc.views()[0] if sc.views() else None
         dlg = RoofDialog(
@@ -473,7 +472,7 @@ class RoofItem(QGraphicsPathItem):
                 "ridge_direction": self._ridge_direction,
                 "half_span_mm":    self.half_span_mm(),
             },
-            levels=levels,
+            level_manager=lm,
             scale_manager=getattr(sc, "scale_manager", None),
         )
         from PyQt6.QtWidgets import QDialog

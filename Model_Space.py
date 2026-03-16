@@ -50,6 +50,8 @@ class Model_Space(QGraphicsScene):
     modeChanged = pyqtSignal(str)      # emits mode name for status bar instructions
     instructionChanged = pyqtSignal(str)  # emits step-by-step instruction text
     sceneModified = pyqtSignal()          # emitted on every push_undo_state
+    radiationConfirm = pyqtSignal()       # Enter pressed during radiation selection
+    radiationCancel = pyqtSignal()        # Escape pressed during radiation selection
 
     def __init__(self):
         super().__init__()
@@ -75,6 +77,7 @@ class Model_Space(QGraphicsScene):
         self._snap_to_underlay: bool = False
         self.water_supply_node: "WaterSupply | None" = None  # placed water supply
         self.hydraulic_result = None                          # last solver run (Sprint 2)
+        self._radiation_selecting = False                      # True during radiation surface selection
         self.design_areas: list = []                          # list[DesignArea]
         self.active_design_area = None                        # DesignArea | None
         self.active_user_layer: str = DEFAULT_USER_LAYER                  # Sprint 4A active layer
@@ -201,6 +204,9 @@ class Model_Space(QGraphicsScene):
         self._wall_chain_start: "QPointF | None" = None    # very first anchor for wall-close
         self._wall_preview_rect: "QGraphicsPathItem | None" = None  # thickness preview
         self._wall_preview_line: "QGraphicsLineItem | None" = None
+        self._wall_rect_anchor: "QPointF | None" = None   # first click for rect wall
+        self._wall_rect_preview: "QGraphicsRectItem | None" = None
+        self._wall_rect_thickness_preview: "QGraphicsPathItem | None" = None
         self._floor_active: "FloorSlab | None" = None       # in-progress floor boundary
         self._floor_rect_anchor: "QPointF | None" = None   # first click for rect floor
         self._floor_rect_preview: "QGraphicsRectItem | None" = None
@@ -382,6 +388,9 @@ class Model_Space(QGraphicsScene):
             if self._level_manager
             else []
         )
+        for _ld in levels_data:
+            print(f"[SAVE] level: name={_ld.get('name')}, elev={_ld.get('elevation_mm')}")
+        print(f"[SAVE] levels_data count={len(levels_data)}, manager={self._level_manager is not None}")
 
         # --- Construction geometry ---
         clines_data = [cl.to_dict() for cl in self._construction_lines]
@@ -407,6 +416,7 @@ class Model_Space(QGraphicsScene):
             "display_settings":    display_settings_data,
             "user_layers":         layers_data,
             "levels":              levels_data,
+            "active_level":        self._level_manager.active_level if self._level_manager else DEFAULT_LEVEL,
             "nodes":               nodes_data,
             "pipes":               pipes_data,
             "annotations":         annotations_data,
@@ -475,8 +485,19 @@ class Model_Space(QGraphicsScene):
 
         # --- Levels ---
         levels_data = payload.get("levels", [])
+        for _ld in levels_data:
+            print(f"[LOAD] level: name={_ld.get('name')}, elev={_ld.get('elevation_mm')}")
+        print(f"[LOAD] levels_data count={len(levels_data)}, manager={self._level_manager is not None}")
         if levels_data and self._level_manager:
             self._level_manager.from_list(levels_data)
+            for _lv in self._level_manager.levels:
+                print(f"[LOAD] restored: name={_lv.name}, elev={_lv.elevation}")
+            print(f"[LOAD] restored {len(self._level_manager.levels)} levels")
+        # Restore active level (must come after from_list so level exists)
+        saved_active = payload.get("active_level", "")
+        if saved_active and self._level_manager and self._level_manager.get(saved_active):
+            self._level_manager.active_level = saved_active
+            self.active_level = saved_active
 
         # --- Nodes ---
         id_to_node: dict[int, Node] = {}
@@ -930,7 +951,8 @@ class Model_Space(QGraphicsScene):
         self._grip_dragging = False
         self.modeChanged.emit(mode)
         # Auto-deselect all geometry when entering a drawing/placement mode
-        if mode not in ("select", "stretch"):
+        if mode not in ("select", "stretch",
+                        "radiation_emitter", "radiation_receiver"):
             self.clearSelection()
         self.preview_node.hide()
         self.preview_pipe.hide()
@@ -1078,6 +1100,16 @@ class Model_Space(QGraphicsScene):
                     if self._floor_active in self._floor_slabs:
                         self._floor_slabs.remove(self._floor_active)
                 self._floor_active = None
+        if mode != "wall_rect":
+            self._wall_rect_anchor = None
+            if self._wall_rect_preview is not None:
+                if self._wall_rect_preview.scene() is self:
+                    self.removeItem(self._wall_rect_preview)
+                self._wall_rect_preview = None
+            if self._wall_rect_thickness_preview is not None:
+                if self._wall_rect_thickness_preview.scene() is self:
+                    self.removeItem(self._wall_rect_thickness_preview)
+                self._wall_rect_thickness_preview = None
         if mode != "floor_rect":
             self._floor_rect_anchor = None
             if self._floor_rect_preview is not None:
@@ -1197,6 +1229,7 @@ class Model_Space(QGraphicsScene):
             "chamfer":         "Click first object",
             "stretch":         "Draw crossing window (right-to-left)",
             "wall":            "Pick wall start point",
+            "wall_rect":       "Pick first corner for rectangular wall",
             "floor":           "Pick first boundary point (click near first to close)",
             "floor_rect":      "Pick first corner for rectangular floor",
             "door":            "Click on a wall to place door",
@@ -2792,10 +2825,15 @@ class Model_Space(QGraphicsScene):
             return  # in select mode but nothing to cycle — do nothing
 
         # ── Wall mode: cycle alignment instead of opening dialog ──
-        if self.mode == "wall":
+        if self.mode in ("wall", "wall_rect"):
             _cycle = {"Center": "Interior", "Interior": "Exterior", "Exterior": "Center"}
             self._wall_alignment = _cycle.get(self._wall_alignment, "Center")
-            if self._wall_anchor is None:
+            if self.mode == "wall_rect":
+                if self._wall_rect_anchor is None:
+                    self.instructionChanged.emit(f"Pick first corner for rectangular wall [{self._wall_alignment}]")
+                else:
+                    self.instructionChanged.emit(f"Pick opposite corner [{self._wall_alignment}]")
+            elif self._wall_anchor is None:
                 self.instructionChanged.emit(f"Pick wall start point [{self._wall_alignment}]")
             else:
                 self.instructionChanged.emit(f"Pick wall end point [{self._wall_alignment}]")
@@ -3544,6 +3582,7 @@ class Model_Space(QGraphicsScene):
         "mirror":                   "_move_mirror",
         "stretch":                  "_move_stretch",
         "wall":                     "_move_wall",
+        "wall_rect":                "_move_wall_rect",
         "floor":                    "_move_floor",
         "floor_rect":               "_move_floor_rect",
         "roof":                     "_move_roof",
@@ -3986,6 +4025,59 @@ class Model_Space(QGraphicsScene):
             _ang = math.degrees(math.atan2(-_dy, _dx))
             self._draw_dim_hint = f"L: {sm.scene_to_display(_len)}  A: {_ang:.1f}°"
 
+    def _move_wall_rect(self, event, snapped):
+        sm = self.scale_manager
+        if self._wall_rect_anchor is None:
+            self.update_preview_node(snapped)
+        else:
+            self.preview_node.hide()
+        self.preview_pipe.hide()
+        if self._wall_rect_anchor is not None and self._wall_rect_preview is not None:
+            rect = QRectF(self._wall_rect_anchor, snapped).normalized()
+            self._wall_rect_preview.setRect(rect)
+            self._draw_dim_hint = (
+                f"W: {sm.scene_to_display(rect.width())}  "
+                f"H: {sm.scene_to_display(rect.height())}"
+            )
+            # -- Wall thickness preview (4 quads around rectangle) --
+            if rect.width() > 1.0 and rect.height() > 1.0:
+                if self._wall_rect_thickness_preview is None:
+                    self._wall_rect_thickness_preview = QGraphicsPathItem()
+                    _ppn = QPen(QColor("#aaaaaa"), 1, Qt.PenStyle.DashLine)
+                    _ppn.setCosmetic(True)
+                    self._wall_rect_thickness_preview.setPen(_ppn)
+                    _fill = QColor("#cccccc")
+                    _fill.setAlpha(30)
+                    self._wall_rect_thickness_preview.setBrush(QBrush(_fill))
+                    self._wall_rect_thickness_preview.setZValue(199)
+                    self.addItem(self._wall_rect_thickness_preview)
+                _wtmpl = self._get_wall_template()
+                # Swap alignment for rect (same as in _press_wall_rect)
+                _ra = _wtmpl._alignment
+                if _ra == "Interior":
+                    _ra = "Exterior"
+                elif _ra == "Exterior":
+                    _ra = "Interior"
+                corners = [
+                    QPointF(rect.x(), rect.y()),
+                    QPointF(rect.x() + rect.width(), rect.y()),
+                    QPointF(rect.x() + rect.width(), rect.y() + rect.height()),
+                    QPointF(rect.x(), rect.y() + rect.height()),
+                ]
+                _pp = QPainterPath()
+                for i in range(4):
+                    p1 = corners[i]
+                    p2 = corners[(i + 1) % 4]
+                    q1l, q1r, q2r, q2l = compute_wall_quad(
+                        p1, p2, _wtmpl._thickness_mm, _ra, sm)
+                    _pp.moveTo(q1l)
+                    _pp.lineTo(q2l)
+                    _pp.lineTo(q2r)
+                    _pp.lineTo(q1r)
+                    _pp.closeSubpath()
+                self._wall_rect_thickness_preview.setPath(_pp)
+                self._wall_rect_thickness_preview.show()
+
     def _move_floor_rect(self, event, snapped):
         sm = self.scale_manager
         if self._floor_rect_anchor is None:
@@ -4077,6 +4169,7 @@ class Model_Space(QGraphicsScene):
         "draw_rectangle":           "_press_draw_rectangle",
         "draw_circle":              "_press_draw_circle",
         "wall":                     "_press_wall",
+        "wall_rect":                "_press_wall_rect",
         "floor":                    "_press_floor",
         "floor_rect":               "_press_floor_rect",
         "roof":                     "_press_roof",
@@ -4109,7 +4202,7 @@ class Model_Space(QGraphicsScene):
 
         # ── Grip hit takes priority over mode handlers ──────────────────
         # Skip grip detection in drawing modes so clicks reach the draw handler
-        _skip_grip_modes = ("wall", "floor", "floor_rect", "pipe", "sprinkler",
+        _skip_grip_modes = ("wall", "wall_rect", "floor", "floor_rect", "pipe", "sprinkler",
                             "draw_line", "construction_line", "draw_rectangle",
                             "draw_circle", "draw_arc", "polyline", "gridline",
                             "dimension", "text", "door", "window", "set_scale")
@@ -5047,6 +5140,81 @@ class Model_Space(QGraphicsScene):
                 self.instructionChanged.emit(
                     f"Pick next wall end [{self._wall_alignment}]  Tab=cycle  Esc=stop")
 
+    # ── Wall rectangle drawing ──────────────────────────────────────────
+    def _press_wall_rect(self, event, pos, snapped, item_under, node_under, pipe_under):
+        if self._wall_rect_anchor is None:
+            self._wall_rect_anchor = snapped
+            self.instructionChanged.emit("Pick opposite corner for rectangular wall")
+            _tmpl = self._get_wall_template()
+            _wc = QColor(_tmpl._color)
+            pen = QPen(_wc, 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            preview = QGraphicsRectItem(QRectF(snapped, snapped))
+            preview.setPen(pen)
+            _wc.setAlpha(30)
+            preview.setBrush(QBrush(_wc))
+            preview.setZValue(200)
+            self.addItem(preview)
+            self._wall_rect_preview = preview
+        else:
+            # Commit rectangular wall — create 4 wall segments
+            rect = QRectF(self._wall_rect_anchor, snapped).normalized()
+            corners = [
+                QPointF(rect.x(), rect.y()),                          # top-left
+                QPointF(rect.x() + rect.width(), rect.y()),           # top-right
+                QPointF(rect.x() + rect.width(), rect.y() + rect.height()),  # bottom-right
+                QPointF(rect.x(), rect.y() + rect.height()),          # bottom-left
+            ]
+            _tmpl = self._get_wall_template()
+            # For a rectangle, corners trace clockwise (TL→TR→BR→BL)
+            # so wall normals point inward.  Swap interior/exterior so
+            # "Interior" means walls extend inward from the rectangle.
+            _rect_align = _tmpl._alignment
+            if _rect_align == "Interior":
+                _rect_align = "Exterior"
+            elif _rect_align == "Exterior":
+                _rect_align = "Interior"
+            walls_created = []
+            for i in range(4):
+                p1 = corners[i]
+                p2 = corners[(i + 1) % 4]
+                wall = WallSegment(p1, p2,
+                                   thickness_mm=_tmpl._thickness_mm,
+                                   color=_tmpl._color.name())
+                wall.name = f"Wall {self._next_wall_num}"
+                self._next_wall_num += 1
+                wall._alignment = _rect_align
+                wall._fill_mode = _tmpl._fill_mode
+                wall.level = _tmpl.level if _tmpl.level else self.active_level
+                wall._base_level = _tmpl._base_level if _tmpl._base_level else self.active_level
+                wall._top_level = getattr(_tmpl, "_top_level", "")
+                wall._height_mm = getattr(_tmpl, "_height_mm", 3048.0)
+                wall.user_layer = self.active_user_layer
+                self._wall_alignment = _tmpl._alignment
+                self.addItem(wall)
+                self._walls.append(wall)
+                walls_created.append(wall)
+            # Auto-join all walls
+            for wall in walls_created:
+                self._auto_join_wall(wall)
+                wall.setSelected(True)
+            for v in self.views():
+                v.viewport().update()
+            # Clean up preview
+            if self._wall_rect_preview is not None:
+                self.removeItem(self._wall_rect_preview)
+                self._wall_rect_preview = None
+            if self._wall_rect_thickness_preview is not None:
+                if self._wall_rect_thickness_preview.scene() is self:
+                    self.removeItem(self._wall_rect_thickness_preview)
+                self._wall_rect_thickness_preview = None
+            self._wall_rect_anchor = None
+            self.push_undo_state()
+            if self.single_place_mode:
+                self.set_mode("select")
+            else:
+                self.instructionChanged.emit("Pick first corner for rectangular wall")
+
     # ── Floor drawing ─────────────────────────────────────────────────
     def _press_floor(self, event, pos, snapped, item_under, node_under, pipe_under):
         if self._floor_active is None:
@@ -5177,7 +5345,6 @@ class Model_Space(QGraphicsScene):
                     # Show roof-properties dialog
                     roof = self._roof_active
                     self._roof_active = None
-                    _levels = self._level_manager.levels if self._level_manager else []
                     roof._scale_manager_ref = self.scale_manager
                     dlg = RoofDialog(
                         self.views()[0] if self.views() else None,
@@ -5192,7 +5359,7 @@ class Model_Space(QGraphicsScene):
                             "ridge_direction": roof._ridge_direction,
                             "half_span_mm":    roof.half_span_mm(),
                         },
-                        levels=_levels,
+                        level_manager=self._level_manager,
                         scale_manager=self.scale_manager,
                     )
                     if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -5277,7 +5444,6 @@ class Model_Space(QGraphicsScene):
             self._roof_rect_anchor = None
 
             # Show roof-properties dialog
-            _levels = self._level_manager.levels if self._level_manager else []
             dlg = RoofDialog(
                 self.views()[0] if self.views() else None,
                 defaults={
@@ -5289,7 +5455,7 @@ class Model_Space(QGraphicsScene):
                     "overhang_mm":    roof._overhang_mm,
                     "color":          roof._color.name(),
                 },
-                levels=_levels,
+                level_manager=self._level_manager,
                 scale_manager=self.scale_manager,
             )
             if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -5761,6 +5927,15 @@ class Model_Space(QGraphicsScene):
     # KEY EVENTS
 
     def keyPressEvent(self, event):
+        # Radiation selection flow — intercept Enter/Escape first
+        if self._radiation_selecting:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.radiationConfirm.emit()
+                return
+            if event.key() == Qt.Key.Key_Escape:
+                self._radiation_selecting = False
+                self.radiationCancel.emit()
+                return
         if event.key() == Qt.Key.Key_Escape:
             if self.mode and self.mode not in (None, "select"):
                 self._show_status("Mode cancelled", 2000)
@@ -5856,7 +6031,6 @@ class Model_Space(QGraphicsScene):
                     # Show roof-properties dialog
                     roof = self._roof_active
                     self._roof_active = None
-                    _levels = self._level_manager.levels if self._level_manager else []
                     roof._scale_manager_ref = self.scale_manager
                     dlg = RoofDialog(
                         self.views()[0] if self.views() else None,
@@ -5871,7 +6045,7 @@ class Model_Space(QGraphicsScene):
                             "ridge_direction": roof._ridge_direction,
                             "half_span_mm":    roof.half_span_mm(),
                         },
-                        levels=_levels,
+                        level_manager=self._level_manager,
                         scale_manager=self.scale_manager,
                     )
                     if dlg.exec() == QDialog.DialogCode.Accepted:

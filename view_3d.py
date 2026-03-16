@@ -117,6 +117,10 @@ class View3D(QWidget):
         self._wall_centroids_3d: np.ndarray | None = None
         self._slab_centroids_3d: np.ndarray | None = None
         self._roof_centroids_3d: np.ndarray | None = None
+        # Per-entity mesh geometry for triangle-based picking
+        self._wall_mesh_data: list[tuple[np.ndarray, np.ndarray]] = []  # (verts, faces)
+        self._slab_mesh_data: list[tuple[np.ndarray, np.ndarray]] = []
+        self._roof_mesh_data: list[tuple[np.ndarray, np.ndarray]] = []
         self._original_wall_colors: list[tuple] = []
         self._original_slab_colors: list[tuple] = []
         self._original_roof_colors: list[tuple] = []
@@ -229,6 +233,10 @@ class View3D(QWidget):
         # Roof meshes
         self._roof_meshes: list[visuals.Mesh] = []
         self._roof_edge_lines: list[visuals.Line] = []
+        # Thermal radiation heatmap overlay
+        self._radiation_meshes: list[visuals.Mesh] = []
+        self._radiation_entity_map: dict = {}       # entity → vispy Mesh
+        self._radiation_orig_colors: dict = {}      # entity → face_colors array
 
         # XYZ axis lines at world origin
         axis_len = 500.0  # mm
@@ -285,6 +293,12 @@ class View3D(QWidget):
 
         # Mouse picking
         self._canvas.events.mouse_press.connect(self._on_mouse_press)
+
+        # Keyboard events (forward Enter/Escape during radiation selection)
+        self._canvas.events.key_press.connect(self._on_key_press)
+
+        # Scroll-to-cursor zoom
+        self._canvas.events.mouse_wheel.connect(self._on_mouse_wheel)
 
         # Middle-button pan
         self._canvas.events.mouse_press.connect(self._on_pan_press)
@@ -788,6 +802,7 @@ class View3D(QWidget):
                 ln.parent = None
         self._wall_edge_lines.clear()
         self._wall_refs.clear()
+        self._wall_mesh_data.clear()
         self._original_wall_colors.clear()
 
         scene_obj = self._scene
@@ -811,6 +826,7 @@ class View3D(QWidget):
             )
             self._wall_meshes.append(mesh)
             self._wall_refs.append(wall)
+            self._wall_mesh_data.append((verts, faces))
             self._original_wall_colors.append((col, (0.1, 0.1, 0.1, 0.8)))
             centroids.append(verts.mean(axis=0))
             # Edge wireframe
@@ -841,6 +857,7 @@ class View3D(QWidget):
                 ln.parent = None
         self._slab_edge_lines.clear()
         self._slab_refs.clear()
+        self._slab_mesh_data.clear()
         self._original_slab_colors.clear()
 
         scene_obj = self._scene
@@ -863,6 +880,7 @@ class View3D(QWidget):
             )
             self._slab_meshes.append(mesh)
             self._slab_refs.append(slab)
+            self._slab_mesh_data.append((verts, faces))
             self._original_slab_colors.append((col, (0.15, 0.15, 0.15, 0.7)))
             centroids.append(verts.mean(axis=0))
             # Edge wireframe
@@ -890,6 +908,7 @@ class View3D(QWidget):
                 ln.parent = None
         self._roof_edge_lines.clear()
         self._roof_refs.clear()
+        self._roof_mesh_data.clear()
         self._original_roof_colors.clear()
 
         scene_obj = self._scene
@@ -912,6 +931,7 @@ class View3D(QWidget):
             )
             self._roof_meshes.append(mesh)
             self._roof_refs.append(roof)
+            self._roof_mesh_data.append((verts, faces))
             self._original_roof_colors.append((col, (0.15, 0.15, 0.15, 0.7)))
             centroids.append(verts.mean(axis=0))
             edge_segs = self._edges_from_faces(verts, faces)
@@ -1051,6 +1071,47 @@ class View3D(QWidget):
         if event.is_dragging:
             self._sync_viewcube()
 
+    # ── Scroll-to-cursor zoom ────────────────────────────────────────────
+
+    def _on_mouse_wheel(self, event):
+        """Zoom toward/away from the cursor position instead of screen center."""
+        cam = self._view.camera
+        screen_pos = np.array(event.pos[:2], dtype=float)
+
+        # Scroll delta: positive = zoom in, negative = zoom out
+        delta = event.delta[1] if len(event.delta) > 1 else event.delta[0]
+        zoom_factor = 0.9 if delta > 0 else 1.0 / 0.9  # ~1.111
+
+        # Unproject cursor position to 3D world coordinates
+        try:
+            tr = self._node_markers.transforms.get_transform(
+                map_from='canvas', map_to='visual',
+            )
+            # Use depth=0.5 (mid-clip) as a reasonable depth estimate
+            mapped = tr.map(list(screen_pos) + [0.5])
+            if len(mapped) >= 4 and mapped[3] != 0:
+                mapped = mapped / mapped[3]
+            target_3d = np.array(mapped[:3], dtype=float)
+            if not np.all(np.isfinite(target_3d)):
+                return  # fallback to default zoom
+        except Exception:
+            return  # let default camera zoom handle it
+
+        # Shift camera center toward cursor's 3D point
+        center = np.array(cam.center, dtype=float)
+        shift = (target_3d - center) * (1.0 - zoom_factor)
+        cam.center = tuple(center + shift)
+
+        # Apply zoom
+        if cam.fov > 0:  # perspective
+            cam.distance = max(cam.distance * zoom_factor, 10)
+        else:  # orthographic
+            cam.scale_factor = max(cam.scale_factor * zoom_factor, 1)
+
+        self._canvas.update()
+        self._sync_viewcube()
+        event.handled = True
+
     # ── Middle-button pan ─────────────────────────────────────────────────
 
     def _on_pan_press(self, event):
@@ -1086,7 +1147,7 @@ class View3D(QWidget):
 
         # Scale movement by camera distance for reasonable speed
         scale = cam.distance * 0.001
-        shift = (-dx * right + dy * up) * scale
+        shift = (dx * right - dy * up) * scale
 
         center = np.array(cam.center, dtype=float)
         cam.center = tuple(center + shift)
@@ -1191,29 +1252,98 @@ class View3D(QWidget):
     # ── Selection / Picking ────────────────────────────────────────────────
 
     def _on_mouse_press(self, event):
-        """Handle click in 3D view for entity selection."""
+        """Handle click in 3D view for entity selection.
+
+        Plain click selects one item (clearing previous selection).
+        Ctrl+click toggles the clicked item in/out of the current selection
+        (for multi-select during radiation analysis, etc.).
+        """
         if event.button != 1:  # left click only
             return
 
         screen_pos = np.array(event.pos[:2], dtype=float)
         hit = self._pick_nearest(screen_pos)
+        print(f"[3D] click at {screen_pos}, hit={hit}")
+
+        # Check for Ctrl modifier (vispy stores modifiers as a tuple of strings)
+        modifiers = getattr(event, 'modifiers', None) or []
+        ctrl_held = 'Control' in modifiers
 
         if hit is not None:
-            self._scene.clearSelection()
-            hit.setSelected(True)
+            if ctrl_held:
+                # Toggle selection on this item
+                hit.setSelected(not hit.isSelected())
+            else:
+                self._scene.clearSelection()
+                hit.setSelected(True)
+            selected = [it for it in self._scene.selectedItems()]
             self.entitySelected.emit(hit)
-            self._highlight_mesh_selection([hit])
+            self._highlight_mesh_selection(selected)
+            # Block camera rotation when clicking an entity
+            event.handled = True
+        elif ctrl_held:
+            # Ctrl+click on empty space: do nothing (preserve selection,
+            # block camera so an accidental miss doesn't rotate the view)
+            event.handled = True
         else:
-            self._scene.clearSelection()
-            self.entitySelected.emit(None)
-            self._highlight_mesh_selection([])
+            # Plain click on empty space: let the camera handle it
+            # (allows orbit rotation without losing workflow).
+            # Don't clear selection — user can rotate freely and keep
+            # their current selection intact.
+            pass
+
+    def _on_key_press(self, event):
+        """Forward Enter/Escape to Model_Space during radiation selection."""
+        if getattr(self._scene, '_radiation_selecting', False):
+            if event.key == 'Enter' or event.key == 'Return':
+                self._scene.radiationConfirm.emit()
+                return
+            if event.key == 'Escape':
+                self._scene._radiation_selecting = False
+                self._scene.radiationCancel.emit()
+                return
+
+    @staticmethod
+    def _point_in_triangle_2d(p, a, b, c):
+        """Return True if 2D point *p* is inside triangle (a, b, c).
+
+        Uses the sign-of-cross-product (barycentric) method.
+        """
+        def _cross(o, v1, v2):
+            return (v1[0] - o[0]) * (v2[1] - o[1]) - (v1[1] - o[1]) * (v2[0] - o[0])
+        d1 = _cross(p, a, b)
+        d2 = _cross(p, b, c)
+        d3 = _cross(p, c, a)
+        has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+        has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+        return not (has_neg and has_pos)
+
+    def _pick_mesh_entities(self, screen_pos, mesh_data_list, ref_list):
+        """Check if *screen_pos* falls inside any projected triangle of the
+        meshes in *mesh_data_list*.  Returns the first matching entity from
+        *ref_list*, or ``None``.
+        """
+        for idx, (verts, faces) in enumerate(mesh_data_list):
+            # Project all vertices to screen space (cache per-entity)
+            projected = []
+            for v in verts:
+                s = self._project_to_screen(v)
+                projected.append(s)
+            # Test each triangle
+            for face in faces:
+                tri = [projected[face[0]], projected[face[1]], projected[face[2]]]
+                if any(t is None for t in tri):
+                    continue
+                if self._point_in_triangle_2d(screen_pos, tri[0], tri[1], tri[2]):
+                    return ref_list[idx]
+        return None
 
     def _pick_nearest(self, screen_pos: np.ndarray):
         """Find nearest entity to a screen-space click position."""
         best_item = None
         best_dist = float("inf")
 
-        # Check nodes
+        # Check nodes (point-distance)
         if self._node_positions_3d is not None:
             for i, pos3d in enumerate(self._node_positions_3d):
                 screen = self._project_to_screen(pos3d)
@@ -1224,7 +1354,7 @@ class View3D(QWidget):
                     best_dist = dist
                     best_item = self._node_refs[i]
 
-        # Check pipe midpoints
+        # Check pipe midpoints (point-distance)
         if self._pipe_midpoints_3d is not None:
             for i, pos3d in enumerate(self._pipe_midpoints_3d):
                 screen = self._project_to_screen(pos3d)
@@ -1235,55 +1365,54 @@ class View3D(QWidget):
                     best_dist = dist
                     best_item = self._pipe_refs[i]
 
-        # Check wall centroids (wider tolerance for large entities)
-        mesh_tol = PICK_TOLERANCE_PX * 2
-        if self._wall_centroids_3d is not None:
-            for i, pos3d in enumerate(self._wall_centroids_3d):
-                screen = self._project_to_screen(pos3d)
-                if screen is None:
-                    continue
-                dist = np.linalg.norm(screen - screen_pos)
-                if dist < mesh_tol and dist < best_dist:
-                    best_dist = dist
-                    best_item = self._wall_refs[i]
+        # If a node/pipe was hit at close range, prefer it over mesh hits
+        if best_item is not None and best_dist < PICK_TOLERANCE_PX / 2:
+            return best_item
 
-        # Check slab centroids
-        if self._slab_centroids_3d is not None:
-            for i, pos3d in enumerate(self._slab_centroids_3d):
-                screen = self._project_to_screen(pos3d)
-                if screen is None:
-                    continue
-                dist = np.linalg.norm(screen - screen_pos)
-                if dist < mesh_tol and dist < best_dist:
-                    best_dist = dist
-                    best_item = self._slab_refs[i]
+        # Check walls (triangle hit-test on projected mesh)
+        hit = self._pick_mesh_entities(screen_pos, self._wall_mesh_data, self._wall_refs)
+        if hit is not None:
+            return hit
 
-        # Check roof centroids
-        if self._roof_centroids_3d is not None:
-            for i, pos3d in enumerate(self._roof_centroids_3d):
-                screen = self._project_to_screen(pos3d)
-                if screen is None:
-                    continue
-                dist = np.linalg.norm(screen - screen_pos)
-                if dist < mesh_tol and dist < best_dist:
-                    best_dist = dist
-                    best_item = self._roof_refs[i]
+        # Check slabs
+        hit = self._pick_mesh_entities(screen_pos, self._slab_mesh_data, self._slab_refs)
+        if hit is not None:
+            return hit
+
+        # Check roofs
+        hit = self._pick_mesh_entities(screen_pos, self._roof_mesh_data, self._roof_refs)
+        if hit is not None:
+            return hit
 
         return best_item
 
     def _project_to_screen(self, world_pos: np.ndarray):
         """Project a 3D world position to 2D screen (canvas) coordinates.
 
-        Uses the full vispy transform chain (visual → camera → canvas)
-        so that the camera projection is included.
+        Uses the node_markers visual's transform chain so the full path
+        scene → camera → canvas is traversed (including the perspective
+        projection from the TurntableCamera).
         """
         try:
-            tr = self._view.scene.transforms.get_transform(
+            # Use a concrete visual (node_markers) that lives inside the
+            # view's scene.  Its transform chain includes:
+            #   visual-local → scene → viewbox → document → canvas
+            # which passes through the camera's projection matrix.
+            tr = self._node_markers.transforms.get_transform(
                 map_from='visual', map_to='canvas',
             )
-            mapped = tr.map(world_pos[:3])
-            return np.array(mapped[:2], dtype=float)
-        except Exception:
+            pos = np.array(world_pos[:3], dtype=np.float64)
+            mapped = tr.map(pos)
+            # Perspective divide: vispy returns homogeneous coords [x,y,z,w]
+            if len(mapped) >= 4 and mapped[3] != 0:
+                mapped = mapped / mapped[3]
+            result = np.array(mapped[:2], dtype=float)
+            # Reject if the result contains NaN/Inf or is behind the camera
+            if not np.all(np.isfinite(result)):
+                return None
+            return result
+        except Exception as exc:
+            print(f"[3D] projection failed: {exc}")
             return None
 
     # ── Mesh Selection Highlight ─────────────────────────────────────────────
@@ -1318,6 +1447,15 @@ class View3D(QWidget):
                 mesh.color = orig_col
                 if i < len(self._roof_edge_lines) and self._roof_edge_lines[i] is not None:
                     self._roof_edge_lines[i].set_data(color=orig_edge, width=1.0)
+
+        # Reset all radiation overlay meshes to original colors
+        for entity, orig_fc in self._radiation_orig_colors.items():
+            rad_mesh = self._radiation_entity_map.get(entity)
+            if rad_mesh is not None:
+                try:
+                    rad_mesh.set_data(face_colors=orig_fc)
+                except Exception:
+                    pass
 
         if not selected_items:
             self._canvas.update()
@@ -1373,6 +1511,20 @@ class View3D(QWidget):
                     r, g, b, _a = self._original_roof_colors[i][0]
                     mesh.color = (r, g, b, DESELECT_ALPHA)
 
+        # Highlight radiation heatmap overlays for selected entities
+        if self._radiation_meshes:
+            for sel in selected_items:
+                rad_mesh = self._radiation_entity_map.get(sel)
+                orig_fc = self._radiation_orig_colors.get(sel)
+                if rad_mesh is not None and orig_fc is not None:
+                    # Brighten colors to indicate selection
+                    tinted = orig_fc.copy()
+                    tinted[:, :3] = np.clip(tinted[:, :3] * 0.5 + 0.5, 0.0, 1.0)
+                    try:
+                        rad_mesh.set_data(face_colors=tinted)
+                    except Exception:
+                        pass
+
         self._canvas.update()
 
     # ── 2D → 3D Selection Sync ─────────────────────────────────────────────
@@ -1415,3 +1567,124 @@ class View3D(QWidget):
             self._highlight_markers.visible = False
 
         self._highlight_mesh_selection(mesh_selected)
+
+    # ------------------------------------------------------------------
+    # Thermal radiation heatmap overlay
+    # ------------------------------------------------------------------
+
+    def show_radiation_heatmap(self, result):
+        """Overlay colour-mapped meshes on receiver surfaces.
+
+        Parameters
+        ----------
+        result : RadiationResult
+            The solver result containing per-receiver mesh and flux data.
+        """
+        self.clear_radiation_heatmap()
+        threshold = result.threshold
+
+        for entity, flux in result.per_receiver_flux.items():
+            sub = result.per_receiver_mesh.get(entity)
+            if sub is None:
+                continue
+            verts = np.asarray(sub["vertices"], dtype=np.float64)
+            faces = np.asarray(sub["faces"], dtype=np.int32)
+            if len(faces) == 0:
+                continue
+
+            # Offset vertices slightly along per-face normals to avoid
+            # z-fighting with the underlying wall/roof mesh.
+            OFFSET_MM = 15.0
+            v0 = verts[faces[:, 0]]
+            v1 = verts[faces[:, 1]]
+            v2 = verts[faces[:, 2]]
+            normals = np.cross(v1 - v0, v2 - v0)
+            norms = np.linalg.norm(normals, axis=1, keepdims=True)
+            norms = np.where(norms > 1e-8, norms, 1.0)
+            normals = normals / norms  # unit face normals (Nf, 3)
+
+            # Compute per-vertex offset by averaging adjacent face normals
+            vert_normals = np.zeros_like(verts)
+            vert_counts = np.zeros(len(verts))
+            for col in range(3):
+                np.add.at(vert_normals, faces[:, col], normals)
+                np.add.at(vert_counts, faces[:, col], 1.0)
+            vert_counts = np.where(vert_counts > 0, vert_counts, 1.0)
+            vert_normals /= vert_counts[:, np.newaxis]
+            vn_len = np.linalg.norm(vert_normals, axis=1, keepdims=True)
+            vn_len = np.where(vn_len > 1e-8, vn_len, 1.0)
+            vert_normals /= vn_len
+
+            offset_verts = (verts + vert_normals * OFFSET_MM).astype(np.float32)
+
+            face_colors = self._flux_to_colors(flux, threshold)
+
+            # Ensure face_colors length matches faces
+            if len(face_colors) < len(faces):
+                pad = np.tile([0.0, 0.2, 0.8, 1.0],
+                              (len(faces) - len(face_colors), 1)).astype(np.float32)
+                face_colors = np.vstack([face_colors, pad])
+            elif len(face_colors) > len(faces):
+                face_colors = face_colors[:len(faces)]
+
+            mesh = visuals.Mesh(
+                vertices=offset_verts,
+                faces=faces,
+                face_colors=face_colors,
+                shading=None,
+                parent=self._view.scene,
+            )
+            self._radiation_meshes.append(mesh)
+            self._radiation_entity_map[entity] = mesh
+            self._radiation_orig_colors[entity] = face_colors.copy()
+
+        self._canvas.update()
+
+    def clear_radiation_heatmap(self):
+        """Remove all radiation overlay meshes."""
+        for m in self._radiation_meshes:
+            m.parent = None
+        self._radiation_meshes.clear()
+        self._radiation_entity_map.clear()
+        self._radiation_orig_colors.clear()
+        self._canvas.update()
+
+    @staticmethod
+    def _flux_to_colors(flux: np.ndarray, threshold: float) -> np.ndarray:
+        """Map flux values to RGBA face colours using a 5-band scheme.
+
+        Bands (relative to threshold):
+          < 25%  — blue
+          25-50% — green
+          50-75% — yellow
+          75-100% — orange
+          >= 100% — red
+        """
+        if threshold <= 0:
+            threshold = 1.0
+        ratio = np.asarray(flux, dtype=np.float64) / threshold
+        n = len(ratio)
+        colors = np.zeros((n, 4), dtype=np.float32)
+        colors[:, 3] = 1.0  # fully opaque
+
+        # Blue: < 25%
+        m = ratio < 0.25
+        colors[m] = [0.0, 0.2, 0.8, 1.0]
+
+        # Green: 25-50%
+        m = (ratio >= 0.25) & (ratio < 0.50)
+        colors[m] = [0.0, 0.7, 0.2, 1.0]
+
+        # Yellow: 50-75%
+        m = (ratio >= 0.50) & (ratio < 0.75)
+        colors[m] = [0.9, 0.9, 0.0, 1.0]
+
+        # Orange: 75-100%
+        m = (ratio >= 0.75) & (ratio < 1.00)
+        colors[m] = [1.0, 0.5, 0.0, 1.0]
+
+        # Red: >= 100%
+        m = ratio >= 1.00
+        colors[m] = [1.0, 0.0, 0.0, 1.0]
+
+        return colors
