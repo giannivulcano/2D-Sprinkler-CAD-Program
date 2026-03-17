@@ -17,7 +17,8 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 import vtk
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMenu
+from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtCore import pyqtSignal, QTimer, Qt, QEvent
 
 from constants import DEFAULT_LEVEL
@@ -135,6 +136,9 @@ class View3D(QWidget):
         # Mesh Z ranges for section cuts: actor → (min_z, max_z)
         self._actor_z_range: dict = {}
 
+        # 3D-only selection tracking (for items where setSelected doesn't stick)
+        self._3d_selected: list = []
+
         # Radiation heatmap state
         self._radiation_meshes: list = []
         self._radiation_entity_map: dict = {}
@@ -147,12 +151,20 @@ class View3D(QWidget):
 
     def _clear_actors(self, category: str):
         """Remove all actors in a category from the plotter."""
+        renderer = self._plotter.renderer
         for actor in self._actors.get(category, []):
+            if actor is None:
+                continue
             try:
                 self._plotter.remove_actor(actor, render=False)
             except Exception:
                 pass
-            # Clean up reverse mapping
+            # Fallback: ensure VTK renderer also drops it
+            try:
+                if renderer.HasViewProp(actor):
+                    renderer.RemoveActor(actor)
+            except Exception:
+                pass
             self._actor_to_entity.pop(actor, None)
             self._actor_z_range.pop(actor, None)
         self._actors[category] = []
@@ -599,11 +611,14 @@ class View3D(QWidget):
             else:
                 colors.append([50, 100, 255])
 
+        radius = 40.0  # world-space radius in mm
+        sphere = pv.Sphere(radius=radius, theta_resolution=8, phi_resolution=8)
         pts = pv.PolyData(positions)
         pts["colors"] = np.array(colors, dtype=np.uint8)
+        glyphs = pts.glyph(geom=sphere, scale=False, orient=False)
+        glyphs["colors"] = np.repeat(pts["colors"], sphere.n_cells, axis=0)
         actor = self._plotter.add_mesh(
-            pts, scalars="colors", rgb=True,
-            point_size=10, render_points_as_spheres=True,
+            glyphs, scalars="colors", rgb=True,
             name="sprinklers",
         )
         self._add_actor("sprinklers", actor)
@@ -690,6 +705,7 @@ class View3D(QWidget):
                 line_mesh, scalars="colors", rgb=True,
                 line_width=width, name="pipes_lines",
             )
+            actor.GetProperty().SetVertexVisibility(False)
             self._add_actor("pipes", actor)
 
     # ── Extract: Water Supply ──────────────────────────────────────────────
@@ -700,10 +716,10 @@ class View3D(QWidget):
         if ws is None:
             return
         pos = self._scene_to_3d(ws.scenePos().x(), ws.scenePos().y(), 0)
-        pts = pv.PolyData(pos.reshape(1, 3).astype(np.float32))
+        sphere = pv.Sphere(radius=60.0, center=pos.tolist(),
+                           theta_resolution=8, phi_resolution=8)
         actor = self._plotter.add_mesh(
-            pts, color=COL_WATER_SUPPLY, point_size=14,
-            render_points_as_spheres=True, name="water_supply",
+            sphere, color=COL_WATER_SUPPLY, name="water_supply",
         )
         self._add_actor("water_supply", actor)
 
@@ -796,6 +812,7 @@ class View3D(QWidget):
                 mesh, color=COL_CONSTR, opacity=0.6,
                 line_width=1.0, name="construction",
             )
+            actor.GetProperty().SetVertexVisibility(False)
             self._add_actor("construction", actor)
 
     # ── Extract: Level Floors ──────────────────────────────────────────────
@@ -851,7 +868,7 @@ class View3D(QWidget):
             edge_mesh.lines = np.array([5, 0, 1, 2, 3, 4], dtype=np.int64)
             edge_actor = self._plotter.add_mesh(
                 edge_mesh, color=col[:3], opacity=0.6,
-                line_width=1.5, name=f"floor_edge_{i}",
+                line_width=1.0, name=f"floor_edge_{i}",
             )
             edge_actor.GetProperty().SetPointSize(0.0)
             edge_actor.GetProperty().SetVertexVisibility(False)
@@ -944,6 +961,8 @@ class View3D(QWidget):
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=1.0,
             )
+            actor.GetProperty().SetVertexVisibility(False)
+            actor.GetProperty().SetRepresentationToSurface()
             self._add_actor("walls", actor, entity=wall, entity_type="wall")
             self._wall_refs.append(wall)
             self._original_wall_colors.append(col)
@@ -964,7 +983,7 @@ class View3D(QWidget):
                 edge_mesh.lines = np.array(line_cells, dtype=np.int64)
                 edge_actor = self._plotter.add_mesh(
                     edge_mesh, color=(0.0, 0.0, 0.0), opacity=1.0,
-                    line_width=1.5,
+                    line_width=1.0,
                 )
                 edge_actor.GetProperty().SetPointSize(0.0)
                 edge_actor.GetProperty().SetVertexVisibility(False)
@@ -1002,6 +1021,8 @@ class View3D(QWidget):
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=col[3] if len(col) > 3 else 1.0,
             )
+            actor.GetProperty().SetVertexVisibility(False)
+            actor.GetProperty().SetRepresentationToSurface()
             self._add_actor("slabs", actor, entity=slab, entity_type="slab")
             self._slab_refs.append(slab)
             self._original_slab_colors.append(col)
@@ -1056,6 +1077,8 @@ class View3D(QWidget):
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=col[3] if len(col) > 3 else 1.0,
             )
+            actor.GetProperty().SetVertexVisibility(False)
+            actor.GetProperty().SetRepresentationToSurface()
             self._add_actor("roofs", actor, entity=roof, entity_type="roof")
             self._roof_refs.append(roof)
             self._original_roof_colors.append(col)
@@ -1163,8 +1186,17 @@ class View3D(QWidget):
         """
         etype = event.type()
 
+        if etype == QEvent.Type.MouseButtonDblClick:
+            if event.button() == Qt.MouseButton.LeftButton:
+                # Treat double-click same as single click, reset state
+                self._click_pos = None
+                self._last_mouse = None
+                self._orbiting = False
+                return True  # consume — prevent stuck orbit
+
         if etype == QEvent.Type.MouseButtonPress:
             if event.button() == Qt.MouseButton.LeftButton:
+                self._vtk_widget.setFocus()  # ensure key events reach us
                 self._click_pos = (event.position().x(), event.position().y())
                 self._last_mouse = (event.position().x(), event.position().y())
                 self._orbiting = False
@@ -1173,20 +1205,25 @@ class View3D(QWidget):
         if etype == QEvent.Type.MouseMove:
             if self._click_pos is not None and self._last_mouse is not None:
                 buttons = event.buttons()
-                if buttons & Qt.MouseButton.LeftButton:
-                    mx, my = event.position().x(), event.position().y()
-                    dx = mx - self._last_mouse[0]
-                    dy = my - self._last_mouse[1]
-                    # Check if we've moved enough to be a drag
-                    total_dx = abs(mx - self._click_pos[0])
-                    total_dy = abs(my - self._click_pos[1])
-                    if total_dx >= self._CLICK_THRESHOLD or total_dy >= self._CLICK_THRESHOLD:
-                        self._orbiting = True
-                    if self._orbiting and (abs(dx) > 0.5 or abs(dy) > 0.5):
-                        self._do_orbit(dx, dy)
-                        self._last_mouse = (mx, my)
-                        self._sync_viewcube()
-                        return True  # consume — we handle orbit
+                if not (buttons & Qt.MouseButton.LeftButton):
+                    # Left button no longer held — release was missed, reset
+                    self._click_pos = None
+                    self._last_mouse = None
+                    self._orbiting = False
+                    return False
+                mx, my = event.position().x(), event.position().y()
+                dx = mx - self._last_mouse[0]
+                dy = my - self._last_mouse[1]
+                # Check if we've moved enough to be a drag
+                total_dx = abs(mx - self._click_pos[0])
+                total_dy = abs(my - self._click_pos[1])
+                if total_dx >= self._CLICK_THRESHOLD or total_dy >= self._CLICK_THRESHOLD:
+                    self._orbiting = True
+                if self._orbiting and (abs(dx) > 0.5 or abs(dy) > 0.5):
+                    self._do_orbit(dx, dy)
+                    self._last_mouse = (mx, my)
+                    self._sync_viewcube()
+                    return True  # consume — we handle orbit
             return False
 
         if etype == QEvent.Type.MouseButtonRelease:
@@ -1201,13 +1238,24 @@ class View3D(QWidget):
                 self._orbiting = False
                 return True  # consume — we own the full left-button cycle
 
+        # Safety: if mouse leaves widget mid-drag, reset orbit state
+        if etype == QEvent.Type.Leave:
+            self._click_pos = None
+            self._last_mouse = None
+            self._orbiting = False
+            return False
+
         if etype == QEvent.Type.Wheel:
             self._on_scroll_zoom(event)
             return True
 
         if etype == QEvent.Type.KeyPress:
-            self._on_key_press(event)
-            return False
+            handled = self._on_key_press(event)
+            return handled or False
+
+        if etype == QEvent.Type.ContextMenu:
+            self._show_context_menu(event.globalPos())
+            return True
 
         return super().eventFilter(obj, event)
 
@@ -1316,16 +1364,33 @@ class View3D(QWidget):
 
         if hit is not None:
             if ctrl_held:
-                hit.setSelected(not hit.isSelected())
+                if hit in self._3d_selected:
+                    self._3d_selected.remove(hit)
+                    hit.setSelected(False)
+                else:
+                    hit.setSelected(True)
+                    self._3d_selected.append(hit)
             else:
                 self._scene.clearSelection()
+                self._3d_selected = [hit]
                 hit.setSelected(True)
-            selected = [it for it in self._scene.selectedItems()]
+            # Build combined selection: scene + our 3D tracking
+            selected = list(self._scene.selectedItems())
+            for item in self._3d_selected:
+                if item not in selected:
+                    selected.append(item)
             self.entitySelected.emit(hit)
             self._highlight_mesh_selection(selected)
         elif ctrl_held:
             pass  # preserve selection
-        # else: plain click on empty space — keep selection intact
+        else:
+            # Click on empty space — clear selection
+            self._3d_selected.clear()
+            self._clear_actors("highlight")
+            self._clear_actors("sel_overlay")
+            self._clear_actors("sel_overlay_edges")
+            self._plotter.render()
+            self._scene.clearSelection()
 
     def _pick_at(self, screen_x: float, screen_y: float):
         """Find entity at screen position using VTK hardware picking."""
@@ -1367,9 +1432,15 @@ class View3D(QWidget):
         picker.Pick(int(screen_x), int(vtk_y), 0, renderer)
 
         actor = picker.GetActor()
-        if actor is not None and actor in self._actor_to_entity:
-            entity, _ = self._actor_to_entity[actor]
-            return entity
+        if actor is not None:
+            if actor in self._actor_to_entity:
+                entity, etype = self._actor_to_entity[actor]
+                print(f"[3D] picked actor → {type(entity).__name__} ({etype})")
+                return entity
+            else:
+                print(f"[3D] picked actor not in entity map (category unknown)")
+        else:
+            print(f"[3D] cell picker found no actor")
 
         # Return best node/pipe if any was within tolerance
         if self._node_positions_3d is not None:
@@ -1413,16 +1484,120 @@ class View3D(QWidget):
             return None
 
     def _on_key_press(self, event):
-        """Forward Enter/Escape to Model_Space during radiation selection."""
-        if getattr(self._scene, '_radiation_selecting', False):
-            key = event.key()
-            if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
-                self._scene.radiationConfirm.emit()
-                return
-            if key == Qt.Key.Key_Escape:
+        """Handle keyboard shortcuts in 3D view. Returns True if handled."""
+        key = event.key()
+
+        # Escape: cancel orbit, clear selection
+        if key == Qt.Key.Key_Escape:
+            # Break out of any stuck orbit state
+            self._click_pos = None
+            self._last_mouse = None
+            self._orbiting = False
+            # Clear ALL 3D highlights explicitly
+            self._clear_actors("highlight")
+            self._clear_actors("sel_overlay")
+            self._clear_actors("sel_overlay_edges")
+            self._plotter.render()
+            # Clear 2D scene selection (also syncs model browser)
+            self._scene.clearSelection()
+            # Forward to radiation selection if active
+            if getattr(self._scene, '_radiation_selecting', False):
                 self._scene._radiation_selecting = False
                 self._scene.radiationCancel.emit()
-                return
+            return True
+
+        # Radiation selection shortcuts
+        if getattr(self._scene, '_radiation_selecting', False):
+            if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+                self._scene.radiationConfirm.emit()
+                return True
+        return False
+
+    def _on_escape(self):
+        """Escape shortcut handler — clears orbit state and selection."""
+        self._click_pos = None
+        self._last_mouse = None
+        self._orbiting = False
+        self._3d_selected.clear()
+        self._clear_actors("highlight")
+        self._clear_actors("sel_overlay")
+        self._clear_actors("sel_overlay_edges")
+        self._plotter.render()
+        self._scene.clearSelection()
+        if getattr(self._scene, '_radiation_selecting', False):
+            self._scene._radiation_selecting = False
+            self._scene.radiationCancel.emit()
+
+    def get_3d_selected(self):
+        """Return items selected via 3D picking (may not be in scene selection)."""
+        return list(self._3d_selected)
+
+    def delete_selected(self):
+        """Delete items selected in the 3D view."""
+        items = list(self._3d_selected)
+        if not items:
+            return
+        self._3d_selected.clear()
+        self._clear_actors("highlight")
+        self._clear_actors("sel_overlay")
+        self._clear_actors("sel_overlay_edges")
+        self._plotter.render()
+        # Delete each item directly via scene methods
+        from roof import RoofItem
+        from wall import WallSegment
+        from floor_slab import FloorSlab
+        for item in items:
+            if isinstance(item, WallSegment):
+                for op in list(item.openings):
+                    if op.scene() is self._scene:
+                        self._scene.removeItem(op)
+                item.openings.clear()
+                if item in self._scene._walls:
+                    self._scene._walls.remove(item)
+                self._scene.removeItem(item)
+            elif isinstance(item, FloorSlab):
+                if item in self._scene._floor_slabs:
+                    self._scene._floor_slabs.remove(item)
+                self._scene.removeItem(item)
+            elif isinstance(item, RoofItem):
+                if item in self._scene._roofs:
+                    self._scene._roofs.remove(item)
+                self._scene.removeItem(item)
+            else:
+                # Fallback: try setSelected + scene delete
+                item.setSelected(True)
+                self._scene.delete_selected_items()
+        self._scene.push_undo_state()
+        self.rebuild()
+
+    def _show_context_menu(self, global_pos):
+        """Show right-click context menu in the 3D view."""
+        menu = QMenu(self)
+        has_sel = bool(self._3d_selected) or bool(self._scene.selectedItems())
+        delete_action = menu.addAction("Delete")
+        delete_action.setEnabled(has_sel)
+        deselect_action = menu.addAction("Deselect All")
+        deselect_action.setEnabled(has_sel)
+        menu.addSeparator()
+        fit_action = menu.addAction("Fit All")
+        refresh_action = menu.addAction("Refresh")
+
+        action = menu.exec(global_pos)
+        if action == delete_action:
+            self.delete_selected()
+        elif action == deselect_action:
+            self._on_escape()
+        elif action == fit_action:
+            self._fit_camera()
+        elif action == refresh_action:
+            self.rebuild()
+
+    def keyPressEvent(self, event):
+        """Catch key events on the View3D widget itself (backup path)."""
+        if self._on_key_press(event):
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     # ── Mesh Selection Highlight ─────────────────────────────────────────────
 
@@ -1474,14 +1649,16 @@ class View3D(QWidget):
         lm = self._lm
         for sel in selected_items:
             mesh_data = None
+            print(f"[3D] highlight: processing {type(sel).__name__}, has _roof_type={hasattr(sel, '_roof_type')}, has get_3d_mesh={hasattr(sel, 'get_3d_mesh')}")
             if isinstance(sel, WallSegment):
                 mesh_data = sel.get_3d_mesh(level_manager=lm)
             elif isinstance(sel, FloorSlab):
                 mesh_data = sel.get_3d_mesh(level_manager=lm)
-            elif hasattr(sel, '_roof_type') and hasattr(sel, 'get_3d_mesh'):
+            elif hasattr(sel, 'get_3d_mesh'):
                 mesh_data = sel.get_3d_mesh(level_manager=lm)
 
             if mesh_data is None:
+                print(f"[3D] highlight: no mesh_data for {type(sel).__name__}")
                 continue
 
             verts = np.array(mesh_data["vertices"], dtype=np.float32)
@@ -1492,6 +1669,7 @@ class View3D(QWidget):
             actor = self._plotter.add_mesh(
                 overlay, color=COL_SEL_MESH, opacity=1.0,
             )
+            actor.GetProperty().SetVertexVisibility(False)
             self._add_actor("sel_overlay", actor)
 
             # Bright edge wireframe on top
@@ -1505,7 +1683,7 @@ class View3D(QWidget):
                 edge_mesh.lines = np.array(line_cells, dtype=np.int64)
                 edge_actor = self._plotter.add_mesh(
                     edge_mesh, color=COL_SEL_EDGE, opacity=1.0,
-                    line_width=3.0,
+                    line_width=1.5,
                 )
                 edge_actor.GetProperty().SetPointSize(0.0)
                 edge_actor.GetProperty().SetVertexVisibility(False)
@@ -1522,6 +1700,8 @@ class View3D(QWidget):
             selected = self._scene.selectedItems()
         except RuntimeError:
             return
+
+        print(f"[3D] _on_2d_selection_changed: {len(selected)} items: {[type(s).__name__ for s in selected]}")
 
         if not selected:
             self._highlight_mesh_selection(None)
@@ -1543,9 +1723,10 @@ class View3D(QWidget):
 
         if positions:
             pts = pv.PolyData(np.array(positions, dtype=np.float32))
+            sphere = pv.Sphere(radius=50.0, theta_resolution=8, phi_resolution=8)
+            glyphs = pts.glyph(geom=sphere, scale=False, orient=False)
             actor = self._plotter.add_mesh(
-                pts, color=COL_HIGHLIGHT, point_size=16,
-                render_points_as_spheres=True, opacity=0.85,
+                glyphs, color=COL_HIGHLIGHT, opacity=0.85,
                 name="highlight",
             )
             self._add_actor("highlight", actor)

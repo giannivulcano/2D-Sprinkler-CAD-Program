@@ -24,7 +24,7 @@ from user_layer_manager import UserLayerManager, UserLayerWidget
 from level_manager import LevelManager, LevelWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
 from ribbon_bar import RibbonBar
-from view_3d import View3D
+# view_3d deferred — imports pyvista/VTK which is slow
 from array_dialog import ArrayDialog
 from project_browser import ProjectBrowser
 from model_browser import ModelBrowser
@@ -358,8 +358,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.new_file)
         QShortcut(QKeySequence("Delete"), self).activated.connect(
             self._delete_if_not_editing)
-        QShortcut(QKeySequence("Escape"), self).activated.connect(
-            lambda: self.scene.set_mode("select"))
+        QShortcut(QKeySequence("Escape"), self).activated.connect(self._on_escape)
         QShortcut(QKeySequence("Ctrl+C"), self).activated.connect(
             self.scene.copy_selected_items)
         QShortcut(QKeySequence("Ctrl+V"), self).activated.connect(
@@ -1780,11 +1779,21 @@ class MainWindow(QMainWindow):
         self._modified = True
         self._update_title()
 
+    def _on_escape(self):
+        """Escape: reset mode, clear selection, clear 3D highlights."""
+        self.scene.set_mode("select")
+        self.scene.clearSelection()
+        self.view_3d._on_escape()
+
     def _delete_if_not_editing(self):
         """Delete selected items unless a text item is being edited."""
         focus = self.scene.focusItem()
         if isinstance(focus, QGraphicsTextItem) and focus.hasFocus():
             return  # let the text editor handle Delete
+        # Check 3D-only selection first
+        if self.view_3d.get_3d_selected():
+            self.view_3d.delete_selected()
+            return
         self.scene.delete_selected_items()
 
     def open_import_dialog(self, file_path: str = ""):
@@ -2078,15 +2087,23 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    # Apply global theme stylesheet before any widgets are created
-    # Show splash screen while loading
+
+    # Show splash IMMEDIATELY — before heavy 3D imports
     splash = _SplashScreen()
     splash.show()
-    splash.set_progress(0, "Applying theme...")
+    splash.set_progress(5, "Applying theme...")
+    QApplication.processEvents()
 
     _t = th.detect()
     app.setStyleSheet(th.build_app_qss(_t))
 
+    # Defer the heavy pyvista/VTK import until after splash is visible
+    splash.set_progress(20, "Loading 3D engine...")
+    QApplication.processEvents()
+    global View3D
+    from view_3d import View3D
+
+    splash.set_progress(50, "Building UI...")
     window = MainWindow(splash=splash)
     window.resize(800, 600)
     splash.close()
