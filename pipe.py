@@ -82,7 +82,7 @@ class Pipe(QGraphicsLineItem):
         self.user_layer: str = DEFAULT_USER_LAYER   # user-defined layer name
         self.level: str = DEFAULT_LEVEL          # floor level name
         self.ceiling_level: str = DEFAULT_LEVEL  # ceiling level (3D elevation)
-        self.ceiling_offset: float = -50.8    # mm below ceiling (default -2" = -50.8mm)
+        self.ceiling_offset: float = -50.8    # mm offset from ceiling level (negative = below)
 
 
         self._display_overrides: dict = {}       # per-instance display overrides

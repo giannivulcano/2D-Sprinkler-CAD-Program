@@ -265,6 +265,7 @@ class PropertyManager(QWidget):
                 try:
                     float(meta["value"])
                     validator = QDoubleValidator()
+                    validator.setBottom(-1e9)
                     validator.setNotation(
                         QDoubleValidator.Notation.StandardNotation)
                     widget.setValidator(validator)
