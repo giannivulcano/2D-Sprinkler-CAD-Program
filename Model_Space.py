@@ -286,12 +286,19 @@ class Model_Space(QGraphicsScene):
                 continue
             if pipe.node1 not in node_id or pipe.node2 not in node_id:
                 continue
+            # Save raw _properties (not get_properties() which display-formats
+            # ceiling offset and diameter — those are unit-dependent strings
+            # that complicate round-tripping).
+            raw_props = {k: v["value"] for k, v in pipe._properties.items()}
+            raw_props["Ceiling Offset"] = str(pipe.ceiling_offset)
             pipe_entry = {
                 "node1_id":   node_id[pipe.node1],
                 "node2_id":   node_id[pipe.node2],
                 "user_layer": getattr(pipe, "user_layer", "0"),
                 "level":      getattr(pipe, "level", DEFAULT_LEVEL),
-                "properties": {k: v["value"] for k, v in pipe.get_properties().items()},
+                "ceiling_level":     getattr(pipe, "ceiling_level", DEFAULT_LEVEL),
+                "ceiling_offset_mm": getattr(pipe, "ceiling_offset", -50.8),
+                "properties": raw_props,
             }
             pipe_ovr = getattr(pipe, "_display_overrides", {})
             if pipe_ovr:
@@ -528,6 +535,11 @@ class Model_Space(QGraphicsScene):
             # Display overrides (Display Manager)
             node._display_overrides = entry.get("display_overrides", {})
             if entry.get("sprinkler"):
+                # Save node elevation state — sprinkler template may carry
+                # stale defaults that would overwrite the correct values.
+                _saved_cl = node.ceiling_level
+                _saved_co = node.ceiling_offset
+                _saved_zp = node.z_pos
                 template = Sprinkler(None)
                 for key, value in entry["sprinkler"].items():
                     if isinstance(value, dict):
@@ -535,7 +547,13 @@ class Model_Space(QGraphicsScene):
                     else:
                         template.set_property(key, value)
                 self.add_sprinkler(node, template)
-                # Sprinkler's set_property("Elevation", ...) also syncs node.z_pos
+                # Restore the authoritative node elevation (node entry is
+                # the source of truth, not the sprinkler template).
+                node.ceiling_level = _saved_cl
+                node.ceiling_offset = _saved_co
+                node.z_pos = _saved_zp
+                node._properties["Ceiling Level"]["value"] = _saved_cl
+                node._properties["Ceiling Offset"]["value"] = str(_saved_co)
                 node.sprinkler._display_overrides = entry.get(
                     "sprinkler_display_overrides", {})
             # Fitting display overrides are applied after fitting.update() below
@@ -547,10 +565,18 @@ class Model_Space(QGraphicsScene):
             n1 = id_to_node.get(entry["node1_id"])
             n2 = id_to_node.get(entry["node2_id"])
             if n1 and n2:
-                pipe = self.add_pipe(n1, n2)
+                pipe = self.add_pipe(n1, n2, _propagate_ceiling=False)
                 pipe.user_layer = entry.get("user_layer", "0")
                 pipe.level = entry.get("level", DEFAULT_LEVEL)
+                pipe.ceiling_level = entry.get("ceiling_level",
+                    entry.get("properties", {}).get("Ceiling Level", DEFAULT_LEVEL))
+                pipe._properties["Ceiling Level"]["value"] = pipe.ceiling_level
+                if "ceiling_offset_mm" in entry:
+                    pipe.ceiling_offset = entry["ceiling_offset_mm"]
+                    pipe._properties["Ceiling Offset"]["value"] = str(pipe.ceiling_offset)
                 for key, value in entry.get("properties", {}).items():
+                    if key in ("Ceiling Level", "Ceiling Offset"):
+                        continue  # already restored from dedicated fields above
                     pipe.set_property(key, value)
                 # Old files without Line Type: auto-assign based on diameter
                 props = entry.get("properties", {})
@@ -1294,7 +1320,7 @@ class Model_Space(QGraphicsScene):
         n = None
         self.node_start_pos = None
 
-    def add_pipe(self, n1, n2, template=None):
+    def add_pipe(self, n1, n2, template=None, _propagate_ceiling=True):
         pipe = Pipe(n1, n2)
         pipe.user_layer = self.active_user_layer
         # Apply template first so non-level properties are copied
@@ -1311,18 +1337,20 @@ class Model_Space(QGraphicsScene):
 
         # Propagate the pipe's ceiling properties to both endpoint nodes
         # so their 3D elevation matches what the user set on the template.
-        ceiling_lvl = pipe._properties["Ceiling Level"]["value"]
-        try:
-            ceiling_off = float(pipe._properties["Ceiling Offset"]["value"])
-        except (ValueError, TypeError):
-            ceiling_off = -2.0
-        for node in (n1, n2):
-            if node is not None:
-                node.ceiling_level = ceiling_lvl
-                node._properties["Ceiling Level"]["value"] = ceiling_lvl
-                node.ceiling_offset = ceiling_off
-                node._properties["Ceiling Offset"]["value"] = str(ceiling_off)
-                node._recompute_z_pos()
+        # Skip during load — nodes already have authoritative ceiling data.
+        if _propagate_ceiling:
+            ceiling_lvl = pipe._properties["Ceiling Level"]["value"]
+            try:
+                ceiling_off = float(pipe._properties["Ceiling Offset"]["value"])
+            except (ValueError, TypeError):
+                ceiling_off = -2.0
+            for node in (n1, n2):
+                if node is not None:
+                    node.ceiling_level = ceiling_lvl
+                    node._properties["Ceiling Level"]["value"] = ceiling_lvl
+                    node.ceiling_offset = ceiling_off
+                    node._properties["Ceiling Offset"]["value"] = str(ceiling_off)
+                    node._recompute_z_pos()
 
         return pipe
 
@@ -4133,6 +4161,8 @@ class Model_Space(QGraphicsScene):
 
     # ── Dispatch table: mode string → press-handler method name ──────
     _PRESS_DISPATCH = {
+        None:                       "_press_select_item",
+        "select":                   "_press_select_item",
         "sprinkler":                "_press_sprinkler",
         "pipe":                     "_press_pipe",
         "set_scale":                "_press_set_scale",
@@ -4239,6 +4269,19 @@ class Model_Space(QGraphicsScene):
         super().mousePressEvent(event)
 
     # ── Per-mode press handlers ──────────────────────────────────────────
+
+    def _press_select_item(self, event, pos, snapped, item_under, node_under, pipe_under):
+        """Explicit select-mode click: select the node or pipe under cursor."""
+        # Shift-click floor vertex editing takes priority
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if self._press_select_shift_floor(event, pos, snapped,
+                                               item_under, node_under, pipe_under):
+                return
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        if not ctrl:
+            self.clearSelection()
+        if item_under is not None:
+            item_under.setSelected(not item_under.isSelected() if ctrl else True)
 
     def _press_sprinkler(self, event, pos, snapped, item_under, node_under, pipe_under):
         if item_under is None:

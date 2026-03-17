@@ -168,6 +168,10 @@ class MainWindow(QMainWindow):
         # Scene + View
         self._splash_progress(10, "Initialising scene...")
         self.scene = Model_Space()
+        # Give templates a scene reference so they can always find the
+        # *current* scale_manager (survives _clear_scene resets).
+        self.current_pipe_template._scene_ref = self.scene
+        self.current_sprinkler_template._scene_ref = self.scene
         self.view = Model_View(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setMouseTracking(True)
@@ -2070,14 +2074,16 @@ class MainWindow(QMainWindow):
         self.settings.setValue("dock/properties", self.prop_dock.isVisible())
         self.settings.setValue("dock/hydraulics", self.hydro_dock.isVisible())
         self.settings.setValue("dock/radiation", self.radiation_dock.isVisible())
-        # Persist pipe and sprinkler template settings
+        # Persist pipe and sprinkler template settings (raw internal values,
+        # not display-formatted, so they round-trip regardless of unit prefs).
         if self.current_pipe_template:
             pipe_props = {k: v["value"]
-                          for k, v in self.current_pipe_template.get_properties().items()}
+                          for k, v in self.current_pipe_template._properties.items()}
+            pipe_props["Ceiling Offset"] = str(self.current_pipe_template.ceiling_offset)
             self.settings.setValue("template/pipe", pipe_props)
         if self.current_sprinkler_template:
             spr_props = {k: v["value"]
-                         for k, v in self.current_sprinkler_template.get_properties().items()}
+                         for k, v in self.current_sprinkler_template._properties.items()}
             self.settings.setValue("template/sprinkler", spr_props)
 
 

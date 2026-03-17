@@ -267,18 +267,29 @@ class Pipe(QGraphicsLineItem):
         else:
             return end
         
-    def _fmt(self, mm: float) -> str:
+    def _get_scale_manager(self):
+        """Return the ScaleManager from the scene, or a fallback reference."""
         sc = self.scene()
-        sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else None
+        if sc and hasattr(sc, "scale_manager"):
+            return sc.scale_manager
+        # For templates not in a scene: follow a scene reference to get
+        # the *current* scale_manager (survives _clear_scene resets).
+        ref = getattr(self, "_scene_ref", None)
+        if ref is not None and hasattr(ref, "scale_manager"):
+            return ref.scale_manager
+        return None
+
+    def _fmt(self, mm: float) -> str:
+        sm = self._get_scale_manager()
         return sm.format_length(mm) if sm else f"{mm:.1f} mm"
 
     def _is_metric_display(self) -> bool:
         """True when the current display unit is metric (mm or m)."""
-        sc = self.scene()
-        if sc and hasattr(sc, "scale_manager"):
+        sm = self._get_scale_manager()
+        if sm is not None:
             from scale_manager import DisplayUnit
-            return sc.scale_manager.display_unit in (DisplayUnit.METRIC_MM, DisplayUnit.METRIC_M)
-        return True  # default to metric when no scene
+            return sm.display_unit in (DisplayUnit.METRIC_MM, DisplayUnit.METRIC_M)
+        return True  # default to metric when no scale manager
 
     def get_properties(self):
         props = self._properties.copy()
@@ -304,8 +315,7 @@ class Pipe(QGraphicsLineItem):
             key = "Ceiling Offset"
         if key == "Ceiling Offset":
             # Parse dimension input and store canonical mm value
-            sc = self.scene()
-            sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else None
+            sm = self._get_scale_manager()
             if sm:
                 parsed = sm.parse_dimension(str(value), sm.bare_number_unit())
                 if parsed is not None:

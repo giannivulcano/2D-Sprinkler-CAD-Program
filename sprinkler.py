@@ -40,6 +40,8 @@ class Sprinkler(QGraphicsSvgItem):
             "Ceiling Offset":  {"type": "string", "value": "-50.8"},
         }
 
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+
         if node is not None:
             self.setParentItem(node)
             self.setZValue(100)
@@ -112,17 +114,31 @@ class Sprinkler(QGraphicsSvgItem):
     # -------------------------------------------------------------------------
     # Public property API
 
+    def _get_scale_manager(self):
+        """Return the ScaleManager from the scene, or a fallback reference."""
+        if self.node is not None:
+            sc = self.node.scene()
+            if sc and hasattr(sc, "scale_manager"):
+                return sc.scale_manager
+        # For templates not in a scene: follow a scene reference to get
+        # the *current* scale_manager (survives _clear_scene resets).
+        ref = getattr(self, "_scene_ref", None)
+        if ref is not None and hasattr(ref, "scale_manager"):
+            return ref.scale_manager
+        return None
+
     def _fmt(self, mm: float) -> str:
-        if self.node is None:
-            return f"{mm:.1f} mm"
-        sc = self.node.scene()
-        sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else None
+        sm = self._get_scale_manager()
         return sm.format_length(mm) if sm else f"{mm:.1f} mm"
 
     def get_properties(self) -> dict:
         props = self._properties.copy()
-        # Format ceiling offset for display using project units
+        # Sync level properties and ceiling offset from the parent node
         if self.node is not None:
+            props["Level"] = dict(props["Level"])
+            props["Level"]["value"] = self.node.level
+            props["Ceiling Level"] = dict(props["Ceiling Level"])
+            props["Ceiling Level"]["value"] = self.node.ceiling_level
             props["Ceiling Offset"] = dict(props["Ceiling Offset"])
             props["Ceiling Offset"]["value"] = self._fmt(self.node.ceiling_offset)
         return props
@@ -147,8 +163,7 @@ class Sprinkler(QGraphicsSvgItem):
             self.node._properties["Ceiling Level"]["value"] = str(value)
             self.node._recompute_z_pos()
         elif key == "Ceiling Offset" and self.node is not None:
-            sc = self.node.scene()
-            sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else None
+            sm = self._get_scale_manager()
             if sm:
                 parsed = sm.parse_dimension(str(value), sm.bare_number_unit())
                 if parsed is not None:

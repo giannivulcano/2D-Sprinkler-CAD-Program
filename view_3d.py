@@ -86,10 +86,9 @@ _FLOOR_COLORS = [
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _faces_to_vtk(faces: np.ndarray) -> np.ndarray:
-    """Convert Mx3 triangle face array to VTK-padded format."""
-    n = len(faces)
-    return np.column_stack([np.full(n, 3, dtype=np.int64), faces.astype(np.int64)]).ravel()
+def _mesh_from_faces(verts: np.ndarray, faces: np.ndarray) -> "pv.PolyData":
+    """Build a PolyData mesh from an Mx3 triangle face array (no manual padding)."""
+    return pv.PolyData.from_regular_faces(verts, faces)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +173,25 @@ class View3D(QWidget):
         self._actors.setdefault(category, []).append(actor)
         if entity is not None:
             self._actor_to_entity[actor] = (entity, entity_type)
+
+    def _add_edge_actor(self, mesh, category: str, *,
+                        color=(0.0, 0.0, 0.0), opacity=1.0,
+                        line_width=1.0, name=None):
+        """Extract feature edges from *mesh* and add as a line actor."""
+        edges = mesh.extract_feature_edges(
+            boundary_edges=True, feature_edges=True,
+            non_manifold_edges=False, manifold_edges=False,
+            feature_angle=1.0,
+        )
+        if edges.n_cells > 0:
+            kw = dict(color=color, opacity=opacity, line_width=line_width)
+            if name is not None:
+                kw["name"] = name
+            actor = self._plotter.add_mesh(edges, **kw)
+            self._add_actor(category, actor)
+            return actor
+        self._add_actor(category, None)
+        return None
 
     # ── UI ─────────────────────────────────────────────────────────────────
 
@@ -863,20 +881,12 @@ class View3D(QWidget):
             self._add_actor("floors", actor)
 
             # Edge outline via VTK feature edges
-            edges = floor_mesh.extract_feature_edges(
-                boundary_edges=True, feature_edges=True,
-                non_manifold_edges=False, manifold_edges=False,
-                feature_angle=1.0,
+            edge_actor = self._add_edge_actor(
+                floor_mesh, "floor_edges",
+                color=col[:3], opacity=0.6, name=f"floor_edge_{i}",
             )
-            if edges.n_cells > 0:
-                edge_actor = self._plotter.add_mesh(
-                    edges, color=col[:3], opacity=0.6,
-                    line_width=1.0, name=f"floor_edge_{i}",
-                )
+            if edge_actor is not None:
                 edge_actor.SetVisibility(self._level_floors_visible)
-                self._add_actor("floor_edges", edge_actor)
-            else:
-                self._add_actor("floor_edges", None)
 
             # Level label
             label_pt = np.array([[x_min + 200, y_min + 200, z + 50]])
@@ -913,8 +923,7 @@ class View3D(QWidget):
             faces = np.array(mesh_data["faces"], dtype=np.uint32)
             col = mesh_data.get("color", (0.8, 0.8, 0.8, 0.9))
 
-            vtk_faces = _faces_to_vtk(faces)
-            mesh = pv.PolyData(verts, faces=vtk_faces)
+            mesh = _mesh_from_faces(verts, faces)
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=1.0,
             )
@@ -926,20 +935,8 @@ class View3D(QWidget):
             # Store Z range for section cuts
             self._actor_z_range[actor] = (float(verts[:, 2].min()), float(verts[:, 2].max()))
 
-            # Edge wireframe via VTK feature edge extraction
-            edges = mesh.extract_feature_edges(
-                boundary_edges=True, feature_edges=True,
-                non_manifold_edges=False, manifold_edges=False,
-                feature_angle=1.0,
-            )
-            if edges.n_cells > 0:
-                edge_actor = self._plotter.add_mesh(
-                    edges, color=(0.0, 0.0, 0.0), opacity=1.0,
-                    line_width=1.0,
-                )
-                self._add_actor("wall_edges", edge_actor)
-            else:
-                self._add_actor("wall_edges", None)
+            # Edge wireframe via VTK feature edges
+            self._add_edge_actor(mesh, "wall_edges")
 
         self._wall_centroids_3d = np.array(centroids) if centroids else None
 
@@ -966,8 +963,7 @@ class View3D(QWidget):
             faces = np.array(mesh_data["faces"], dtype=np.uint32)
             col = mesh_data.get("color", (0.5, 0.5, 0.8, 0.5))
 
-            vtk_faces = _faces_to_vtk(faces)
-            mesh = pv.PolyData(verts, faces=vtk_faces)
+            mesh = _mesh_from_faces(verts, faces)
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=col[3] if len(col) > 3 else 1.0,
             )
@@ -978,20 +974,8 @@ class View3D(QWidget):
 
             self._actor_z_range[actor] = (float(verts[:, 2].min()), float(verts[:, 2].max()))
 
-            # Edge wireframe via VTK feature edge extraction
-            edges = mesh.extract_feature_edges(
-                boundary_edges=True, feature_edges=True,
-                non_manifold_edges=False, manifold_edges=False,
-                feature_angle=1.0,
-            )
-            if edges.n_cells > 0:
-                edge_actor = self._plotter.add_mesh(
-                    edges, color=(0.0, 0.0, 0.0), opacity=1.0,
-                    line_width=1.0,
-                )
-                self._add_actor("slab_edges", edge_actor)
-            else:
-                self._add_actor("slab_edges", None)
+            # Edge wireframe via VTK feature edges
+            self._add_edge_actor(mesh, "slab_edges")
 
         self._slab_centroids_3d = np.array(centroids) if centroids else None
 
@@ -1016,8 +1000,7 @@ class View3D(QWidget):
             faces = np.array(mesh_data["faces"], dtype=np.uint32)
             col = mesh_data.get("color", (0.8, 0.7, 0.5, 0.5))
 
-            vtk_faces = _faces_to_vtk(faces)
-            mesh = pv.PolyData(verts, faces=vtk_faces)
+            mesh = _mesh_from_faces(verts, faces)
             actor = self._plotter.add_mesh(
                 mesh, color=col[:3], opacity=col[3] if len(col) > 3 else 1.0,
             )
@@ -1028,20 +1011,8 @@ class View3D(QWidget):
 
             self._actor_z_range[actor] = (float(verts[:, 2].min()), float(verts[:, 2].max()))
 
-            # Edge wireframe via VTK feature edge extraction
-            edges = mesh.extract_feature_edges(
-                boundary_edges=True, feature_edges=True,
-                non_manifold_edges=False, manifold_edges=False,
-                feature_angle=1.0,
-            )
-            if edges.n_cells > 0:
-                edge_actor = self._plotter.add_mesh(
-                    edges, color=(0.0, 0.0, 0.0), opacity=1.0,
-                    line_width=1.0,
-                )
-                self._add_actor("roof_edges", edge_actor)
-            else:
-                self._add_actor("roof_edges", None)
+            # Edge wireframe via VTK feature edges
+            self._add_edge_actor(mesh, "roof_edges")
 
         self._roof_centroids_3d = np.array(centroids) if centroids else None
 
@@ -1330,39 +1301,38 @@ class View3D(QWidget):
             self._plotter.render()
             self._scene.clearSelection()
 
-    def _pick_at(self, screen_x: float, screen_y: float):
-        """Find entity at screen position using VTK hardware picking."""
-        # First try point picking for nodes/pipes
-        renderer = self._plotter.renderer
-        h = renderer.GetSize()[1]
-        vtk_y = h - screen_y  # VTK uses bottom-left origin
+    def _nearest_point_entity(self, screen_x: float, screen_y: float):
+        """Find the closest node or pipe midpoint within pick tolerance."""
+        best_item = None
+        best_dist = float("inf")
 
-        # Check nodes first (point distance in screen space)
-        if self._node_positions_3d is not None:
-            best_item = None
-            best_dist = float("inf")
-            for i, pos3d in enumerate(self._node_positions_3d):
+        for positions, refs in (
+            (self._node_positions_3d, getattr(self, '_node_refs', None)),
+            (self._pipe_midpoints_3d, getattr(self, '_pipe_refs', None)),
+        ):
+            if positions is None or refs is None:
+                continue
+            for i, pos3d in enumerate(positions):
                 screen = self._project_to_screen(pos3d)
                 if screen is None:
                     continue
                 dist = math.sqrt((screen[0] - screen_x) ** 2 + (screen[1] - screen_y) ** 2)
                 if dist < PICK_TOLERANCE_PX and dist < best_dist:
                     best_dist = dist
-                    best_item = self._node_refs[i]
+                    best_item = refs[i]
 
-            # Check pipe midpoints
-            if self._pipe_midpoints_3d is not None:
-                for i, pos3d in enumerate(self._pipe_midpoints_3d):
-                    screen = self._project_to_screen(pos3d)
-                    if screen is None:
-                        continue
-                    dist = math.sqrt((screen[0] - screen_x) ** 2 + (screen[1] - screen_y) ** 2)
-                    if dist < PICK_TOLERANCE_PX and dist < best_dist:
-                        best_dist = dist
-                        best_item = self._pipe_refs[i]
+        return best_item, best_dist
 
-            if best_item is not None and best_dist < PICK_TOLERANCE_PX / 2:
-                return best_item
+    def _pick_at(self, screen_x: float, screen_y: float):
+        """Find entity at screen position using VTK hardware picking."""
+        renderer = self._plotter.renderer
+        h = renderer.GetSize()[1]
+        vtk_y = h - screen_y  # VTK uses bottom-left origin
+
+        # Check nodes/pipes first (tight tolerance)
+        point_item, point_dist = self._nearest_point_entity(screen_x, screen_y)
+        if point_item is not None and point_dist < PICK_TOLERANCE_PX / 2:
+            return point_item
 
         # Use VTK cell picker for mesh entities
         picker = vtk.vtkCellPicker()
@@ -1380,32 +1350,8 @@ class View3D(QWidget):
         else:
             print(f"[3D] cell picker found no actor")
 
-        # Return best node/pipe if any was within tolerance
-        if self._node_positions_3d is not None:
-            best_item = None
-            best_dist = float("inf")
-            for i, pos3d in enumerate(self._node_positions_3d):
-                screen = self._project_to_screen(pos3d)
-                if screen is None:
-                    continue
-                dist = math.sqrt((screen[0] - screen_x) ** 2 + (screen[1] - screen_y) ** 2)
-                if dist < PICK_TOLERANCE_PX and dist < best_dist:
-                    best_dist = dist
-                    best_item = self._node_refs[i]
-
-            if self._pipe_midpoints_3d is not None:
-                for i, pos3d in enumerate(self._pipe_midpoints_3d):
-                    screen = self._project_to_screen(pos3d)
-                    if screen is None:
-                        continue
-                    dist = math.sqrt((screen[0] - screen_x) ** 2 + (screen[1] - screen_y) ** 2)
-                    if dist < PICK_TOLERANCE_PX and dist < best_dist:
-                        best_dist = dist
-                        best_item = self._pipe_refs[i]
-
-            return best_item
-
-        return None
+        # Fall back to any node/pipe within full tolerance
+        return point_item
 
     def _project_to_screen(self, world_pos: np.ndarray):
         """Project a 3D world position to 2D screen coordinates."""
@@ -1602,25 +1548,17 @@ class View3D(QWidget):
             verts = np.array(mesh_data["vertices"], dtype=np.float32)
             faces = np.array(mesh_data["faces"], dtype=np.uint32)
 
-            vtk_faces = _faces_to_vtk(faces)
-            overlay = pv.PolyData(verts, faces=vtk_faces)
+            overlay = _mesh_from_faces(verts, faces)
             actor = self._plotter.add_mesh(
                 overlay, color=COL_SEL_MESH, opacity=1.0,
             )
             self._add_actor("sel_overlay", actor)
 
             # Bright edge wireframe via VTK feature edges
-            edges = overlay.extract_feature_edges(
-                boundary_edges=True, feature_edges=True,
-                non_manifold_edges=False, manifold_edges=False,
-                feature_angle=1.0,
+            self._add_edge_actor(
+                overlay, "sel_overlay_edges",
+                color=COL_SEL_EDGE, line_width=1.5,
             )
-            if edges.n_cells > 0:
-                edge_actor = self._plotter.add_mesh(
-                    edges, color=COL_SEL_EDGE, opacity=1.0,
-                    line_width=1.5,
-                )
-                self._add_actor("sel_overlay_edges", edge_actor)
 
         self._plotter.render()
 
@@ -1717,8 +1655,7 @@ class View3D(QWidget):
             elif len(face_colors) > len(faces):
                 face_colors = face_colors[:len(faces)]
 
-            vtk_faces = _faces_to_vtk(faces)
-            mesh = pv.PolyData(offset_verts, faces=vtk_faces)
+            mesh = _mesh_from_faces(offset_verts, faces)
             # Store per-face colors as cell data (RGB uint8)
             mesh.cell_data["colors"] = (face_colors[:, :3] * 255).astype(np.uint8)
 
