@@ -33,6 +33,7 @@ from constants import Z_BELOW_GEOMETRY, DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_MM
 from floor_slab import FloorSlab
 from roof import RoofItem
+from room import Room
 from wall_opening import WallOpening, DoorOpening, WindowOpening
 from constraints import Constraint as ConstraintBase
 from user_layer_manager import lw_mm_to_cosmetic_px
@@ -195,6 +196,7 @@ class Model_Space(QGraphicsScene):
         self._wall_template: "WallSegment | None" = None      # pre-placement property template
         self._floor_template: "FloorSlab | None" = None       # pre-placement property template
         self._roofs: list[RoofItem] = []
+        self._rooms: list[Room] = []
         self._next_roof_num: int = 1
         self._roof_template: "RoofItem | None" = None         # pre-placement property template
         self._roof_active: "RoofItem | None" = None           # in-progress roof boundary
@@ -731,6 +733,12 @@ class Model_Space(QGraphicsScene):
             self.addItem(roof)
             self._roofs.append(roof)
 
+        # --- Rooms ---
+        for entry in payload.get("rooms", []):
+            room = Room.from_dict(entry)
+            self.addItem(room)
+            self._rooms.append(room)
+
         # --- Recalculate auto-name counters ---
         self._recalc_name_counters()
 
@@ -804,6 +812,7 @@ class Model_Space(QGraphicsScene):
         self._walls = []
         self._floor_slabs = []
         self._roofs = []
+        self._rooms = []
         self._wall_anchor = None
         self._wall_chain_start = None
         self._floor_active = None
@@ -961,6 +970,10 @@ class Model_Space(QGraphicsScene):
             elif isinstance(item, RoofItem):
                 if item in self._roofs:
                     self._roofs.remove(item)
+                self.removeItem(item)
+            elif isinstance(item, Room):
+                if item in self._rooms:
+                    self._rooms.remove(item)
                 self.removeItem(item)
             elif isinstance(item, (DoorOpening, WindowOpening)):
                 if item.wall is not None and item in item.wall.openings:
@@ -2236,6 +2249,7 @@ class Model_Space(QGraphicsScene):
             "walls":              [w.to_dict()  for w in self._walls],
             "floor_slabs":        [fs.to_dict() for fs in self._floor_slabs],
             "roofs":              [r.to_dict()  for r in self._roofs],
+            "rooms":              [r.to_dict()  for r in self._rooms],
             # ── Hatches & Constraints ─────────────────────────────────────
             "hatches":            [h.to_dict() for h in self._hatch_items
                                   if hasattr(h, 'to_dict')],
@@ -2517,6 +2531,11 @@ class Model_Space(QGraphicsScene):
                 roof = RoofItem.from_dict(d)
                 self.addItem(roof)
                 self._roofs.append(roof)
+
+            for d in state.get("rooms", []):
+                room = Room.from_dict(d)
+                self.addItem(room)
+                self._rooms.append(room)
 
             # ── Hatches ───────────────────────────────────────────────────
             for d in state.get("hatches", []):
@@ -4295,6 +4314,7 @@ class Model_Space(QGraphicsScene):
         "gridline":                 "_press_gridline",
         "water_supply":             "_press_water_supply",
         "design_area":              "_press_design_area",
+        "room":                     "_press_room",
         "paste":                    "_press_paste_move",
         "move":                     "_press_paste_move",
         "place_import":             "_press_place_import",
@@ -4352,7 +4372,7 @@ class Model_Space(QGraphicsScene):
         if selection is None:
             selection = next(
                 (i for i in items
-                 if isinstance(i, (WallSegment, FloorSlab, RoofItem))
+                 if isinstance(i, (WallSegment, FloorSlab, RoofItem, Room))
                  and i.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable),
                 None,
             )
@@ -4868,6 +4888,217 @@ class Model_Space(QGraphicsScene):
                 self._show_status(f"Design area: {count} sprinkler(s). Click more or right-click to confirm.")
             else:
                 self._show_status("No sprinkler found. Click on a sprinkler to add/remove it.")
+
+    # ── Room boundary detection ────────────────────────────────────────
+
+    def _detect_room_boundary(self, click_pt: QPointF) -> list[QPointF] | None:
+        """Detect a closed wall boundary enclosing *click_pt*.
+
+        Builds a graph from wall endpoints on the active level, then walks
+        the boundary by always choosing the tightest clockwise turn at each
+        node.  Returns the polygon vertices, or None if no closed loop found.
+        """
+        import math as _m
+
+        TOL = 2.0  # endpoint snap tolerance (scene units)
+        level = self.active_level
+
+        # Collect walls on this level
+        walls = [w for w in self._walls if w.level == level]
+        if not walls:
+            return None
+
+        # Build adjacency graph: node_id → list of (neighbor_id, wall, edge_angle)
+        # First, collect unique nodes by snapping endpoints
+        raw_pts: list[QPointF] = []
+        for w in walls:
+            raw_pts.append(w.pt1)
+            raw_pts.append(w.pt2)
+
+        # Merge close points into node indices
+        node_coords: list[QPointF] = []
+        pt_to_node: dict[int, int] = {}  # raw_pts index → node index
+
+        for i, pt in enumerate(raw_pts):
+            found = -1
+            for ni, nc in enumerate(node_coords):
+                if _m.hypot(pt.x() - nc.x(), pt.y() - nc.y()) <= TOL:
+                    found = ni
+                    break
+            if found >= 0:
+                pt_to_node[i] = found
+            else:
+                pt_to_node[i] = len(node_coords)
+                node_coords.append(QPointF(pt))
+
+        # Build directed edges (each wall creates two directed edges)
+        from collections import defaultdict
+        adj: dict[int, list[tuple[int, float]]] = defaultdict(list)
+
+        for wi, w in enumerate(walls):
+            n1 = pt_to_node[wi * 2]
+            n2 = pt_to_node[wi * 2 + 1]
+            if n1 == n2:
+                continue
+            p1, p2 = node_coords[n1], node_coords[n2]
+            angle_12 = _m.atan2(p2.y() - p1.y(), p2.x() - p1.x())
+            angle_21 = _m.atan2(p1.y() - p2.y(), p1.x() - p2.x())
+            adj[n1].append((n2, angle_12))
+            adj[n2].append((n1, angle_21))
+
+        # Sort adjacency lists by angle for each node
+        for node_id in adj:
+            adj[node_id].sort(key=lambda x: x[1])
+
+        # Find the nearest edge to click_pt
+        best_wall = None
+        best_dist = float("inf")
+        for w in walls:
+            # Project click_pt onto wall centerline
+            ax, ay = w.pt1.x(), w.pt1.y()
+            bx, by = w.pt2.x(), w.pt2.y()
+            dx, dy = bx - ax, by - ay
+            len_sq = dx * dx + dy * dy
+            if len_sq < 1e-12:
+                continue
+            t = max(0, min(1, ((click_pt.x() - ax) * dx + (click_pt.y() - ay) * dy) / len_sq))
+            proj_x = ax + t * dx
+            proj_y = ay + t * dy
+            d = _m.hypot(click_pt.x() - proj_x, click_pt.y() - proj_y)
+            if d < best_dist:
+                best_dist = d
+                best_wall = w
+
+        if best_wall is None:
+            return None
+
+        # Start from the nearest wall's endpoint, walk clockwise
+        start_n1 = pt_to_node[walls.index(best_wall) * 2]
+        start_n2 = pt_to_node[walls.index(best_wall) * 2 + 1]
+
+        # Determine which side of the wall the click is on → choose walk direction
+        wx = best_wall.pt2.x() - best_wall.pt1.x()
+        wy = best_wall.pt2.y() - best_wall.pt1.y()
+        cx = click_pt.x() - best_wall.pt1.x()
+        cy = click_pt.y() - best_wall.pt1.y()
+        cross = wx * cy - wy * cx  # positive = left of wall direction
+
+        if cross >= 0:
+            curr, prev_angle = start_n1, _m.atan2(
+                node_coords[start_n1].y() - node_coords[start_n2].y(),
+                node_coords[start_n1].x() - node_coords[start_n2].x(),
+            )
+            start = start_n1
+        else:
+            curr, prev_angle = start_n2, _m.atan2(
+                node_coords[start_n2].y() - node_coords[start_n1].y(),
+                node_coords[start_n2].x() - node_coords[start_n1].x(),
+            )
+            start = start_n2
+
+        # Walk boundary: at each node, pick the next edge with the smallest
+        # clockwise turn from the incoming direction
+        boundary = [node_coords[curr]]
+        visited_edges: set[tuple[int, int]] = set()
+        max_steps = len(node_coords) * 2 + 10
+
+        for _ in range(max_steps):
+            neighbors = adj.get(curr, [])
+            if not neighbors:
+                return None
+
+            # Find next edge: smallest CW turn from incoming direction
+            incoming = prev_angle + _m.pi  # reverse of how we arrived
+            best_next = None
+            best_turn = float("inf")
+            for nb, edge_angle in neighbors:
+                if (curr, nb) in visited_edges:
+                    continue
+                # CW turn = incoming - edge_angle (mod 2π, positive)
+                turn = (incoming - edge_angle) % (2 * _m.pi)
+                if turn < 1e-10:
+                    turn = 2 * _m.pi  # avoid zero-turn (going back)
+                if turn < best_turn:
+                    best_turn = turn
+                    best_next = (nb, edge_angle)
+
+            if best_next is None:
+                return None
+
+            nb, edge_angle = best_next
+            visited_edges.add((curr, nb))
+            prev_angle = edge_angle
+            curr = nb
+
+            if curr == start and len(boundary) >= 3:
+                # Closed loop found
+                break
+            boundary.append(node_coords[curr])
+        else:
+            return None  # didn't close
+
+        if len(boundary) < 3:
+            return None
+
+        # Validate: click point should be inside the polygon
+        path = QPainterPath()
+        path.addPolygon(QPolygonF(boundary))
+        path.closeSubpath()
+        if not path.contains(click_pt):
+            # Try reversing
+            boundary.reverse()
+            path = QPainterPath()
+            path.addPolygon(QPolygonF(boundary))
+            path.closeSubpath()
+            if not path.contains(click_pt):
+                return None
+
+        return boundary
+
+    def _press_room(self, event, pos, snapped, item_under, node_under, pipe_under):
+        """Room mode: click inside a closed wall region to create a room."""
+        boundary = self._detect_room_boundary(snapped)
+        if boundary is None:
+            self._show_status("No closed wall boundary found at click point", 3000)
+            return
+
+        # Check if a room already exists at this location
+        click_path = QPainterPath()
+        click_path.addPolygon(QPolygonF(boundary))
+        for existing in self._rooms:
+            if existing.level == self.active_level:
+                ep = QPainterPath()
+                ep.addPolygon(QPolygonF(existing.boundary))
+                if ep.contains(snapped) and click_path.contains(
+                    QPointF(
+                        sum(p.x() for p in existing.boundary) / len(existing.boundary),
+                        sum(p.y() for p in existing.boundary) / len(existing.boundary),
+                    )
+                ):
+                    self._show_status("Room already exists here", 2000)
+                    return
+
+        room = Room(boundary=boundary)
+        room.level = self.active_level
+        # Auto-assign ceiling level (next level up)
+        if self._level_manager:
+            levels = self._level_manager.levels
+            active_idx = next(
+                (i for i, lv in enumerate(levels) if lv.name == self.active_level), -1
+            )
+            if active_idx >= 0 and active_idx + 1 < len(levels):
+                room._ceiling_level = levels[active_idx + 1].name
+        room.name = f"Room {len(self._rooms) + 1}"
+        room._tag = room.name
+
+        self.addItem(room)
+        self._rooms.append(room)
+        apply_category_defaults(room)
+        self.clearSelection()
+        room.setSelected(True)
+        self.requestPropertyUpdate.emit(room)
+        self.push_undo_state()
+        self._show_status(f"Created {room.name}", 2000)
 
     def _press_paste_move(self, event, pos, snapped, item_under, node_under, pipe_under):
         if self.node_start_pos is None:

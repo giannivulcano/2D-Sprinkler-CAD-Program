@@ -281,6 +281,7 @@ _CATEGORIES: list[dict] = [
     {"key": "Grid Line",        "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
     {"key": "Roof",             "color": "#8B4513", "fill": "#D2B48C", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
     {"key": "Wall",             "color": "#666666", "fill": "#999999", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Room",             "color": "#4488cc", "fill": "#4488cc", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
 ]
 
 # Tree-column indices
@@ -328,6 +329,7 @@ def apply_display_to_item(item, color: str | None, scale: float,
     from gridline import GridlineItem
     from hydraulic_node_badge import HydraulicNodeBadge
     from wall import WallSegment
+    from room import Room
 
     if isinstance(item, Pipe):
         _apply_pipe(item, color, scale, opacity, visible, font_size)
@@ -340,6 +342,14 @@ def apply_display_to_item(item, color: str | None, scale: float,
                 item._fill_mode = "Hatch"
             else:
                 item._fill_mode = "Solid"
+        item.setVisible(visible)
+        item.setOpacity(opacity / 100.0)
+        item.update()
+    elif isinstance(item, Room):
+        item._display_color = color
+        if fill_color:
+            _, hex_col = _parse_fill_value(fill_color)
+            item._display_fill_color = hex_col
         item.setVisible(visible)
         item.setOpacity(opacity / 100.0)
         item.update()
@@ -466,6 +476,7 @@ def apply_category_defaults(item):
     from gridline import GridlineItem
     from hydraulic_node_badge import HydraulicNodeBadge
     from wall import WallSegment
+    from room import Room
 
     if isinstance(item, Pipe):
         key = "Pipe"
@@ -483,6 +494,8 @@ def apply_category_defaults(item):
         key = "Node"
     elif isinstance(item, WallSegment):
         key = "Wall"
+    elif isinstance(item, Room):
+        key = "Room"
     else:
         return
 
@@ -723,6 +736,9 @@ class DisplayManager(QDialog):
         elif category == "Wall":
             name = getattr(item, "name", "")
             return f"Wall {index}  ({name})" if name else f"Wall {index}"
+        elif category == "Room":
+            name = getattr(item, "name", "")
+            return f"Room {index}  ({name})" if name else f"Room {index}"
         return f"{category} {index}"
 
     # ------------------------------------------------------------------
@@ -1586,4 +1602,6 @@ def _items_for_category_static(scene, key: str) -> list:
         return list(getattr(scene, "_roofs", []))
     elif key == "Wall":
         return list(getattr(scene, "_walls", []))
+    elif key == "Room":
+        return list(getattr(scene, "_rooms", []))
     return []

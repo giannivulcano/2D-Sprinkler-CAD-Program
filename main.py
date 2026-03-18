@@ -788,6 +788,12 @@ class MainWindow(QMainWindow):
         _roof_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["roof"] = _roof_btn
         self._mode_buttons["roof_rect"] = _roof_btn
+        _room_btn = g_3d.add_large_button(
+            "Room", _I("placeholder_icon.svg"),
+            lambda: self.scene.set_mode("room"),
+            checkable=True)
+        _room_btn.setToolTip("Click inside a closed wall region to define a room")
+        self._mode_buttons["room"] = _room_btn
         _door_btn = g_3d.add_small_button(
             "Door", _I("placeholder_icon.svg"),
             lambda: self.scene.set_mode("door"),
@@ -1420,6 +1426,7 @@ class MainWindow(QMainWindow):
         "offset":         "Click geometry to offset (Tab for exact distance)",
         "offset_side":    "Click the side to offset towards",
         "design_area":    "Click two corners to define design area",
+        "room":           "Click inside a closed wall region to define a room",
         "water_supply":   "Click to place water supply",
         "paste":          "Click to place pasted items",
         "radiation_emitter":  "Select EMITTING surfaces (walls / roofs), then press Enter",
