@@ -355,11 +355,19 @@ class PropertyManager(QWidget):
             self._refresh_timer.start()
 
     def _get_scale_manager(self):
-        """Return the ScaleManager from the first target's scene, or None."""
+        """Return the ScaleManager from the first target's scene, or fallback ref."""
         for t in self._targets:
             sc = t.scene() if callable(getattr(t, "scene", None)) else None
             if sc is not None and hasattr(sc, "scale_manager"):
                 return sc.scale_manager
+            # Templates not in a scene may have a direct reference
+            ref = getattr(t, "_scale_manager_ref", None)
+            if ref is not None and hasattr(ref, "format_length"):
+                return ref
+            # Pipe/sprinkler templates use _scene_ref
+            scene_ref = getattr(t, "_scene_ref", None)
+            if scene_ref is not None and hasattr(scene_ref, "scale_manager"):
+                return scene_ref.scale_manager
         return None
 
     def _do_refresh(self):
