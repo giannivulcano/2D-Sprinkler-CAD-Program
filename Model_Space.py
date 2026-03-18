@@ -908,11 +908,33 @@ class Model_Space(QGraphicsScene):
         if not self.selectedItems():
             return
         selected = list(self.selectedItems())
+        selected_set = set(selected)
+
+        # Suppress scene updates during bulk deletion
+        self.blockSignals(True)
+        try:
+            self._bulk_delete(selected, selected_set)
+        finally:
+            self.blockSignals(False)
+
+        # Single scene refresh after all removals
+        self.update()
+        self._show_status(f"Deleted {len(selected)} item(s)")
+        self.push_undo_state()
+
+    def _bulk_delete(self, selected, selected_set):
+        """Internal bulk-delete: removes items without per-item scene updates."""
+        # Collect all pipes and nodes for batch removal from sprinkler_system
+        pipes_to_remove = set()
+        nodes_to_remove = set()
+        sprinklers_to_remove = set()
+
+        # ── Pass 1: Geometry / annotations / walls / floors / roofs ───────
         for item in selected:
-            # Try the shared geometry/annotation removal first
+            if isinstance(item, (Pipe, Node)):
+                continue  # handled in passes 2-3
             if self._remove_item_from_lists(item):
                 continue
-            # Special-case types that need extra cleanup
             if isinstance(item, WaterSupply):
                 self.removeItem(item)
                 if self.water_supply_node is item:
@@ -925,7 +947,6 @@ class Model_Space(QGraphicsScene):
                     self.active_design_area = None
                 self.removeItem(item)
             elif isinstance(item, WallSegment):
-                # Also remove openings belonging to this wall
                 for op in list(item.openings):
                     if op.scene() is self:
                         self.removeItem(op)
@@ -942,28 +963,74 @@ class Model_Space(QGraphicsScene):
                     self._roofs.remove(item)
                 self.removeItem(item)
             elif isinstance(item, (DoorOpening, WindowOpening)):
-                # Remove opening from parent wall
                 if item.wall is not None and item in item.wall.openings:
                     item.wall.openings.remove(item)
                 self.removeItem(item)
+
+        # ── Pass 2: Collect all pipes to delete (selected + orphaned) ─────
         for item in selected:
             if isinstance(item, Pipe):
-                self.delete_pipe(item)
-        for item in selected:
-            if isinstance(item, Node):
-                if item.has_sprinkler():
-                    self.remove_sprinkler(item)
+                pipes_to_remove.add(item)
+            elif isinstance(item, Node):
+                # Collect pipes attached to selected nodes
                 for pipe in list(item.pipes):
-                    self.delete_pipe(pipe)
-        for item in selected:
-            if isinstance(item, Node):
-                self.remove_node(item)
-        # Remove constraints referencing deleted items
-        deleted_set = set(selected)
+                    pipes_to_remove.add(pipe)
+                if item.has_sprinkler():
+                    sprinklers_to_remove.add(item.sprinkler)
+                nodes_to_remove.add(item)
+
+        # ── Pass 3: Detach and remove pipes in bulk ───────────────────────
+        for pipe in pipes_to_remove:
+            for node in (pipe.node1, pipe.node2):
+                if node is not None and pipe in node.pipes:
+                    node.pipes.remove(pipe)
+                    # Queue orphaned nodes (no pipes, no sprinkler) for removal
+                    if not node.pipes and not node.has_sprinkler():
+                        nodes_to_remove.add(node)
+            pipe.node1 = None
+            pipe.node2 = None
+            try:
+                if pipe.scene() is self:
+                    self.removeItem(pipe)
+            except RuntimeError:
+                pass
+
+        # ── Pass 4: Remove sprinklers ─────────────────────────────────────
+        for spr in sprinklers_to_remove:
+            try:
+                if spr.scene() is self:
+                    self.removeItem(spr)
+            except RuntimeError:
+                pass
+            if spr.node:
+                spr.node.delete_sprinkler()
+
+        # ── Pass 5: Remove nodes ──────────────────────────────────────────
+        for node in nodes_to_remove:
+            try:
+                if node.scene() is self:
+                    self.removeItem(node)
+            except RuntimeError:
+                pass
+
+        # ── Batch cleanup of sprinkler_system lists ───────────────────────
+        ss = self.sprinkler_system
+        if pipes_to_remove:
+            ss.pipes = [p for p in ss.pipes if p not in pipes_to_remove]
+        if nodes_to_remove:
+            ss.nodes = [n for n in ss.nodes if n not in nodes_to_remove]
+        if sprinklers_to_remove:
+            ss.sprinklers = [s for s in ss.sprinklers if s not in sprinklers_to_remove]
+
+        # ── Constraints ───────────────────────────────────────────────────
+        all_deleted = selected_set | pipes_to_remove | nodes_to_remove
         self._constraints = [c for c in self._constraints
-                             if not any(c.involves(d) for d in deleted_set)]
-        self._show_status(f"Deleted {len(selected)} item(s)")
-        self.push_undo_state()
+                             if not any(c.involves(d) for d in all_deleted)]
+
+        # Update fittings on surviving nodes that lost pipes
+        for node in ss.nodes:
+            if hasattr(node, "fitting") and node.fitting:
+                node.fitting.update()
 
     # -------------------------------------------------------------------------
     # MODE MANAGEMENT
@@ -6080,11 +6147,16 @@ class Model_Space(QGraphicsScene):
         elif event.key() == Qt.Key.Key_Delete:
             self.delete_selected_items()
         elif event.key() == Qt.Key.Key_A and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.blockSignals(True)
             for item in self.items():
                 if isinstance(item, GridlineItem):
                     continue
                 if item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable:
                     item.setSelected(True)
+            self.blockSignals(False)
+            self.selectionChanged.emit()
+            for v in self.views():
+                v.viewport().update()
         elif event.key() == Qt.Key.Key_Z and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self.undo()
         elif event.key() == Qt.Key.Key_Y and event.modifiers() & Qt.KeyboardModifier.ControlModifier:

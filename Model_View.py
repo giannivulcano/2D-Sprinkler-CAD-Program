@@ -705,8 +705,13 @@ class Model_View(QGraphicsView):
         from gridline import GridlineItem
         scene = self.scene()
         if scene:
+            scene.blockSignals(True)
             for item in scene.items():
                 if isinstance(item, GridlineItem):
                     continue
                 if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
                     item.setSelected(True)
+            scene.blockSignals(False)
+            # Single notification after batch selection
+            scene.selectionChanged.emit()
+            self.viewport().update()
