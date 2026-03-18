@@ -4435,14 +4435,15 @@ class Model_Space(QGraphicsScene):
             item_under.setSelected(not item_under.isSelected() if ctrl else True)
 
     def _press_sprinkler(self, event, pos, snapped, item_under, node_under, pipe_under):
-        if item_under is None:
-            node = self.add_node(snapped.x(), snapped.y())
-        elif isinstance(item_under, Pipe):
+        if isinstance(item_under, Pipe):
             node = self.split_pipe(item_under, self.project_click_onto_pipe_segment(snapped, item_under))
         elif isinstance(item_under, Node):
             node = item_under
             if node.has_sprinkler():
                 return
+        else:
+            # Empty space or non-pipe/non-node item (Room, Wall, Floor, etc.)
+            node = self.add_node(snapped.x(), snapped.y())
         self.add_sprinkler(node, getattr(self, "current_template", None))
         node.fitting.update()
         self.push_undo_state()
@@ -5081,12 +5082,31 @@ class Model_Space(QGraphicsScene):
         if len(boundary) < 3:
             return None
 
-        # ── Offset boundary inward by half wall thickness ─────────────
-        # Use the average wall thickness of walls on this level
-        avg_ht = sum(w.half_thickness_scene() for w in walls) / len(walls)
-        inset = self._inset_polygon(boundary, avg_ht)
-        if inset and len(inset) >= 3:
-            boundary = inset
+        # ── Offset boundary inward based on wall alignment ─────────────
+        # Interior alignment: centerline IS the inner face → no inset
+        # Center alignment: inset by half thickness
+        # Exterior alignment: inset by full thickness
+        # Use the dominant alignment among walls on this level
+        from wall import ALIGN_INTERIOR, ALIGN_EXTERIOR
+        align_counts = {"Center": 0, "Interior": 0, "Exterior": 0}
+        total_ht = 0.0
+        for w in walls:
+            align_counts[w._alignment] = align_counts.get(w._alignment, 0) + 1
+            total_ht += w.half_thickness_scene()
+        avg_ht = total_ht / len(walls) if walls else 0.0
+
+        dominant = max(align_counts, key=align_counts.get)
+        if dominant == "Interior":
+            inset_dist = 0.0  # centerline is already the inner face
+        elif dominant == "Exterior":
+            inset_dist = avg_ht * 2  # full thickness inward
+        else:
+            inset_dist = avg_ht  # half thickness
+
+        if inset_dist > 0:
+            inset = self._inset_polygon(boundary, inset_dist)
+            if inset and len(inset) >= 3:
+                boundary = inset
 
         # Validate
         path = QPainterPath()
@@ -5197,6 +5217,7 @@ class Model_Space(QGraphicsScene):
                 room._ceiling_level = levels[active_idx + 1].name
         room.name = f"Room {len(self._rooms) + 1}"
         room._tag = room.name
+        room._update_label()  # rebuild label now that name/tag are set
 
         self.addItem(room)
         self._rooms.append(room)
@@ -5693,9 +5714,8 @@ class Model_Space(QGraphicsScene):
                 QPointF(rect.x(), rect.y() + rect.height()),          # bottom-left
             ]
             _tmpl = self._get_wall_template()
-            # For a rectangle, corners trace clockwise (TL→TR→BR→BL)
-            # so wall normals point inward.  Swap interior/exterior so
-            # "Interior" means walls extend inward from the rectangle.
+            # For CW-traced rectangle, normals point outward.
+            # Swap Interior/Exterior so "Interior" makes walls extend inward.
             _rect_align = _tmpl._alignment
             if _rect_align == "Interior":
                 _rect_align = "Exterior"

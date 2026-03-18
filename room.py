@@ -89,13 +89,10 @@ class Room(QGraphicsPolygonItem):
         # Scale manager fallback for templates
         self._scale_manager_ref: ScaleManager | None = None
 
-        # Label — uses ItemIgnoresTransformations so it stays readable at any zoom
+        # Label in scene units (scales with zoom like pipe labels)
         self._label = QGraphicsTextItem(self)
-        self._label.setDefaultTextColor(QColor("#ffffff"))
-        self._label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-        f = QFont("Segoe UI", 10)
-        f.setBold(True)
-        self._label.setFont(f)
+        self._label.setDefaultTextColor(QColor("#000000"))
+        self._label.setZValue(200)  # above everything including walls
 
         # Rendering
         self.setZValue(-60)  # below walls (-50), above floors (-80)
@@ -118,11 +115,18 @@ class Room(QGraphicsPolygonItem):
     def _update_label(self):
         """Position the room tag label at the polygon centroid."""
         text = self._tag or self.name or ""
-        self._label.setPlainText(text)
         self._label.setVisible(self._show_label and bool(text))
         if not text or not self._boundary:
             return
-        # Centroid
+        # Use scene-unit font size (mm) so label scales with zoom
+        text_h = 150.0  # mm
+        html = (f"<div style='text-align:center; font-size:{text_h:.0f}px; "
+                f"font-family:Segoe UI; font-weight:bold; "
+                f"color:#000000;'>{text}</div>")
+        self._label.setHtml(html)
+        self._label.setTextWidth(-1)
+        ideal = self._label.document().idealWidth()
+        self._label.setTextWidth(ideal)
         cx = sum(p.x() for p in self._boundary) / len(self._boundary)
         cy = sum(p.y() for p in self._boundary) / len(self._boundary)
         br = self._label.boundingRect()
