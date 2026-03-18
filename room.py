@@ -89,9 +89,10 @@ class Room(QGraphicsPolygonItem):
         # Scale manager fallback for templates
         self._scale_manager_ref: ScaleManager | None = None
 
-        # Label
+        # Label — uses ItemIgnoresTransformations so it stays readable at any zoom
         self._label = QGraphicsTextItem(self)
         self._label.setDefaultTextColor(QColor("#ffffff"))
+        self._label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
         f = QFont("Segoe UI", 10)
         f.setBold(True)
         self._label.setFont(f)
@@ -246,7 +247,7 @@ class Room(QGraphicsPolygonItem):
         option.state &= ~QStyle.StateFlag.State_Selected
 
         fill_col = QColor(self._display_fill_color or self._color.name())
-        fill_col.setAlpha(30)
+        fill_col.setAlpha(50)
         line_col = QColor(self._display_color or self._color.name())
 
         pen = QPen(line_col, 1, Qt.PenStyle.DashLine)

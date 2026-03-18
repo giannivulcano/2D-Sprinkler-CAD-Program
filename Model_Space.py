@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QGraphicsScene, QGraphicsEllipseItem, QGraphicsLine
                               QHBoxLayout, QVBoxLayout, QLabel, QLineEdit)
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import (QPen, QBrush, QColor, QPixmap, QPainterPath, QFont,
-                          QCursor, QDoubleValidator, QImage)
+                          QCursor, QDoubleValidator, QImage, QPolygonF)
 from PyQt6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
 from node import Node
 from pipe import Pipe
@@ -4894,30 +4894,48 @@ class Model_Space(QGraphicsScene):
     def _detect_room_boundary(self, click_pt: QPointF) -> list[QPointF] | None:
         """Detect a closed wall boundary enclosing *click_pt*.
 
-        Builds a graph from wall endpoints on the active level, then walks
-        the boundary by always choosing the tightest clockwise turn at each
-        node.  Returns the polygon vertices, or None if no closed loop found.
+        Builds a graph from wall endpoints on the active level (including
+        T-junction face points), then walks the boundary choosing the
+        tightest clockwise turn.  Returns interior face polygon vertices.
         """
         import math as _m
+        from collections import defaultdict
 
-        TOL = 2.0  # endpoint snap tolerance (scene units)
+        TOL = 2.0
         level = self.active_level
-
-        # Collect walls on this level
         walls = [w for w in self._walls if w.level == level]
         if not walls:
             return None
 
-        # Build adjacency graph: node_id → list of (neighbor_id, wall, edge_angle)
-        # First, collect unique nodes by snapping endpoints
+        # ── Collect graph nodes: endpoints + T-junction face points ────
         raw_pts: list[QPointF] = []
+        pt_sources: list = []  # track which wall/endpoint for each raw_pt
+
         for w in walls:
             raw_pts.append(w.pt1)
+            pt_sources.append((w, 0))
             raw_pts.append(w.pt2)
+            pt_sources.append((w, 1))
 
-        # Merge close points into node indices
+        # Add T-junction points: where a wall endpoint meets the face of
+        # another wall (not at its endpoints)
+        for w in walls:
+            for ep in (w.pt1, w.pt2):
+                for other in walls:
+                    if other is w:
+                        continue
+                    # Check if ep is near other's centerline but NOT near endpoints
+                    if (other.endpoint_near(ep, TOL) is not None):
+                        continue  # already at an endpoint — handled above
+                    fp = other.nearest_face_point(ep, TOL * 3,
+                                                   self.scale_manager, ep)
+                    if fp is not None:
+                        raw_pts.append(ep)
+                        pt_sources.append((other, "tee"))
+
+        # Merge close points into unique node indices
         node_coords: list[QPointF] = []
-        pt_to_node: dict[int, int] = {}  # raw_pts index → node index
+        pt_to_node: dict[int, int] = {}
 
         for i, pt in enumerate(raw_pts):
             found = -1
@@ -4931,8 +4949,7 @@ class Model_Space(QGraphicsScene):
                 pt_to_node[i] = len(node_coords)
                 node_coords.append(QPointF(pt))
 
-        # Build directed edges (each wall creates two directed edges)
-        from collections import defaultdict
+        # ── Build directed edges ──────────────────────────────────────
         adj: dict[int, list[tuple[int, float]]] = defaultdict(list)
 
         for wi, w in enumerate(walls):
@@ -4940,31 +4957,64 @@ class Model_Space(QGraphicsScene):
             n2 = pt_to_node[wi * 2 + 1]
             if n1 == n2:
                 continue
-            p1, p2 = node_coords[n1], node_coords[n2]
-            angle_12 = _m.atan2(p2.y() - p1.y(), p2.x() - p1.x())
-            angle_21 = _m.atan2(p1.y() - p2.y(), p1.x() - p2.x())
-            adj[n1].append((n2, angle_12))
-            adj[n2].append((n1, angle_21))
 
-        # Sort adjacency lists by angle for each node
-        for node_id in adj:
-            adj[node_id].sort(key=lambda x: x[1])
+            # Check for T-junction nodes along this wall's centerline
+            # and split the wall edge into segments
+            wall_nodes = [n1]
+            for i in range(len(walls) * 2, len(raw_pts)):
+                ni = pt_to_node[i]
+                if ni == n1 or ni == n2:
+                    continue
+                src_wall, src_type = pt_sources[i]
+                if src_wall is w or src_type != "tee":
+                    continue
+                # Check if this tee point is on wall w's centerline
+                nc = node_coords[ni]
+                ax, ay = w.pt1.x(), w.pt1.y()
+                bx, by = w.pt2.x(), w.pt2.y()
+                dx, dy = bx - ax, by - ay
+                lsq = dx * dx + dy * dy
+                if lsq < 1e-12:
+                    continue
+                t = ((nc.x() - ax) * dx + (nc.y() - ay) * dy) / lsq
+                if 0.05 < t < 0.95:
+                    wall_nodes.append(ni)
+            wall_nodes.append(n2)
 
-        # Find the nearest edge to click_pt
+            # Sort by parameter t along the wall
+            p1 = node_coords[n1]
+            dx_w = node_coords[n2].x() - p1.x()
+            dy_w = node_coords[n2].y() - p1.y()
+            lsq_w = dx_w * dx_w + dy_w * dy_w
+            if lsq_w > 1e-12:
+                wall_nodes.sort(key=lambda ni: (
+                    (node_coords[ni].x() - p1.x()) * dx_w +
+                    (node_coords[ni].y() - p1.y()) * dy_w
+                ) / lsq_w)
+
+            # Add edges between consecutive nodes along this wall
+            for j in range(len(wall_nodes) - 1):
+                na, nb = wall_nodes[j], wall_nodes[j + 1]
+                if na == nb:
+                    continue
+                pa, pb = node_coords[na], node_coords[nb]
+                a_ab = _m.atan2(pb.y() - pa.y(), pb.x() - pa.x())
+                a_ba = _m.atan2(pa.y() - pb.y(), pa.x() - pb.x())
+                adj[na].append((nb, a_ab))
+                adj[nb].append((na, a_ba))
+
+        # ── Find nearest wall edge to click point ─────────────────────
         best_wall = None
         best_dist = float("inf")
         for w in walls:
-            # Project click_pt onto wall centerline
             ax, ay = w.pt1.x(), w.pt1.y()
             bx, by = w.pt2.x(), w.pt2.y()
             dx, dy = bx - ax, by - ay
-            len_sq = dx * dx + dy * dy
-            if len_sq < 1e-12:
+            lsq = dx * dx + dy * dy
+            if lsq < 1e-12:
                 continue
-            t = max(0, min(1, ((click_pt.x() - ax) * dx + (click_pt.y() - ay) * dy) / len_sq))
-            proj_x = ax + t * dx
-            proj_y = ay + t * dy
-            d = _m.hypot(click_pt.x() - proj_x, click_pt.y() - proj_y)
+            t = max(0, min(1, ((click_pt.x() - ax) * dx + (click_pt.y() - ay) * dy) / lsq))
+            d = _m.hypot(click_pt.x() - (ax + t * dx), click_pt.y() - (ay + t * dy))
             if d < best_dist:
                 best_dist = d
                 best_wall = w
@@ -4972,52 +5022,44 @@ class Model_Space(QGraphicsScene):
         if best_wall is None:
             return None
 
-        # Start from the nearest wall's endpoint, walk clockwise
         start_n1 = pt_to_node[walls.index(best_wall) * 2]
         start_n2 = pt_to_node[walls.index(best_wall) * 2 + 1]
 
-        # Determine which side of the wall the click is on → choose walk direction
+        # Which side of the wall is the click on?
         wx = best_wall.pt2.x() - best_wall.pt1.x()
         wy = best_wall.pt2.y() - best_wall.pt1.y()
-        cx = click_pt.x() - best_wall.pt1.x()
-        cy = click_pt.y() - best_wall.pt1.y()
-        cross = wx * cy - wy * cx  # positive = left of wall direction
+        cross = wx * (click_pt.y() - best_wall.pt1.y()) - wy * (click_pt.x() - best_wall.pt1.x())
 
         if cross >= 0:
-            curr, prev_angle = start_n1, _m.atan2(
+            curr = start_n1
+            prev_angle = _m.atan2(
                 node_coords[start_n1].y() - node_coords[start_n2].y(),
-                node_coords[start_n1].x() - node_coords[start_n2].x(),
-            )
-            start = start_n1
+                node_coords[start_n1].x() - node_coords[start_n2].x())
         else:
-            curr, prev_angle = start_n2, _m.atan2(
+            curr = start_n2
+            prev_angle = _m.atan2(
                 node_coords[start_n2].y() - node_coords[start_n1].y(),
-                node_coords[start_n2].x() - node_coords[start_n1].x(),
-            )
-            start = start_n2
+                node_coords[start_n2].x() - node_coords[start_n1].x())
+        start = curr
 
-        # Walk boundary: at each node, pick the next edge with the smallest
-        # clockwise turn from the incoming direction
+        # ── Walk boundary (tightest CW turn) ──────────────────────────
         boundary = [node_coords[curr]]
         visited_edges: set[tuple[int, int]] = set()
-        max_steps = len(node_coords) * 2 + 10
 
-        for _ in range(max_steps):
+        for _ in range(len(node_coords) * 2 + 10):
             neighbors = adj.get(curr, [])
             if not neighbors:
                 return None
 
-            # Find next edge: smallest CW turn from incoming direction
-            incoming = prev_angle + _m.pi  # reverse of how we arrived
+            incoming = prev_angle + _m.pi
             best_next = None
             best_turn = float("inf")
             for nb, edge_angle in neighbors:
                 if (curr, nb) in visited_edges:
                     continue
-                # CW turn = incoming - edge_angle (mod 2π, positive)
                 turn = (incoming - edge_angle) % (2 * _m.pi)
                 if turn < 1e-10:
-                    turn = 2 * _m.pi  # avoid zero-turn (going back)
+                    turn = 2 * _m.pi
                 if turn < best_turn:
                     best_turn = turn
                     best_next = (nb, edge_angle)
@@ -5031,21 +5073,26 @@ class Model_Space(QGraphicsScene):
             curr = nb
 
             if curr == start and len(boundary) >= 3:
-                # Closed loop found
                 break
             boundary.append(node_coords[curr])
         else:
-            return None  # didn't close
+            return None
 
         if len(boundary) < 3:
             return None
 
-        # Validate: click point should be inside the polygon
+        # ── Offset boundary inward by half wall thickness ─────────────
+        # Use the average wall thickness of walls on this level
+        avg_ht = sum(w.half_thickness_scene() for w in walls) / len(walls)
+        inset = self._inset_polygon(boundary, avg_ht)
+        if inset and len(inset) >= 3:
+            boundary = inset
+
+        # Validate
         path = QPainterPath()
         path.addPolygon(QPolygonF(boundary))
         path.closeSubpath()
         if not path.contains(click_pt):
-            # Try reversing
             boundary.reverse()
             path = QPainterPath()
             path.addPolygon(QPolygonF(boundary))
@@ -5054,6 +5101,66 @@ class Model_Space(QGraphicsScene):
                 return None
 
         return boundary
+
+    @staticmethod
+    def _inset_polygon(pts: list[QPointF], dist: float) -> list[QPointF] | None:
+        """Offset a polygon inward by *dist* using edge normals."""
+        import math as _m
+        n = len(pts)
+        if n < 3:
+            return None
+
+        # Compute inward normals for each edge
+        normals = []
+        for i in range(n):
+            j = (i + 1) % n
+            dx = pts[j].x() - pts[i].x()
+            dy = pts[j].y() - pts[i].y()
+            length = _m.hypot(dx, dy)
+            if length < 1e-12:
+                normals.append((0.0, 0.0))
+                continue
+            # Inward normal (assuming CW winding for scene Y-down)
+            nx = dy / length
+            ny = -dx / length
+            normals.append((nx, ny))
+
+        # Check winding: if polygon area is positive (CCW), flip normals
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += pts[i].x() * pts[j].y() - pts[j].x() * pts[i].y()
+        if area > 0:  # CCW winding
+            normals = [(-nx, -ny) for nx, ny in normals]
+
+        # Offset each edge inward and intersect consecutive offset edges
+        result = []
+        for i in range(n):
+            prev = (i - 1) % n
+            # Previous edge offset line
+            p1 = QPointF(pts[prev].x() + normals[prev][0] * dist,
+                         pts[prev].y() + normals[prev][1] * dist)
+            p2 = QPointF(pts[i].x() + normals[prev][0] * dist,
+                         pts[i].y() + normals[prev][1] * dist)
+            # Current edge offset line
+            p3 = QPointF(pts[i].x() + normals[i][0] * dist,
+                         pts[i].y() + normals[i][1] * dist)
+            p4 = QPointF(pts[(i + 1) % n].x() + normals[i][0] * dist,
+                         pts[(i + 1) % n].y() + normals[i][1] * dist)
+            # Intersect
+            dx1 = p2.x() - p1.x()
+            dy1 = p2.y() - p1.y()
+            dx2 = p4.x() - p3.x()
+            dy2 = p4.y() - p3.y()
+            denom = dx1 * dy2 - dy1 * dx2
+            if abs(denom) < 1e-10:
+                result.append(QPointF(pts[i].x() + normals[i][0] * dist,
+                                      pts[i].y() + normals[i][1] * dist))
+            else:
+                t = ((p3.x() - p1.x()) * dy2 - (p3.y() - p1.y()) * dx2) / denom
+                result.append(QPointF(p1.x() + t * dx1, p1.y() + t * dy1))
+
+        return result
 
     def _press_room(self, event, pos, snapped, item_under, node_under, pipe_under):
         """Room mode: click inside a closed wall region to create a room."""
