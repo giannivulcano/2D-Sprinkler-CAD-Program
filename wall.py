@@ -129,6 +129,9 @@ class WallSegment(QGraphicsPathItem):
         # Alignment mode (centerline / interior / exterior)
         self._alignment: str = ALIGN_CENTER
 
+        # Join mode (auto = miter at connected walls, butt = no miter)
+        self._join_mode: str = "Auto"
+
         # Wall openings (doors / windows)
         self.openings: list[WallOpening] = []
 
@@ -405,6 +408,8 @@ class WallSegment(QGraphicsPathItem):
             "Top Offset":   {"type": "dimension", "value": self._fmt(self._top_offset_mm),
                              "value_mm": self._top_offset_mm},
             "Height":       {"type": "label",     "value": self._fmt(height_mm)},
+            "Join Mode":    {"type": "enum",      "value": self._join_mode,
+                             "options": ["Auto", "Butt", "Miter"]},
         }
 
     def _open_edit_dialog(self):
@@ -513,6 +518,11 @@ class WallSegment(QGraphicsPathItem):
                 self._height_mm = self._computed_height_mm()
                 self._rebuild_path()
                 self.update()
+        elif key == "Join Mode":
+            if str(value) in ("Auto", "Butt", "Miter"):
+                self._join_mode = str(value)
+                self._rebuild_path()
+                self.update()
 
     # ── Serialisation ────────────────────────────────────────────────────────
 
@@ -536,6 +546,7 @@ class WallSegment(QGraphicsPathItem):
             "level":         self.level,
             "user_layer":    self.user_layer,
             "name":          self.name,
+            "join_mode":     self._join_mode,
             "openings":      openings_data,
         }
 
@@ -578,6 +589,7 @@ class WallSegment(QGraphicsPathItem):
         wall.level = data.get("level", DEFAULT_LEVEL)
         wall.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
         wall.name = data.get("name", "")
+        wall._join_mode = data.get("join_mode", "Auto")
         # Openings restored by caller after wall_opening module is available
         return wall
 
@@ -792,8 +804,17 @@ class WallSegment(QGraphicsPathItem):
         At each endpoint, if exactly one other wall shares the same point
         the left/right corner vertices are moved to the intersection of
         the two walls' corresponding side edges, producing a clean miter.
+
+        Join mode controls behavior:
+          Auto  — miter at connected walls (default)
+          Butt  — no miter, raw quad_points
+          Miter — always miter (same as Auto)
         """
         p1l, p1r, p2r, p2l = self.quad_points()
+
+        # Butt join: skip miter entirely
+        if self._join_mode == "Butt":
+            return (p1l, p1r, p2r, p2l)
 
         sc = self.scene()
         if sc is None or not hasattr(sc, '_walls'):

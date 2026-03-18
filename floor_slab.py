@@ -203,13 +203,28 @@ class FloorSlab(QGraphicsPathItem):
 
     def get_properties(self) -> dict:
         return {
-            "Type":       {"type": "label",  "value": "Floor Slab"},
-            "Name":       {"type": "string", "value": self.name},
+            "Type":       {"type": "label",     "value": "Floor Slab"},
+            "Name":       {"type": "string",    "value": self.name},
             "Level":      {"type": "level_ref", "value": self.level},
-            "Colour":     {"type": "color",  "value": self._color.name()},
-            "Thickness":  {"type": "string", "value": self._fmt(self._thickness_mm)},
-            "Points":     {"type": "label",  "value": str(len(self._points))},
+            "Colour":     {"type": "color",     "value": self._color.name()},
+            "Thickness":  {"type": "dimension", "value": self._fmt(self._thickness_mm),
+                           "value_mm": self._thickness_mm},
+            "Points":     {"type": "label",     "value": str(len(self._points))},
         }
+
+    def _parse_dim(self, value) -> float | None:
+        """Parse a dimension value (display-formatted or raw) to mm."""
+        from scale_manager import ScaleManager
+        sc = self.scene()
+        sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
+        if sm:
+            parsed = ScaleManager.parse_dimension(str(value), sm.bare_number_unit())
+            if parsed is not None:
+                return parsed
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
 
     def set_property(self, key: str, value):
         if key == "Name":
@@ -220,10 +235,9 @@ class FloorSlab(QGraphicsPathItem):
             self._color = QColor(value)
             self.update()
         elif key == "Thickness":
-            try:
-                self._thickness_mm = float(value)
-            except (ValueError, TypeError):
-                pass
+            parsed = self._parse_dim(value)
+            if parsed is not None:
+                self._thickness_mm = parsed
 
     # ── Serialisation ────────────────────────────────────────────────────────
 

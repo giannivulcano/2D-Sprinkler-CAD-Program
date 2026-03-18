@@ -437,17 +437,21 @@ class RoofItem(QGraphicsPathItem):
 
     def get_properties(self) -> dict:
         return {
-            "Type":         {"type": "label",  "value": "Roof"},
-            "Name":         {"type": "string", "value": self.name},
-            "Colour":       {"type": "color",  "value": self._color.name()},
-            "Roof Type":    {"type": "label",  "value": self._roof_type.capitalize()},
-            "Pitch":        {"type": "label",  "value": f"{self._pitch_deg}°"},
-            "Eave Level":   {"type": "label",  "value": self.level},
-            "Eave Height":  {"type": "label",  "value": self._fmt(self._eave_height_mm)},
-            "Overhang":     {"type": "label",  "value": self._fmt(self._overhang_mm)},
-            "Thickness":    {"type": "label",  "value": self._fmt(self._thickness_mm)},
-            "Points":       {"type": "label",  "value": str(len(self._points))},
-            "":             {"type": "button", "value": "Edit Roof…",
+            "Type":         {"type": "label",     "value": "Roof"},
+            "Name":         {"type": "string",    "value": self.name},
+            "Colour":       {"type": "color",     "value": self._color.name()},
+            "Roof Type":    {"type": "enum",      "value": self._roof_type.capitalize(),
+                             "options": [t.capitalize() for t in ROOF_TYPES]},
+            "Pitch":        {"type": "string",    "value": f"{self._pitch_deg}°"},
+            "Eave Level":   {"type": "level_ref", "value": self.level},
+            "Eave Height":  {"type": "dimension", "value": self._fmt(self._eave_height_mm),
+                             "value_mm": self._eave_height_mm},
+            "Overhang":     {"type": "dimension", "value": self._fmt(self._overhang_mm),
+                             "value_mm": self._overhang_mm},
+            "Thickness":    {"type": "dimension", "value": self._fmt(self._thickness_mm),
+                             "value_mm": self._thickness_mm},
+            "Points":       {"type": "label",     "value": str(len(self._points))},
+            "":             {"type": "button",    "value": "Edit Roof…",
                              "callback": self._open_edit_dialog},
         }
 
@@ -496,6 +500,20 @@ class RoofItem(QGraphicsPathItem):
             if sc and hasattr(sc, "push_undo_state"):
                 sc.push_undo_state()
 
+    def _parse_dim(self, value) -> float | None:
+        """Parse a dimension value (display-formatted or raw) to mm."""
+        from scale_manager import ScaleManager
+        sc = self.scene()
+        sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
+        if sm:
+            parsed = ScaleManager.parse_dimension(str(value), sm.bare_number_unit())
+            if parsed is not None:
+                return parsed
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
     def set_property(self, key: str, value):
         if key == "Name":
             self.name = str(value)
@@ -503,31 +521,34 @@ class RoofItem(QGraphicsPathItem):
             self._color = QColor(value)
             self.update()
         elif key == "Roof Type":
-            if value in ROOF_TYPES:
-                self._roof_type = value
+            v = str(value).lower()
+            if v in ROOF_TYPES:
+                self._roof_type = v
+                self._rebuild_path()
                 self.update()
         elif key == "Pitch":
             try:
                 self._pitch_deg = float(str(value).replace("°", ""))
-            except (ValueError, TypeError):
-                pass
-        elif key == "Eave Height":
-            try:
-                self._eave_height_mm = float(value)
-            except (ValueError, TypeError):
-                pass
-        elif key == "Overhang":
-            try:
-                self._overhang_mm = max(0.0, float(value))
                 self._rebuild_path()
                 self.update()
             except (ValueError, TypeError):
                 pass
+        elif key == "Eave Level":
+            self.level = str(value)
+        elif key == "Eave Height":
+            parsed = self._parse_dim(value)
+            if parsed is not None:
+                self._eave_height_mm = parsed
+        elif key == "Overhang":
+            parsed = self._parse_dim(value)
+            if parsed is not None:
+                self._overhang_mm = max(0.0, parsed)
+                self._rebuild_path()
+                self.update()
         elif key == "Thickness":
-            try:
-                self._thickness_mm = float(value)
-            except (ValueError, TypeError):
-                pass
+            parsed = self._parse_dim(value)
+            if parsed is not None:
+                self._thickness_mm = parsed
 
     # ── Serialisation ────────────────────────────────────────────────────
 
