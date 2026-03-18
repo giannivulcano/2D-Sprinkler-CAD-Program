@@ -2,7 +2,7 @@ import math
 from CAD_Math import CAD_Math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QGraphicsItem
-from PyQt6.QtGui import QTransform
+from PyQt6.QtGui import QTransform, QPainterPath
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 
 
@@ -87,6 +87,32 @@ class Fitting():
         self.align_fitting()
         if self.node.has_sprinkler():
             visibility = False
+        # For nodes that overlap in XY (vertical drop/riser), only show the
+        # fitting on the node with the highest z_pos — hide the lower one.
+        if visibility:
+            node = self.node
+            for p in pipes:
+                if self._is_vertical(p, node):
+                    other = p.node2 if p.node1 is node else p.node1
+                    if other is not None:
+                        np = node.scenePos()
+                        op = other.scenePos()
+                        if (np.x() - op.x()) ** 2 + (np.y() - op.y()) ** 2 < 100:
+                            my_z = getattr(node, "z_pos", 0)
+                            ot_z = getattr(other, "z_pos", 0)
+                            if my_z < ot_z:
+                                visibility = False
+                            elif my_z == ot_z:
+                                # Tie-break: hide the one with lower ceiling_offset
+                                my_off = getattr(node, "ceiling_offset", 0)
+                                ot_off = getattr(other, "ceiling_offset", 0)
+                                if my_off < ot_off:
+                                    visibility = False
+                                elif my_off == ot_off:
+                                    # Final tie-break: hide by id
+                                    if id(node) < id(other):
+                                        visibility = False
+                            break
         self.symbol.setVisible(visibility)
 
     # ── Vertical pipe helpers ────────────────────────────────────────────
@@ -161,15 +187,14 @@ class Fitting():
             return "no fitting"
 
 
-    def _max_connected_od_mm(self) -> float:
-        """Return the largest nominal OD (in mm) among pipes on this node."""
-        best = 2.375  # fallback: 2" OD in inches
+    def _max_connected_width_mm(self) -> float:
+        """Return the largest display width (mm) among pipes on this node."""
+        best = 75.0  # fallback: branch width
         for pipe in self.node.pipes:
-            nom = pipe._properties.get("Diameter", {}).get("value", '2"Ø')
-            od = self._NOMINAL_OD_IN.get(nom, 2.375)
-            if od > best:
-                best = od
-        return best * 25.4   # inches → mm (scene units)
+            w = pipe.display_width_mm()
+            if w > best:
+                best = w
+        return best
 
     def update_symbol(self):
 
@@ -300,10 +325,11 @@ class Fitting():
         center = bounds.center()
         self.symbol.setTransformOriginPoint(center)
 
-        # Scale fitting to 5× the largest connected pipe OD (real-world mm)
+        # Scale fitting to 4× the largest connected pipe display width
+        # Branch (75mm) → 300mm, Main (150mm) → 600mm
         svg_natural = max(bounds.width(), bounds.height())
         if svg_natural > 0:
-            target_mm = self._max_connected_od_mm() * 5 * self._display_scale
+            target_mm = self._max_connected_width_mm() * 4 * self._display_scale
             self.symbol_scale = target_mm / svg_natural
         else:
             self.symbol_scale = 1.0
@@ -332,6 +358,25 @@ class Fitting():
         self.symbol.setOpacity(op / 100.0 if op > 1 else op)
         if not self._display_visible:
             self.symbol.setVisible(False)
+
+    def clip_region_scene(self) -> "QPainterPath | None":
+        """Return the fitting's bounding circle in scene coords for pipe clipping.
+
+        Returns None if the fitting shouldn't clip (invisible, no fitting, etc.).
+        """
+        if self.symbol is None or not self.symbol.isVisible():
+            return None
+        if self.type == "no fitting":
+            return None
+        # Use the symbol's scene bounding rect to derive a clipping circle
+        rect = self.symbol.sceneBoundingRect()
+        if rect.isNull() or rect.isEmpty():
+            return None
+        center = rect.center()
+        radius = max(rect.width(), rect.height()) / 2.0
+        path = QPainterPath()
+        path.addEllipse(center, radius, radius)
+        return path
 
     def rescale(self, sm=None) -> None:
         """Re-draw fitting at real-world scale (sized to largest connected pipe)."""

@@ -1570,7 +1570,9 @@ def _items_for_category_static(scene, key: str) -> list:
     elif key == "Sprinkler":
         return [n.sprinkler for n in ss.nodes if n.has_sprinkler()]
     elif key == "Fitting":
-        return [n.fitting for n in ss.nodes if n.has_fitting() and n.fitting.symbol]
+        return [n.fitting for n in ss.nodes
+                if n.has_fitting() and n.fitting.symbol
+                and n.fitting.type != "no fitting"]
     elif key == "Water Supply":
         ws = getattr(scene, "water_supply_node", None)
         return [ws] if ws else []

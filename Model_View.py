@@ -702,8 +702,11 @@ class Model_View(QGraphicsView):
         menu.exec(event.globalPos())
 
     def _select_all_items(self):
+        from gridline import GridlineItem
         scene = self.scene()
         if scene:
             for item in scene.items():
+                if isinstance(item, GridlineItem):
+                    continue
                 if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
                     item.setSelected(True)

@@ -1820,7 +1820,15 @@ class MainWindow(QMainWindow):
         self._update_title()
 
     def _on_escape(self):
-        """Escape: reset mode, clear selection, clear 3D highlights."""
+        """Escape: cancel current chain in pipe mode, else reset mode."""
+        # Pipe mode mid-chain: cancel the chain but stay in pipe mode
+        if self.scene.mode == "pipe" and self.scene.node_start_pos is not None:
+            self.scene.node_start_pos = None
+            self.scene._pipe_node_was_new = False
+            self.scene.preview_pipe.hide()
+            self.scene.preview_node.hide()
+            self.scene.instructionChanged.emit("Pick start node")
+            return
         self.scene.set_mode("select")
         self.scene.clearSelection()
         self.view_3d._on_escape()

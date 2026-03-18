@@ -106,7 +106,18 @@ class Pipe(QGraphicsLineItem):
         colour = QColor(self._display_color or self._properties["Colour"]["value"])
         line_weight = self.display_width_mm() * self._display_scale
         pen = QPen(colour, line_weight)
-        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        # Use RoundCap unless both ends are cap fittings; mixed case is
+        # handled in paint() by drawing a manual round end on the non-cap side.
+        n1_cap = (self.node1 and hasattr(self.node1, "fitting")
+                  and self.node1.fitting and self.node1.fitting.type == "cap")
+        n2_cap = (self.node2 and hasattr(self.node2, "fitting")
+                  and self.node2.fitting and self.node2.fitting.type == "cap")
+        if n1_cap and n2_cap:
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        elif n1_cap or n2_cap:
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)  # mixed: paint() adds round end
+        else:
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         self.setPen(pen)
 
     # --------------------------------------------
@@ -409,8 +420,22 @@ class Pipe(QGraphicsLineItem):
         # Pen width = Main/Branch display width in scene units (mm).
         # Non-cosmetic: the line scales with zoom just like real geometry.
         line_weight = self.display_width_mm() * self._display_scale
+
+        # Determine which ends get rounded caps (not cap fittings / dead ends)
+        n1_is_cap = (self.node1 and hasattr(self.node1, "fitting")
+                     and self.node1.fitting and self.node1.fitting.type == "cap")
+        n2_is_cap = (self.node2 and hasattr(self.node2, "fitting")
+                     and self.node2.fitting and self.node2.fitting.type == "cap")
+        # If neither end is a cap fitting, use RoundCap for both (fast path)
+        # If both are caps, use FlatCap for both
+        # If mixed, use FlatCap and manually draw round end on the non-cap side
+        if not n1_is_cap and not n2_is_cap:
+            cap_style = Qt.PenCapStyle.RoundCap
+        else:
+            cap_style = Qt.PenCapStyle.FlatCap
+
         base_pen = QPen(colour, line_weight)
-        base_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        base_pen.setCapStyle(cap_style)
 
         # Velocity color-coding — only for pipes on the hydraulic calculation path
         scene = self.scene()
@@ -428,18 +453,36 @@ class Pipe(QGraphicsLineItem):
                     else:
                         colour = QColor(0, 200, 80)     # green: OK
                     base_pen = QPen(colour, line_weight)
-                    base_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+                    base_pen.setCapStyle(cap_style)
 
-        # normal draw
-        painter.setPen(base_pen)
-        painter.drawLine(self.line())
+        # Collect clip regions from higher-elevation fittings
+        clip_regions = self._collect_clip_regions()
+
+        if not clip_regions:
+            # Fast path — no clipping needed
+            painter.setPen(base_pen)
+            painter.drawLine(self.line())
+        else:
+            # Clip the pipe line around fitting symbols
+            self._draw_clipped(painter, colour, line_weight, clip_regions, cap_style)
+
+        # Mixed cap: draw round end on the non-cap side only
+        if n1_is_cap != n2_is_cap:
+            half = line_weight / 2.0
+            pt = self.line().p1() if not n1_is_cap else self.line().p2()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(colour))
+            painter.drawEllipse(pt, half, half)
 
         # highlight if selected
         if self.isSelected():
-            highlight_pen = QPen(colour, line_weight * 1.3)
-            highlight_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
-            painter.setPen(highlight_pen)
-            painter.drawLine(self.line())
+            if not clip_regions:
+                highlight_pen = QPen(colour, line_weight * 1.3)
+                highlight_pen.setCapStyle(cap_style)
+                painter.setPen(highlight_pen)
+                painter.drawLine(self.line())
+            else:
+                self._draw_clipped(painter, colour, line_weight * 1.3, clip_regions, cap_style)
 
             # also show node endpoints — zoom-independent fixed screen size
             sc = self.scene()
@@ -458,3 +501,54 @@ class Pipe(QGraphicsLineItem):
 
         # prevent the default dotted selection rect
         option.state &= ~QStyle.StateFlag.State_Selected
+
+    # ── Pipe clipping around fittings ─────────────────────────────────────
+
+    def _collect_clip_regions(self) -> list:
+        """Return QPainterPaths for fittings at higher elevation that overlap this pipe."""
+        scene = self.scene()
+        if scene is None or not hasattr(scene, "sprinkler_system"):
+            return []
+        my_z = max(
+            getattr(self.node1, "z_pos", 0) if self.node1 else 0,
+            getattr(self.node2, "z_pos", 0) if self.node2 else 0,
+        )
+        regions = []
+        line = self.line()
+        # Build a rough bounding rect for the pipe line (expanded by line weight)
+        lw = self.display_width_mm() * self._display_scale
+        pipe_rect = self.sceneBoundingRect().adjusted(-lw, -lw, lw, lw)
+
+        for node in scene.sprinkler_system.nodes:
+            if not hasattr(node, "fitting") or node.fitting is None:
+                continue
+            node_z = getattr(node, "z_pos", 0)
+            if node_z <= my_z:
+                continue  # only clip for fittings at higher elevation
+            clip = node.fitting.clip_region_scene()
+            if clip is None:
+                continue
+            # Quick bounding rect overlap check before expensive path ops
+            if not clip.boundingRect().intersects(pipe_rect):
+                continue
+            regions.append(clip)
+        return regions
+
+    def _draw_clipped(self, painter, colour, line_weight, clip_regions,
+                       cap_style=Qt.PenCapStyle.RoundCap):
+        """Draw the pipe line with regions subtracted (clipped out)."""
+        line_path = QPainterPath()
+        line_path.moveTo(self.line().p1())
+        line_path.lineTo(self.line().p2())
+
+        stroker = QPainterPathStroker()
+        stroker.setWidth(line_weight)
+        stroker.setCapStyle(cap_style)
+        stroked = stroker.createStroke(line_path)
+
+        for clip in clip_regions:
+            stroked = stroked.subtracted(clip)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(colour))
+        painter.drawPath(stroked)

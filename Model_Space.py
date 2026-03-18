@@ -4362,12 +4362,14 @@ class Model_Space(QGraphicsScene):
             if isinstance(item_under, Pipe):
                 start_node = self.split_pipe(item_under, self.project_click_onto_pipe_segment(snapped, item_under))
                 self._pipe_node_was_new = True  # split created new node
+                _check_elevation = True  # split node inherits pipe's Z — may differ from template
             else:
                 start_node = self.find_or_create_node(snapped.x(), snapped.y())
                 self._pipe_node_was_new = (existing_start is None)
+                _check_elevation = (existing_start is not None and existing_start is start_node)
 
-            # Check elevation mismatch only on a pre-existing node
-            if existing_start is not None and existing_start is start_node and template is not None:
+            # Check elevation mismatch on pre-existing or pipe-split nodes
+            if _check_elevation and template is not None:
                 template_z = self._compute_template_z_pos(template)
                 if template_z is not None and abs(start_node.z_pos - template_z) > 0.01:
                     reply = QMessageBox.question(
@@ -4403,6 +4405,12 @@ class Model_Space(QGraphicsScene):
                         start_node.fitting.update()
                         intermediate.fitting.update()
                         start_node = intermediate  # continue from intermediate
+                    else:
+                        # Adopt the existing node's elevation — update template
+                        template._properties["Ceiling Level"]["value"] = start_node.ceiling_level
+                        template._properties["Ceiling Offset"]["value"] = str(start_node.ceiling_offset)
+                        template.ceiling_offset = start_node.ceiling_offset
+                        self.requestPropertyUpdate.emit(template)
 
             self.node_start_pos = start_node
             self.instructionChanged.emit("Pick end node")
@@ -4416,15 +4424,17 @@ class Model_Space(QGraphicsScene):
 
             if isinstance(item_under, Pipe):
                 end_node = self.split_pipe(item_under, self.project_click_onto_pipe_segment(snapped_end, item_under))
+                _check_end_elev = True  # split node inherits pipe's Z
             else:
                 end_node = self.find_or_create_node(snapped_end.x(), snapped_end.y())
+                _check_end_elev = (existing_end is not None)
 
             # Block zero-length same-node pipe
             if end_node is self.node_start_pos:
                 return  # wait for valid second click
 
-            # Detect elevation mismatch on an existing end node
-            if existing_end is not None and template is not None:
+            # Detect elevation mismatch on an existing or pipe-split end node
+            if _check_end_elev and template is not None:
                 template_z = self._compute_template_z_pos(template)
                 if template_z is not None and abs(end_node.z_pos - template_z) > 0.01:
                     reply = QMessageBox.question(
@@ -4445,6 +4455,13 @@ class Model_Space(QGraphicsScene):
                         self.push_undo_state()
                         self.instructionChanged.emit("Pick next node (Esc/double-click to finish)")
                         return
+                    else:
+                        # Adopt the existing end node's elevation — update template
+                        template._properties["Ceiling Level"]["value"] = end_node.ceiling_level
+                        template._properties["Ceiling Offset"]["value"] = str(end_node.ceiling_offset)
+                        template.ceiling_offset = end_node.ceiling_offset
+                        self.requestPropertyUpdate.emit(template)
+                        # Fall through to normal add_pipe — template now matches end node
 
             self.add_pipe(self.node_start_pos, end_node, template)
             self.node_start_pos.fitting.update()

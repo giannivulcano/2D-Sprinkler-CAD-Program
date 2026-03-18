@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPen, QColor, QBrush, QTransform
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer
 
+from dimension_edit import DimensionEdit
+
 
 _PREVIEW_COLOR = QColor(0, 180, 255, 100)
 _PREVIEW_PEN   = QPen(QColor(0, 180, 255, 160), 1, Qt.PenStyle.DashLine)
@@ -113,22 +115,10 @@ class ArrayDialog(QDialog):
         self._lin_cols.setSingleStep(1)
         self._lin_cols.valueChanged.connect(self._schedule_preview)
 
-        _suffix = self._sm.display_unit_suffix() if self._sm else "  units"
-
-        self._lin_xs = QDoubleSpinBox()
-        self._lin_xs.setRange(-1_000_000, 1_000_000)
-        self._lin_xs.setValue(100)
-        self._lin_xs.setDecimals(2)
-        self._lin_xs.setSuffix(_suffix)
-        self._lin_xs.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._lin_xs = DimensionEdit(self._sm, initial_mm=100.0)
         self._lin_xs.valueChanged.connect(self._schedule_preview)
 
-        self._lin_ys = QDoubleSpinBox()
-        self._lin_ys.setRange(-1_000_000, 1_000_000)
-        self._lin_ys.setValue(100)
-        self._lin_ys.setDecimals(2)
-        self._lin_ys.setSuffix(_suffix)
-        self._lin_ys.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self._lin_ys = DimensionEdit(self._sm, initial_mm=100.0)
         self._lin_ys.valueChanged.connect(self._schedule_preview)
 
         form.addRow("Rows:",      self._lin_rows)
@@ -222,8 +212,8 @@ class ArrayDialog(QDialog):
     def _preview_linear(self, rect: QRectF, pen, brush):
         rows = self._lin_rows.value()
         cols = self._lin_cols.value()
-        xs = self._to_scene(self._lin_xs.value())
-        ys = self._to_scene(self._lin_ys.value())
+        xs = self._lin_xs.value_mm()
+        ys = self._lin_ys.value_mm()
 
         count = 0
         for r in range(rows):
@@ -325,8 +315,8 @@ class ArrayDialog(QDialog):
                 "mode":      "linear",
                 "rows":      self._lin_rows.value(),
                 "cols":      self._lin_cols.value(),
-                "x_spacing": self._to_scene(self._lin_xs.value()),
-                "y_spacing": self._to_scene(self._lin_ys.value()),
+                "x_spacing": self._lin_xs.value_mm(),
+                "y_spacing": self._lin_ys.value_mm(),
             }
         else:
             return {
