@@ -326,16 +326,19 @@ class Pipe(QGraphicsLineItem):
             key = "Ceiling Offset"
         if key == "Ceiling Offset":
             # Parse dimension input and store canonical mm value
-            sm = self._get_scale_manager()
-            if sm:
-                parsed = sm.parse_dimension(str(value), sm.bare_number_unit())
-                if parsed is not None:
-                    self.ceiling_offset = parsed
+            if isinstance(value, (int, float)):
+                self.ceiling_offset = float(value)
             else:
-                try:
-                    self.ceiling_offset = float(value)
-                except (ValueError, TypeError):
-                    pass
+                sm = self._get_scale_manager()
+                if sm:
+                    parsed = sm.parse_dimension(str(value), sm.bare_number_unit())
+                    if parsed is not None:
+                        self.ceiling_offset = parsed
+                else:
+                    try:
+                        self.ceiling_offset = float(value)
+                    except (ValueError, TypeError):
+                        pass
             self._properties["Ceiling Offset"]["value"] = str(self.ceiling_offset)
         elif key in self._properties:
             # Convert display diameter string back to internal key

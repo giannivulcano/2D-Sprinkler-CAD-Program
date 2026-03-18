@@ -213,7 +213,14 @@ class FloorSlab(QGraphicsPathItem):
         }
 
     def _parse_dim(self, value) -> float | None:
-        """Parse a dimension value (display-formatted or raw) to mm."""
+        """Parse a dimension value (display-formatted or raw) to mm.
+
+        If *value* is already a numeric type (float/int), it is treated as
+        mm and returned directly.  String values are parsed through the
+        ScaleManager (supports feet-inches, mm, m, etc.).
+        """
+        if isinstance(value, (int, float)):
+            return float(value)
         from scale_manager import ScaleManager
         sc = self.scene()
         sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref

@@ -162,15 +162,18 @@ class Sprinkler(QGraphicsSvgItem):
             self.node._properties["Ceiling Level"]["value"] = str(value)
             self.node._recompute_z_pos()
         elif key == "Ceiling Offset":
-            sm = self._get_scale_manager()
             parsed_mm = None
-            if sm:
-                parsed_mm = sm.parse_dimension(str(value), sm.bare_number_unit())
-            if parsed_mm is None:
-                try:
-                    parsed_mm = float(value)
-                except (ValueError, TypeError):
-                    parsed_mm = None
+            if isinstance(value, (int, float)):
+                parsed_mm = float(value)
+            else:
+                sm = self._get_scale_manager()
+                if sm:
+                    parsed_mm = sm.parse_dimension(str(value), sm.bare_number_unit())
+                if parsed_mm is None:
+                    try:
+                        parsed_mm = float(value)
+                    except (ValueError, TypeError):
+                        parsed_mm = None
             if parsed_mm is not None:
                 if self.node is not None:
                     self.node.ceiling_offset = parsed_mm

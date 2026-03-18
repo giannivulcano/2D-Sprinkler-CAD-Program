@@ -409,7 +409,7 @@ class WallSegment(QGraphicsPathItem):
                              "value_mm": self._top_offset_mm},
             "Height":       {"type": "label",     "value": self._fmt(height_mm)},
             "Join Mode":    {"type": "enum",      "value": self._join_mode,
-                             "options": ["Auto", "Butt", "Miter"]},
+                             "options": ["Auto", "Butt", "Miter", "Solid"]},
         }
 
     def _open_edit_dialog(self):
@@ -461,7 +461,14 @@ class WallSegment(QGraphicsPathItem):
                 sc.push_undo_state()
 
     def _parse_dim(self, value) -> float | None:
-        """Parse a dimension value (display-formatted or raw) to mm."""
+        """Parse a dimension value (display-formatted or raw) to mm.
+
+        If *value* is already a numeric type (float/int), it is treated as
+        mm and returned directly.  String values are parsed through the
+        ScaleManager (supports feet-inches, mm, m, etc.).
+        """
+        if isinstance(value, (int, float)):
+            return float(value)
         from scale_manager import ScaleManager
         sc = self.scene()
         sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
@@ -519,7 +526,7 @@ class WallSegment(QGraphicsPathItem):
                 self._rebuild_path()
                 self.update()
         elif key == "Join Mode":
-            if str(value) in ("Auto", "Butt", "Miter"):
+            if str(value) in ("Auto", "Butt", "Miter", "Solid"):
                 self._join_mode = str(value)
                 self._rebuild_path()
                 self.update()
@@ -809,12 +816,22 @@ class WallSegment(QGraphicsPathItem):
           Auto  — miter at connected walls (default)
           Butt  — no miter, raw quad_points
           Miter — always miter (same as Auto)
+          Solid — extend endpoints by half-thickness so walls overlap at corners
         """
         p1l, p1r, p2r, p2l = self.quad_points()
 
         # Butt join: skip miter entirely
         if self._join_mode == "Butt":
             return (p1l, p1r, p2r, p2l)
+
+        # Solid join: extend both endpoints along the wall axis by half-thickness
+        if self._join_mode == "Solid":
+            ht = self.half_thickness_scene()
+            a = self.centerline_angle_rad()
+            dx = math.cos(a) * ht
+            dy = math.sin(a) * ht
+            ext = QPointF(dx, dy)
+            return (p1l - ext, p1r - ext, p2r + ext, p2l + ext)
 
         sc = self.scene()
         if sc is None or not hasattr(sc, '_walls'):

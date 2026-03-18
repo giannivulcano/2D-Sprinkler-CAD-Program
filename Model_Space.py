@@ -4348,6 +4348,14 @@ class Model_Space(QGraphicsScene):
             selection = next((i for i in items if isinstance(i, Node)), None)
         if selection is None:
             selection = next((i for i in items if isinstance(i, Pipe)), None)
+        # Also check for walls, floors, roofs (lower Z-order)
+        if selection is None:
+            selection = next(
+                (i for i in items
+                 if isinstance(i, (WallSegment, FloorSlab, RoofItem))
+                 and i.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable),
+                None,
+            )
 
         # Derive typed references for handler signature
         node_under = selection if isinstance(selection, Node) else None
