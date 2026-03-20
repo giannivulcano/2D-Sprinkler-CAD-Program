@@ -840,6 +840,9 @@ class MainWindow(QMainWindow):
         g_sys.add_small_button(
             "Display", _I("placeholder_icon.svg"),
             self._open_display_manager)
+        g_sys.add_small_button(
+            "Auto-Populate", _I("placeholder_icon.svg"),
+            self._auto_populate_sprinklers)
 
         # --- Library ---
         g_lib = build_page.add_group("Library")
@@ -1655,6 +1658,35 @@ class MainWindow(QMainWindow):
             f"(K={record.k_factor:.1f}, {record.coverage_area:.0f} ft²)",
             5000
         )
+
+    def _auto_populate_sprinklers(self):
+        """Open auto-populate dialog for the currently selected room."""
+        from room import Room
+        selected = self.scene.selectedItems()
+        rooms = [i for i in selected if isinstance(i, Room)]
+        if not rooms:
+            # No room selected — prompt user to pick one
+            if not self.scene._rooms:
+                QMessageBox.information(self, "No Rooms",
+                                        "No rooms exist. Create a room first.")
+                return
+            if len(self.scene._rooms) == 1:
+                # Only one room — use it automatically
+                room = self.scene._rooms[0]
+            else:
+                # Multiple rooms — show a picker dialog
+                from PyQt6.QtWidgets import QInputDialog
+                names = [r.name or f"Room {i+1}" for i, r in enumerate(self.scene._rooms)]
+                choice, ok = QInputDialog.getItem(
+                    self, "Select Room",
+                    "Choose a room to auto-populate with sprinklers:",
+                    names, 0, False)
+                if not ok:
+                    return
+                room = self.scene._rooms[names.index(choice)]
+        else:
+            room = rooms[0]
+        self.scene._auto_populate_room_dialog(room)
 
     # ─────────────────────────────────────────────────────────────────────────
     # PROPERTY MANAGER

@@ -17,9 +17,10 @@ import math
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
-    QGraphicsPolygonItem, QGraphicsTextItem, QGraphicsItem, QStyle,
+    QGraphicsPolygonItem, QGraphicsTextItem, QGraphicsRectItem,
+    QGraphicsItem, QStyle,
 )
-from PyQt6.QtGui import QPen, QColor, QBrush, QPolygonF, QFont, QPainterPath
+from PyQt6.QtGui import QPen, QColor, QBrush, QPolygonF, QFont, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QPointF
 
 from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
@@ -36,6 +37,7 @@ HAZARD_CLASSES = [
     "Extra Hazard Group 1",
     "Extra Hazard Group 2",
     "Miscellaneous Storage",
+    "High Piled Storage",
 ]
 
 _NFPA_MAX_COVERAGE_SQFT: dict[str, float] = {
@@ -45,12 +47,44 @@ _NFPA_MAX_COVERAGE_SQFT: dict[str, float] = {
     "Extra Hazard Group 1":     100.0,
     "Extra Hazard Group 2":     100.0,
     "Miscellaneous Storage":    100.0,
+    "High Piled Storage":       100.0,
 }
+
+# NFPA 13 ceiling construction types — determines max spacing and
+# protection area per Table 10.2.4.2.1(a)/(b).
+CEILING_TYPES = [
+    "Noncombustible unobstructed",
+    "Noncombustible obstructed",
+    "Combustible unobstructed - no exposed members",
+    "Combustible unobstructed - exposed members >= 3ft (910 mm) O/C",
+    "Combustible unobstructed - exposed members < 3ft (910 mm) O/C",
+    "Combustible obstructed - exposed members >= 3ft (910 mm) O/C",
+    "Combustible obstructed - exposed members < 3ft (910 mm) O/C",
+    "Combustible concealed space per 10.2.6.1.4",
+]
 
 COMPARTMENT_TYPES = [
     "Room", "Corridor", "Stairwell", "Shaft",
     "Attic", "Concealed Space",
 ]
+
+# ── Room label background with rounded corners ─────────────────────────
+
+
+class _RoundedRectBgItem(QGraphicsRectItem):
+    """Label background: no fill, border with filleted (rounded) corners."""
+
+    _CORNER_RADIUS = 40.0  # scene units (mm) — adjust for visual fillet
+
+    def paint(self, painter: QPainter, option, widget=None):
+        r = self.rect()
+        if r.isEmpty():
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(self.pen())
+        painter.setBrush(self.brush())
+        painter.drawRoundedRect(r, self._CORNER_RADIUS, self._CORNER_RADIUS)
+
 
 # ── Room class ──────────────────────────────────────────────────────────
 
@@ -75,8 +109,7 @@ class Room(QGraphicsPolygonItem):
         # NFPA / fire protection
         self._hazard_class: str = "Light Hazard"
         self._compartment_type: str = "Room"
-        self._construction: str = "Non-combustible"
-        self._obstructed: str = "Unobstructed"
+        self._ceiling_type: str = "Noncombustible unobstructed"
 
         # Display
         self._display_color: str | None = None
@@ -96,6 +129,7 @@ class Room(QGraphicsPolygonItem):
         self._label.setZValue(200)  # above everything including walls
         self._label_font_color: str = "#000000"
         self._label_font_size: float = 150.0  # mm in scene units
+        self._label_offset: QPointF = QPointF(0, 0)  # user drag offset from centroid
 
         # Rendering
         self.setZValue(-60)  # below walls (-50), above floors (-80)
@@ -103,6 +137,47 @@ class Room(QGraphicsPolygonItem):
 
         if self._boundary:
             self._rebuild()
+
+    # ── Grip protocol (drawn by Model_View like all other geometry) ────
+
+    def grip_points(self) -> list[QPointF]:
+        """Return a single grip at the label centre for dragging.
+
+        Only shown when the label is visible — this is a label-only grip,
+        not a room-polygon grip.
+        """
+        text = self._tag or self.name or ""
+        if not self._show_label or not text:
+            return []
+        if self._label_bg is not None and not self._label_bg.rect().isEmpty():
+            return [self._label_bg.rect().center()]
+        if self._boundary:
+            cx = sum(p.x() for p in self._boundary) / len(self._boundary)
+            cy = sum(p.y() for p in self._boundary) / len(self._boundary)
+            return [QPointF(cx, cy)]
+        return []
+
+    def apply_grip(self, index: int, pos: QPointF):
+        """Move the label so its centre lands at *pos*."""
+        if index != 0 or not self._boundary:
+            return
+        cx = sum(p.x() for p in self._boundary) / len(self._boundary)
+        cy = sum(p.y() for p in self._boundary) / len(self._boundary)
+        br = self._label.boundingRect()
+        # pos is the desired centre of the label bg
+        lx = pos.x() - br.width() / 2
+        ly = pos.y() - br.height() / 2
+        self._label_offset = QPointF(
+            lx - (cx - br.width() / 2),
+            ly - (cy - br.height() / 2),
+        )
+        self._label.setPos(lx, ly)
+        if self._label_bg is not None:
+            pad = self._label_font_size * 0.2
+            self._label_bg.setRect(
+                lx - pad, ly - pad,
+                br.width() + 2 * pad, br.height() + 2 * pad,
+            )
 
     # ── Geometry ─────────────────────────────────────────────────────────
 
@@ -117,8 +192,6 @@ class Room(QGraphicsPolygonItem):
 
     def _update_label(self):
         """Position the room tag label at the polygon centroid with background."""
-        from PyQt6.QtWidgets import QGraphicsRectItem
-
         text = self._tag or self.name or ""
         self._label.setVisible(self._show_label and bool(text))
         if self._label_bg is not None:
@@ -139,19 +212,20 @@ class Room(QGraphicsPolygonItem):
         cx = sum(p.x() for p in self._boundary) / len(self._boundary)
         cy = sum(p.y() for p in self._boundary) / len(self._boundary)
         br = self._label.boundingRect()
-        lx = cx - br.width() / 2
-        ly = cy - br.height() / 2
+        lx = cx - br.width() / 2 + self._label_offset.x()
+        ly = cy - br.height() / 2 + self._label_offset.y()
         self._label.setPos(lx, ly)
 
-        # Background box
+        # Background box — no fill, border with rounded corners
         pad = fs * 0.2
         if self._label_bg is None:
-            self._label_bg = QGraphicsRectItem(self)
+            self._label_bg = _RoundedRectBgItem(self)
             self._label_bg.setZValue(199)
-            self._label_bg.setPen(QPen(Qt.PenStyle.NoPen))
-        bg_color = QColor("#ffffff")
-        bg_color.setAlpha(200)
-        self._label_bg.setBrush(QBrush(bg_color))
+        border_color = QColor(self._display_color or self._color.name())
+        pen = QPen(border_color, 2)
+        pen.setCosmetic(True)
+        self._label_bg.setPen(pen)
+        self._label_bg.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self._label_bg.setRect(
             lx - pad, ly - pad,
             br.width() + 2 * pad, br.height() + 2 * pad
@@ -326,10 +400,8 @@ class Room(QGraphicsPolygonItem):
                                   "options": HAZARD_CLASSES},
             "Compartment Type":  {"type": "enum",      "value": self._compartment_type,
                                   "options": COMPARTMENT_TYPES},
-            "Construction":      {"type": "enum",      "value": self._construction,
-                                  "options": ["Combustible", "Non-combustible"]},
-            "Obstructed":        {"type": "enum",      "value": self._obstructed,
-                                  "options": ["Obstructed", "Unobstructed"]},
+            "Ceiling Type":      {"type": "enum",      "value": self._ceiling_type,
+                                  "options": CEILING_TYPES},
             "Sprinkler Count":   {"type": "label",     "value": str(spr_count)},
             "Coverage/Sprinkler": {"type": "label",    "value": f"{cov_per_spr:.1f} sq ft"},
             "Max Coverage":      {"type": "label",     "value": f"{max_cov:.0f} sq ft"},
@@ -357,23 +429,16 @@ class Room(QGraphicsPolygonItem):
         elif key == "Compartment Type":
             if str(value) in COMPARTMENT_TYPES:
                 self._compartment_type = str(value)
-        elif key == "Construction":
-            self._construction = str(value)
-        elif key == "Obstructed":
-            self._obstructed = str(value)
+        elif key == "Ceiling Type":
+            if str(value) in CEILING_TYPES:
+                self._ceiling_type = str(value)
         elif key == "Fill Color":
             self._color = QColor(value)
             self.update()
 
-    # ── Grip points ──────────────────────────────────────────────────────
-
-    def grip_points(self) -> list[QPointF]:
-        return [QPointF(p) for p in self._boundary]
-
-    def apply_grip(self, index: int, new_pos: QPointF):
-        if 0 <= index < len(self._boundary):
-            self._boundary[index] = QPointF(new_pos)
-            self._rebuild()
+    # ── Grip points (label-only) ─────────────────────────────────────────
+    # NOTE: grip_points / apply_grip defined earlier handle label dragging.
+    # Room boundary vertices are NOT exposed as grips.
 
     def translate(self, dx: float, dy: float):
         self._boundary = [QPointF(p.x() + dx, p.y() + dy) for p in self._boundary]
@@ -394,8 +459,8 @@ class Room(QGraphicsPolygonItem):
             "user_layer":       self.user_layer,
             "hazard_class":     self._hazard_class,
             "compartment_type": self._compartment_type,
-            "construction":     self._construction,
-            "obstructed":       self._obstructed,
+            "ceiling_type":     self._ceiling_type,
+            "label_offset":     [self._label_offset.x(), self._label_offset.y()],
         }
 
     @classmethod
@@ -410,6 +475,8 @@ class Room(QGraphicsPolygonItem):
         room.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
         room._hazard_class = data.get("hazard_class", "Light Hazard")
         room._compartment_type = data.get("compartment_type", "Room")
-        room._construction = data.get("construction", "Non-combustible")
-        room._obstructed = data.get("obstructed", "Unobstructed")
+        room._ceiling_type = data.get("ceiling_type", "Noncombustible unobstructed")
+        lo = data.get("label_offset", [0, 0])
+        room._label_offset = QPointF(lo[0], lo[1])
+        room._rebuild()  # rebuild polygon + label now that name/tag are set
         return room

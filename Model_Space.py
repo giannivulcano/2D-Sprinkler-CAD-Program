@@ -412,6 +412,7 @@ class Model_Space(QGraphicsScene):
         walls_data = [w.to_dict() for w in self._walls]
         floor_slabs_data = [fs.to_dict() for fs in self._floor_slabs]
         roofs_data = [r.to_dict() for r in self._roofs]
+        rooms_data = [r.to_dict() for r in self._rooms]
 
         # --- Display settings (per-project) ---
         from display_manager import get_display_settings_for_save
@@ -442,6 +443,7 @@ class Model_Space(QGraphicsScene):
             "walls":               walls_data,
             "floor_slabs":         floor_slabs_data,
             "roofs":               roofs_data,
+            "rooms":               rooms_data,
             "hatches":             hatch_data,
             "constraints":         constraints_data,
         }
@@ -736,6 +738,7 @@ class Model_Space(QGraphicsScene):
         # --- Rooms ---
         for entry in payload.get("rooms", []):
             room = Room.from_dict(entry)
+            room._scale_manager_ref = self.scale_manager
             self.addItem(room)
             self._rooms.append(room)
 
@@ -1575,6 +1578,65 @@ class Model_Space(QGraphicsScene):
         self.removeItem(sprinkler)
         self.sprinkler_system.remove_sprinkler(sprinkler)
         n.delete_sprinkler()
+
+    # ── Auto-populate room with sprinklers ─────────────────────────────────
+
+    def auto_populate_room(self, room, positions, sprinkler_record,
+                           level, ceiling_level, ceiling_offset,
+                           design_density="0.10"):
+        """Place sprinkler nodes at computed positions inside a room.
+
+        Parameters
+        ----------
+        room : Room
+            The target room (used only for status message).
+        positions : list[QPointF]
+            Scene-unit positions for each sprinkler.
+        sprinkler_record : SprinklerRecord
+            Database record to apply as template properties.
+        level, ceiling_level : str
+            Level names for the nodes.
+        ceiling_offset : float
+            Offset from ceiling in mm (negative = below).
+        design_density : str
+            Design density string (gpm/ft²).
+        """
+        if not positions:
+            return
+
+        self.push_undo_state()
+
+        # Build a temporary Sprinkler as template for set_properties
+        from sprinkler import Sprinkler
+        temp_spr = Sprinkler(None)
+        temp_spr._properties["Manufacturer"]["value"] = sprinkler_record.manufacturer
+        temp_spr._properties["Model"]["value"] = sprinkler_record.model
+        temp_spr._properties["Orientation"]["value"] = sprinkler_record.type
+        temp_spr._properties["K-Factor"]["value"] = str(sprinkler_record.k_factor)
+        temp_spr._properties["Coverage Area"]["value"] = str(sprinkler_record.coverage_area)
+        temp_spr._properties["Min Pressure"]["value"] = str(sprinkler_record.min_pressure)
+        temp_spr._properties["Temperature"]["value"] = f"{sprinkler_record.temp_rating}\u00b0F"
+        temp_spr._properties["Design Density"]["value"] = design_density
+        temp_spr._properties["Level"]["value"] = level
+        temp_spr._properties["Ceiling Level"]["value"] = ceiling_level
+        temp_spr._properties["Ceiling Offset"]["value"] = str(ceiling_offset)
+
+        count = 0
+        for pt in positions:
+            node = self.add_node(pt.x(), pt.y())
+            # Override level and ceiling settings
+            node.level = level
+            node._properties["Level"]["value"] = level
+            node.ceiling_level = ceiling_level
+            node._properties["Ceiling Level"]["value"] = ceiling_level
+            node.ceiling_offset = ceiling_offset
+            node._properties["Ceiling Offset"]["value"] = str(ceiling_offset)
+            node._recompute_z_pos()
+            self.add_sprinkler(node, temp_spr)
+            count += 1
+
+        room_name = room.name or room._tag or "room"
+        self._show_status(f"Placed {count} sprinkler(s) in {room_name}.")
 
     # -------------------------------------------------------------------------
     # UNDERLAYS — IMPORT
@@ -2539,6 +2601,7 @@ class Model_Space(QGraphicsScene):
 
             for d in state.get("rooms", []):
                 room = Room.from_dict(d)
+                room._scale_manager_ref = self.scale_manager
                 self.addItem(room)
                 self._rooms.append(room)
 
@@ -6241,7 +6304,7 @@ class Model_Space(QGraphicsScene):
             Node, Pipe, DimensionAnnotation, NoteAnnotation,
             ConstructionLine, PolylineItem, LineItem, RectangleItem,
             CircleItem, ArcItem, GridlineItem, HatchItem, WaterSupply,
-            WallSegment, FloorSlab, DoorOpening, WindowOpening,
+            WallSegment, FloorSlab, DoorOpening, WindowOpening, Room,
         )
         for item in self.items(pos):
             # Sprinklers are children of Nodes — resolve to parent
@@ -6301,6 +6364,14 @@ class Model_Space(QGraphicsScene):
             lambda t=type(target): self._hide_all_of_type(t)
         )
 
+        # ── Room-specific: Auto-Populate Sprinklers ──
+        if isinstance(target, Room):
+            menu.addSeparator()
+            act_auto = menu.addAction("Auto-Populate Sprinklers\u2026")
+            act_auto.triggered.connect(
+                lambda: self._auto_populate_room_dialog(target)
+            )
+
         menu.addSeparator()
 
         act_delete = menu.addAction("Delete")
@@ -6310,6 +6381,30 @@ class Model_Space(QGraphicsScene):
         act_props.triggered.connect(lambda: self.requestPropertyUpdate.emit(target))
 
         menu.exec(screen_pos)
+
+    def _auto_populate_room_dialog(self, room):
+        """Open the auto-populate dialog for a room and place sprinklers."""
+        from auto_populate_dialog import AutoPopulateDialog
+        from sprinkler_db import SprinklerDatabase
+
+        db = SprinklerDatabase()
+        dlg = AutoPopulateDialog(
+            room, db,
+            level_manager=self._level_manager,
+            scale_manager=self.scale_manager,
+            parent=self.views()[0] if self.views() else None,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            results = dlg.get_results()
+            self.auto_populate_room(
+                room,
+                results["positions"],
+                results["record"],
+                results["level"],
+                results["ceiling_level"],
+                results["ceiling_offset"],
+                results.get("design_density", "0.10"),
+            )
 
     def _hide_items(self, items):
         """Hide the given items (set them invisible)."""

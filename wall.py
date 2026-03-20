@@ -80,13 +80,13 @@ def compute_wall_quad(
         ht = half_mm  # fallback: 1 px ≈ 1 mm
 
     if alignment == ALIGN_INTERIOR:
-        # Interior: click line is interior face — wall extends to the left (normal side)
-        off_left = QPointF(0, 0)
-        off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
-    elif alignment == ALIGN_EXTERIOR:
-        # Exterior: click line is exterior face — wall extends to the right
+        # Interior: axis is on interior face — wall extends outward (right side)
         off_left = QPointF(nx * ht * 2, ny * ht * 2)
         off_right = QPointF(0, 0)
+    elif alignment == ALIGN_EXTERIOR:
+        # Exterior: axis is on exterior face — wall extends inward (left side)
+        off_left = QPointF(0, 0)
+        off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
     else:  # Center
         off_left = QPointF(nx * ht, ny * ht)
         off_right = QPointF(-nx * ht, -ny * ht)
@@ -225,13 +225,13 @@ class WallSegment(QGraphicsPathItem):
         nx, ny = self.normal()
         ht = self.half_thickness_scene()
         if self._alignment == ALIGN_INTERIOR:
-            # Interior: click line is the interior face — wall extends to the left (normal side)
-            off_left = QPointF(0, 0)
-            off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
-        elif self._alignment == ALIGN_EXTERIOR:
-            # Exterior: click line is the exterior face — wall extends to the right
+            # Interior: axis is on interior face — wall extends outward (right side)
             off_left = QPointF(nx * ht * 2, ny * ht * 2)
             off_right = QPointF(0, 0)
+        elif self._alignment == ALIGN_EXTERIOR:
+            # Exterior: axis is on exterior face — wall extends inward (left side)
+            off_left = QPointF(0, 0)
+            off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
         else:  # ALIGN_CENTER
             off_left = QPointF(nx * ht, ny * ht)
             off_right = QPointF(-nx * ht, -ny * ht)
