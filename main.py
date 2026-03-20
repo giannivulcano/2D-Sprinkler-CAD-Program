@@ -1463,7 +1463,10 @@ class MainWindow(QMainWindow):
 
     def _on_selection_changed_modify(self):
         """Auto-switch to Modify tab when items are selected (unless drawing)."""
-        sel = self.scene.selectedItems()
+        try:
+            sel = self.scene.selectedItems()
+        except RuntimeError:
+            return  # scene already deleted during shutdown
         # Enable/disable selection-dependent buttons
         has_sel = bool(sel)
         for btn in self._selection_buttons:

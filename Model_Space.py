@@ -2469,6 +2469,11 @@ class Model_Space(QGraphicsScene):
                     self.removeItem(r)
             self._roofs.clear()
 
+            for rm in list(self._rooms):
+                if rm.scene() is self:
+                    self.removeItem(rm)
+            self._rooms.clear()
+
             for h in list(self._hatch_items):
                 if h.scene() is self:
                     self.removeItem(h)
@@ -4222,12 +4227,7 @@ class Model_Space(QGraphicsScene):
                     self._wall_rect_thickness_preview.setZValue(199)
                     self.addItem(self._wall_rect_thickness_preview)
                 _wtmpl = self._get_wall_template()
-                # Swap alignment for rect (same as in _press_wall_rect)
                 _ra = _wtmpl._alignment
-                if _ra == "Interior":
-                    _ra = "Exterior"
-                elif _ra == "Exterior":
-                    _ra = "Interior"
                 corners = [
                     QPointF(rect.x(), rect.y()),
                     QPointF(rect.x() + rect.width(), rect.y()),
@@ -4951,7 +4951,8 @@ class Model_Space(QGraphicsScene):
                 node_coords.append(QPointF(pt))
 
         # ── Build directed edges ──────────────────────────────────────
-        adj: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        # Each entry: (neighbor_node, angle, wall_ref)
+        adj: dict[int, list[tuple[int, float, "WallSegment"]]] = defaultdict(list)
 
         for wi, w in enumerate(walls):
             n1 = pt_to_node[wi * 2]
@@ -5001,8 +5002,8 @@ class Model_Space(QGraphicsScene):
                 pa, pb = node_coords[na], node_coords[nb]
                 a_ab = _m.atan2(pb.y() - pa.y(), pb.x() - pa.x())
                 a_ba = _m.atan2(pa.y() - pb.y(), pa.x() - pb.x())
-                adj[na].append((nb, a_ab))
-                adj[nb].append((na, a_ba))
+                adj[na].append((nb, a_ab, w))
+                adj[nb].append((na, a_ba, w))
 
         # ── Find nearest wall edge to click point ─────────────────────
         best_wall = None
@@ -5046,6 +5047,7 @@ class Model_Space(QGraphicsScene):
         # ── Walk boundary (tightest CW turn) ──────────────────────────
         boundary = [node_coords[curr]]
         visited_edges: set[tuple[int, int]] = set()
+        boundary_walls: list = []  # walls actually forming this room boundary
 
         for _ in range(len(node_coords) * 2 + 10):
             neighbors = adj.get(curr, [])
@@ -5055,7 +5057,7 @@ class Model_Space(QGraphicsScene):
             incoming = prev_angle + _m.pi
             best_next = None
             best_turn = float("inf")
-            for nb, edge_angle in neighbors:
+            for nb, edge_angle, wall_ref in neighbors:
                 if (curr, nb) in visited_edges:
                     continue
                 turn = (incoming - edge_angle) % (2 * _m.pi)
@@ -5063,15 +5065,17 @@ class Model_Space(QGraphicsScene):
                     turn = 2 * _m.pi
                 if turn < best_turn:
                     best_turn = turn
-                    best_next = (nb, edge_angle)
+                    best_next = (nb, edge_angle, wall_ref)
 
             if best_next is None:
                 return None
 
-            nb, edge_angle = best_next
+            nb, edge_angle, wall_ref = best_next
             visited_edges.add((curr, nb))
             prev_angle = edge_angle
             curr = nb
+            if wall_ref not in boundary_walls:
+                boundary_walls.append(wall_ref)
 
             if curr == start and len(boundary) >= 3:
                 break
@@ -5082,14 +5086,16 @@ class Model_Space(QGraphicsScene):
         if len(boundary) < 3:
             return None
 
-        # ── Offset boundary inward based on wall alignment ─────────────
-        # Interior: centerline is at interior face, wall extends outward
-        #   → room boundary = centerline, no inset needed
-        # Center: centerline is at wall center
-        #   → room boundary inset by half thickness to reach inner face
-        # Exterior: centerline is at exterior face, wall extends inward
-        #   → room boundary inset by full thickness to reach inner face
-        from wall import ALIGN_INTERIOR, ALIGN_EXTERIOR
+        # Use only the walls that form this room's boundary
+        walls = boundary_walls
+
+        # The boundary walk traces wall centerlines. For non-center alignments
+        # we need a half-wall-width inset to reach the interior face:
+        #   Center   → no adjustment (centerline = wall center, already correct)
+        #   Interior → inset by half thickness (centerline is at interior face,
+        #              room face is half-thickness inward)
+        #   Exterior → inset by half thickness (centerline is at exterior face,
+        #              room face is half-thickness inward)
         align_counts = {"Center": 0, "Interior": 0, "Exterior": 0}
         total_ht = 0.0
         for w in walls:
@@ -5098,22 +5104,43 @@ class Model_Space(QGraphicsScene):
         avg_ht = total_ht / len(walls) if walls else 0.0
 
         dominant = max(align_counts, key=align_counts.get)
-        if dominant == "Interior":
-            inset_dist = 0.0  # centerline is at interior face, already correct
-        elif dominant == "Exterior":
-            inset_dist = avg_ht * 2  # centerline at exterior, inset by full thickness
-        else:
-            inset_dist = avg_ht  # center alignment, half thickness
+        # All alignments need inset to reach the inner wall face:
+        #   Center   → centerline is at wall center → inset by half thickness (shrink)
+        #   Interior → centerline is at interior face → inset by half thickness (shrink)
+        #   Exterior → centerline is at exterior face → inset by half thickness (expand)
+        # Determine inset needed to reach interior face from the boundary walk
+        # (which traces wall centerlines/axes):
+        #   Center   → axis at wall center → inset by half thickness (shrink)
+        #   Interior → axis IS the interior face → no inset needed
+        #   Exterior → axis at exterior face → inset by full thickness (shrink)
+        if dominant == "Exterior":
+            inset_dist = 0.0
+        elif dominant == "Interior":
+            inset_dist = avg_ht * 2  # full wall thickness
+        else:  # Center
+            inset_dist = avg_ht  # half wall thickness
+        want_larger = False  # always shrink toward room interior
 
-        if inset_dist > 0:
-            inset = self._inset_polygon(boundary, inset_dist)
-            if inset and len(inset) >= 3:
-                # Verify inset still contains click point
-                test_path = QPainterPath()
-                test_path.addPolygon(QPolygonF(inset))
-                test_path.closeSubpath()
-                if test_path.contains(click_pt):
-                    boundary = inset
+        if inset_dist > 0.01:
+            orig_area = abs(sum(
+                boundary[i].x() * boundary[(i+1) % len(boundary)].y() -
+                boundary[(i+1) % len(boundary)].x() * boundary[i].y()
+                for i in range(len(boundary))) / 2.0)
+            for sign in (1.0, -1.0):
+                candidate = self._inset_polygon(boundary, inset_dist * sign)
+                if candidate and len(candidate) >= 3:
+                    cand_area = abs(sum(
+                        candidate[i].x() * candidate[(i+1) % len(candidate)].y() -
+                        candidate[(i+1) % len(candidate)].x() * candidate[i].y()
+                        for i in range(len(candidate))) / 2.0)
+                    area_ok = (cand_area > orig_area) if want_larger else (cand_area < orig_area)
+                    if area_ok:
+                        test_path = QPainterPath()
+                        test_path.addPolygon(QPolygonF(candidate))
+                        test_path.closeSubpath()
+                        if test_path.contains(click_pt):
+                            boundary = candidate
+                            break
 
         # Validate
         path = QPainterPath()
@@ -5721,13 +5748,7 @@ class Model_Space(QGraphicsScene):
                 QPointF(rect.x(), rect.y() + rect.height()),          # bottom-left
             ]
             _tmpl = self._get_wall_template()
-            # For CW-traced rectangle, normals point outward.
-            # Swap Interior/Exterior so "Interior" makes walls extend inward.
             _rect_align = _tmpl._alignment
-            if _rect_align == "Interior":
-                _rect_align = "Exterior"
-            elif _rect_align == "Exterior":
-                _rect_align = "Interior"
             walls_created = []
             for i in range(4):
                 p1 = corners[i]
