@@ -703,11 +703,12 @@ class Model_View(QGraphicsView):
 
     def _select_all_items(self):
         from gridline import GridlineItem
+        from view_marker import ViewCropBox
         scene = self.scene()
         if scene:
             scene.blockSignals(True)
             for item in scene.items():
-                if isinstance(item, GridlineItem):
+                if isinstance(item, (GridlineItem, ViewCropBox)):
                     continue
                 if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
                     item.setSelected(True)

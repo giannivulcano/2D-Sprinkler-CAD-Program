@@ -272,17 +272,22 @@ class FillPickerDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 _CATEGORIES: list[dict] = [
-    {"key": "Pipe",             "color": "#4488ff", "fill": None,      "font": 12,   "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Sprinkler",        "color": "#ff4444", "fill": "#000000",  "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Fitting",          "color": "#44cc44", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Water Supply",     "color": "#00cccc", "fill": "#2b2b2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Node",             "color": "#888888", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Hydraulic Badge",  "color": "#ffffff", "fill": "#2b2b2b", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Grid Line",        "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Roof",             "color": "#8B4513", "fill": "#D2B48C", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Wall",             "color": "#666666", "fill": "#999999", "font": None, "scale": 1.0, "opacity": 100, "visible": True},
-    {"key": "Room",             "color": "#4488cc", "fill": "#4488cc", "font": 12,   "scale": 1.0, "opacity": 100, "visible": True},
+    {"key": "Pipe",             "color": "#4488ff", "fill": None,      "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Sprinkler",        "color": "#ff4444", "fill": "#000000",  "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Fitting",          "color": "#44cc44", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Water Supply",     "color": "#00cccc", "fill": "#2b2b2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Node",             "color": "#888888", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Hydraulic Badge",  "color": "#ffffff", "fill": "#2b2b2b", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Wall",             "color": "#666666", "fill": "#999999", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Roof",             "color": "#8B4513", "fill": "#D2B48C", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Room",             "color": "#4488cc", "fill": "#4488cc", "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Grid Line",        "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
+    {"key": "Level Datum",      "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
+    {"key": "Elevation Marker", "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
 ]
+
+# Group display order
+_GROUPS = ["Fire Suppression", "Architecture", "Grids & Levels"]
 
 # Tree-column indices
 _COL_NAME    = 0
@@ -377,6 +382,8 @@ def apply_display_to_item(item, color: str | None, scale: float,
         item._centre_on_offset()
     elif isinstance(item, GridlineItem):
         _apply_gridline(item, color, scale, opacity, visible, fill_color, font_size)
+    elif _is_elevation_marker(item):
+        _apply_elevation_marker(item, color, scale, opacity, visible, fill_color, font_size)
     elif isinstance(item, Node):
         _apply_node(item, color, scale, opacity, visible)
     else:
@@ -436,6 +443,32 @@ def _apply_fitting(fitting, color, scale, opacity, visible, fill_color=None):
 def _apply_node(node, color, scale, opacity, visible):
     node.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
     node.setVisible(visible)
+
+
+def _is_elevation_marker(item) -> bool:
+    """Check if item is a ViewMarkerArrow without importing at module level."""
+    return type(item).__name__ == "ViewMarkerArrow"
+
+
+def _apply_elevation_marker(marker, color, scale, opacity, visible, fill_color,
+                            font_size=None):
+    """Apply display settings to a ViewMarkerArrow."""
+    if color:
+        marker._marker_color = QColor(color)
+        pen = marker.pen()
+        pen.setColor(QColor(color))
+        marker.setPen(pen)
+    if fill_color:
+        marker._fill_color = QColor(fill_color)
+        marker.setBrush(QBrush(QColor(fill_color)))
+    if scale and scale != 1.0:
+        marker.setScale(scale)
+    elif scale == 1.0:
+        marker.setScale(1.0)
+    marker._display_scale = scale if scale else 1.0
+    marker.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
+    marker.setVisible(visible)
+    marker.update()
 
 
 def _apply_gridline(gl, color, scale, opacity, visible, fill_color, font_size=None):
@@ -501,6 +534,8 @@ def apply_category_defaults(item):
         key = "Wall"
     elif isinstance(item, Room):
         key = "Room"
+    elif _is_elevation_marker(item):
+        key = "Elevation Marker"
     else:
         return
 
@@ -870,6 +905,7 @@ class DisplayManager(QDialog):
         # Snapshot was already taken in __init__ before _build_ui().
         self._suppress = True
         self._populate_tree()
+        self._tree.expandAll()
         self._suppress = False
         outer.addWidget(self._tree)
 
@@ -901,6 +937,21 @@ class DisplayManager(QDialog):
         _t = th.detect()
         bold = QFont()
         bold.setBold(True)
+        group_font = QFont()
+        group_font.setBold(True)
+        group_font.setPointSize(group_font.pointSize() + 1)
+
+        # Create group header items
+        group_items: dict[str, QTreeWidgetItem] = {}
+        for grp_name in _GROUPS:
+            grp_item = QTreeWidgetItem(self._tree)
+            grp_item.setText(_COL_NAME, grp_name)
+            grp_item.setFont(_COL_NAME, group_font)
+            grp_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            grp_item.setExpanded(True)
+            # Style the group header
+            grp_item.setForeground(_COL_NAME, QColor(_t.text_primary))
+            group_items[grp_name] = grp_item
 
         for cat_def in _CATEGORIES:
             key = cat_def["key"]
@@ -935,8 +986,10 @@ class DisplayManager(QDialog):
                     saved_font = int(float(self._settings.value(
                         f"display/{key}/font", saved_font)))
 
-            # ── Category row ─────────────────────────────────────────
-            cat_item = QTreeWidgetItem(self._tree)
+            # ── Category row (child of its group) ─────────────────────
+            grp_name = cat_def.get("group", "Other")
+            parent_item = group_items.get(grp_name, self._tree)
+            cat_item = QTreeWidgetItem(parent_item)
             cat_item.setText(_COL_NAME, f"{key}  ({len(items)})")
             cat_item.setFont(_COL_NAME, bold)
             cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -1609,4 +1662,6 @@ def _items_for_category_static(scene, key: str) -> list:
         return list(getattr(scene, "_walls", []))
     elif key == "Room":
         return list(getattr(scene, "_rooms", []))
+    elif key == "Elevation Marker":
+        return [i for i in scene.items() if _is_elevation_marker(i)]
     return []

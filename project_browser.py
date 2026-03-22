@@ -57,6 +57,8 @@ class ProjectBrowser(QWidget):
 
     activateModelSpace = pyqtSignal()
     activatePaperSheet = pyqtSignal(str)   # sheet name
+    activateElevation = pyqtSignal(str)    # direction name (North/South/East/West)
+    activatePlanView = pyqtSignal(str)     # level name (Level 1, Level 2, etc.)
 
     # Stub categories under 2D Model (Plans and Elevations are live)
     _MS_STUBS = ["Schematics", "Details", "Schedules"]
@@ -102,6 +104,7 @@ class ProjectBrowser(QWidget):
             f"QTreeWidget::item:hover   {{ background: {_t.bg_base}; }}"
         )
         self._tree.itemActivated.connect(self._on_item_activated)
+        self._tree.itemDoubleClicked.connect(self._on_item_activated)
         layout.addWidget(self._tree)
 
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -203,8 +206,13 @@ class ProjectBrowser(QWidget):
 
     def _on_item_activated(self, item: QTreeWidgetItem, _col: int):
         role = item.data(0, _ROLE_TYPE)
-        if role in ("model_root", "ms_stub", "plan", "elevation"):
-            # For now: plans and elevations activate model space
+        if role == "elevation":
+            name = item.data(0, _ROLE_NAME)
+            self.activateElevation.emit(name)
+        elif role == "plan":
+            name = item.data(0, _ROLE_NAME)
+            self.activatePlanView.emit(name)
+        elif role in ("model_root", "ms_stub"):
             self.activateModelSpace.emit()
         elif role == "sheet":
             name = item.data(0, _ROLE_NAME)

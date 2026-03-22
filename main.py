@@ -229,6 +229,7 @@ class MainWindow(QMainWindow):
         self.ribbon = RibbonBar()
         self.setMenuWidget(self.ribbon)
         self.setCentralWidget(self.central_tabs)
+        self.central_tabs.currentChanged.connect(self._on_tab_changed)
 
         # Property manager (will be added as tab in browser dock)
         self._splash_progress(65, "Setting up panels...")
@@ -273,7 +274,18 @@ class MainWindow(QMainWindow):
         self.project_browser.activatePaperSheet.connect(
             self._activate_paper_sheet
         )
+        self.project_browser.activateElevation.connect(self._activate_elevation)
+        self.project_browser.activatePlanView.connect(self._activate_plan_view)
         self.level_widget.levelsChanged.connect(self.project_browser.refresh_levels)
+
+        # Elevation Manager — QGraphicsScene-based elevation views
+        # (connect after elevation_manager is created below)
+        from elevation_manager import ElevationManager
+        self.elevation_manager = ElevationManager(
+            self.scene, self.level_mgr, self.scene.scale_manager,
+            self.central_tabs,
+        )
+        self.level_widget.levelsChanged.connect(self.elevation_manager.rebuild_all)
 
         self.model_browser = ModelBrowser()
         self.model_browser.set_scene(self.scene)
@@ -286,7 +298,6 @@ class MainWindow(QMainWindow):
         self._left_tabs.addTab(self.model_browser, "Model")
         self._left_tabs.addTab(self.layer_manager, "Underlay")
         self._left_tabs.addTab(self.user_layer_widget, "User Layers")
-        self._left_tabs.addTab(self.level_widget, "Levels")
 
         self.browser_dock = QDockWidget("", self)
         self.browser_dock.setObjectName("BrowserDock")
@@ -372,6 +383,7 @@ class MainWindow(QMainWindow):
         self.scene.instructionChanged.connect(
             lambda text: self.mode_label.setText(text)
         )
+        self.scene.openViewRequested.connect(self._on_open_view_requested)
 
         self._splash_progress(80, "Wiring up controls...")
         self.init_ribbon()
@@ -403,6 +415,7 @@ class MainWindow(QMainWindow):
         self.user_layer_widget.populate()
         self.level_label.setText("Level: Level 1")
         self._place_default_gridlines()
+        self._create_elevation_markers()
         from display_manager import apply_default_display_settings
         apply_default_display_settings(self.scene)
         self._apply_persistent_unit_prefs()
@@ -501,6 +514,70 @@ class MainWindow(QMainWindow):
                 return
         # Sheet not found — switch to the first paper space tab as fallback
         self.central_tabs.setCurrentWidget(self.paper_space_widget)
+
+    def _activate_plan_view(self, level_name: str):
+        """Open or switch to a Plan: <level> tab.
+
+        If a tab named 'Plan: <level>' already exists, switch to it.
+        Otherwise create a new one.  All plan tabs share the same
+        Model_Space scene — switching between them changes the active level.
+        """
+        tab_name = f"Plan: {level_name}"
+
+        # Check if tab already exists
+        for i in range(self.central_tabs.count()):
+            if self.central_tabs.tabText(i) == tab_name:
+                self.central_tabs.setCurrentIndex(i)
+                self._apply_plan_level(level_name)
+                return
+
+        # Create a new plan tab sharing the same scene + view
+        from Model_View import Model_View
+        plan_view = Model_View(self.scene)
+        plan_view.setObjectName(f"plan_view_{level_name}")
+        idx = self.central_tabs.addTab(plan_view, tab_name)
+        self.central_tabs.setCurrentIndex(idx)
+        self._apply_plan_level(level_name)
+
+        # Fit to screen after widget is shown
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(50, plan_view.fit_to_screen)
+
+    def _on_tab_changed(self, index: int):
+        """Auto-switch active level when switching to a Plan tab."""
+        tab_text = self.central_tabs.tabText(index)
+        if tab_text.startswith("Plan: "):
+            level_name = tab_text[len("Plan: "):]
+            self._apply_plan_level(level_name)
+
+    def _apply_plan_level(self, level_name: str):
+        """Set the active level and refresh visibility for a plan view."""
+        if self.scene._level_manager:
+            self.scene._level_manager.active_level = level_name
+            self.level_mgr.apply_to_scene(self.scene)
+            self.level_label.setText(f"Level: {level_name}")
+
+    def _activate_elevation(self, direction: str):
+        """Open or switch to an elevation view tab from the project browser."""
+        already_open = direction.lower() in self.elevation_manager.open_directions
+        view = self.elevation_manager.open_elevation(direction)
+        if not already_open:
+            # Wire signals only once on first open
+            scene = view.scene()
+            if scene is not None:
+                scene.entitySelected.connect(self.prop_manager.show_properties)
+            view.cursorMoved.connect(self.coord_label.setText)
+
+    def _create_elevation_markers(self):
+        """Create N/S/E/W elevation markers in the 2D plan view."""
+        from view_marker import ViewMarkerManager
+        self._view_marker_mgr = ViewMarkerManager(self.scene)
+        self._view_marker_mgr.create_elevation_markers()
+
+    def _on_open_view_requested(self, view_type: str, direction: str):
+        """Handle double-click on a view marker — open the corresponding view."""
+        if view_type == "elevation":
+            self._activate_elevation(direction)
 
     # ─────────────────────────────────────────────────────────────────────────
     # RIBBON INITIALISATION
@@ -619,6 +696,17 @@ class MainWindow(QMainWindow):
             self.scene.redo, shortcut="Ctrl+Y")
         _btn.setToolTip("Redo last undone action [Ctrl+Y]")
 
+        # --- Project Tools ---
+        g_proj = manage_page.add_group("Project Tools")
+        _btn = g_proj.add_large_button(
+            "Gridlines", _I("gridline_icon.svg"),
+            self._place_grid_lines)
+        _btn.setToolTip("Open gridline placement dialog")
+        _btn = g_proj.add_large_button(
+            "Levels", _I("placeholder_icon.svg"),
+            self._open_level_dialog)
+        _btn.setToolTip("Open Level Manager dialog")
+
         # --- View ---
         g_view = manage_page.add_group("View")
         _btn = g_view.add_large_button(
@@ -695,9 +783,6 @@ class MainWindow(QMainWindow):
         _mode_btn(g_geom, "Circle", _I("circle_icon.svg"), "draw_circle").setToolTip("Draw a circle")
         _mode_btn(g_geom, "Polyline", _I("polyline_icon.svg"), "polyline").setToolTip("Draw a polyline (multi-segment)")
         _mode_btn(g_geom, "Arc", _I("arc_icon.svg"), "draw_arc").setToolTip("Draw an arc (3-click)")
-        _gl_btn = g_geom.add_large_button(
-            "Gridlines", _I("gridline_icon.svg"), self._place_grid_lines)
-        _gl_btn.setToolTip("Open gridline placement dialog")
         self._single_place_btn = g_geom.add_small_button(
             "Single\nPlace", _I("placeholder_icon.svg"), None, checkable=True)
         self._single_place_btn.setToolTip("Return to Select mode after placing one item")
@@ -1631,6 +1716,19 @@ class MainWindow(QMainWindow):
         dlg = DisplayManager(self.scene, parent=self)
         dlg.exec()  # live preview handles apply/revert internally
 
+    def _open_level_dialog(self):
+        """Open the Level Manager dialog."""
+        from level_dialog import LevelDialog
+        dlg = LevelDialog(self.level_mgr, scene=self.scene, parent=self)
+        dlg.activeLevelChanged.connect(self._on_active_level_changed)
+        dlg.levelsChanged.connect(
+            lambda: self.level_mgr.apply_to_scene(self.scene))
+        dlg.levelsChanged.connect(self.update_property_manager)
+        dlg.levelsChanged.connect(self.project_browser.refresh_levels)
+        dlg.levelsChanged.connect(self.elevation_manager.rebuild_all)
+        dlg.duplicateLevel.connect(self.scene.duplicate_level_entities)
+        dlg.exec()
+
     def open_sprinkler_manager(self):
         """Open the Sprinkler Manager database dialog."""
         from sprinkler_db import SprinklerManagerDialog, SprinklerDatabase
@@ -1837,6 +1935,7 @@ class MainWindow(QMainWindow):
 
         # Place a default 3 × 3 grid (3 vertical + 3 horizontal)
         self._place_default_gridlines()
+        self._create_elevation_markers()
 
         # Apply saved display defaults to the new project
         from display_manager import apply_default_display_settings

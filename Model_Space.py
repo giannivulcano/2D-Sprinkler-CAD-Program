@@ -29,6 +29,7 @@ from construction_geometry import (
 from snap_engine import SnapEngine, OsnapResult
 from display_manager import apply_category_defaults
 from gridline import GridlineItem, reset_grid_counters
+from view_marker import ViewMarkerArrow
 from constants import Z_BELOW_GEOMETRY, DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_MM
 from floor_slab import FloorSlab
@@ -53,6 +54,7 @@ class Model_Space(QGraphicsScene):
     sceneModified = pyqtSignal()          # emitted on every push_undo_state
     radiationConfirm = pyqtSignal()       # Enter pressed during radiation selection
     radiationCancel = pyqtSignal()        # Escape pressed during radiation selection
+    openViewRequested = pyqtSignal(str, str)  # (view_type, direction) — marker double-click
 
     def __init__(self):
         super().__init__()
@@ -4431,11 +4433,12 @@ class Model_Space(QGraphicsScene):
             selection = next((i for i in items if isinstance(i, Node)), None)
         if selection is None:
             selection = next((i for i in items if isinstance(i, Pipe)), None)
-        # Also check for walls, floors, roofs (lower Z-order)
+        # Also check for walls, floors, roofs, view markers (lower Z-order)
         if selection is None:
             selection = next(
                 (i for i in items
-                 if isinstance(i, (WallSegment, FloorSlab, RoofItem, Room))
+                 if isinstance(i, (WallSegment, FloorSlab, RoofItem, Room,
+                                   ViewMarkerArrow))
                  and i.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable),
                 None,
             )
