@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING
 from PyQt6.QtWidgets import (
     QGraphicsScene, QGraphicsRectItem, QGraphicsLineItem,
     QGraphicsEllipseItem, QGraphicsSimpleTextItem, QGraphicsPathItem,
+    QGraphicsItem, QGraphicsTextItem, QStyle,
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QRectF, QPointF, QLineF, QTimer
-from PyQt6.QtGui import QPen, QColor, QBrush, QFont, QPainterPath
+from PyQt6.QtGui import QPen, QColor, QBrush, QFont, QPainterPath, QPainter
 
 from PyQt6.QtCore import QSettings
 
@@ -36,6 +37,339 @@ if TYPE_CHECKING:
 
 # Data role for storing source entity reference on projected items
 _ROLE_SOURCE = Qt.ItemDataRole.UserRole
+
+# Marker role so elevation views can filter these from Ctrl+A
+_ROLE_ELEV_ANNOTATION = Qt.ItemDataRole.UserRole + 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ElevGridlineItem — selectable gridline in elevation view
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _ElevBubble(QGraphicsEllipseItem):
+    """Bubble at a gridline/datum endpoint in elevation view.
+
+    Clicking selects the parent composite item.  Visual appearance mirrors
+    the plan-view GridBubble.
+    """
+
+    def __init__(self, radius: float, label: str, color: QColor,
+                 fill: QColor, parent: QGraphicsItem | None = None):
+        super().__init__(-radius, -radius, 2 * radius, 2 * radius, parent)
+        self._radius = radius
+        pen = QPen(color, max(1, radius * 0.04))
+        self.setPen(pen)
+        self.setBrush(QBrush(fill))
+        self.setZValue(500)
+
+        self._label = QGraphicsTextItem(label, self)
+        self._label.setDefaultTextColor(color.lighter(150))
+        font = QFont("Consolas")
+        font.setPixelSize(max(1, int(radius * 0.9)))
+        font.setBold(True)
+        self._label.setFont(font)
+        self._center_label()
+
+    def set_label(self, text: str):
+        self._label.setPlainText(text)
+        self._center_label()
+
+    def _center_label(self):
+        br = self._label.boundingRect()
+        self._label.setPos(-br.width() / 2, -br.height() / 2)
+
+    def paint(self, painter, option, widget=None):
+        super().paint(painter, option, widget)
+        parent = self.parentItem()
+        if parent is not None and parent.isSelected():
+            r = self._radius
+            base_color = self.pen().color()
+            highlight = QPen(base_color.lighter(150), max(1, r * 0.08))
+            painter.setPen(highlight)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QRectF(-r, -r, 2 * r, 2 * r))
+
+    def mousePressEvent(self, event):
+        parent = self.parentItem()
+        if parent is not None:
+            scene = parent.scene()
+            if scene is not None:
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    parent.setSelected(not parent.isSelected())
+                else:
+                    scene.clearSelection()
+                    parent.setSelected(True)
+        event.accept()
+
+
+class ElevGridlineItem(QGraphicsLineItem):
+    """Interactive gridline in an elevation view — selectable with grip handles."""
+
+    def __init__(self, h_pos: float, v_top: float, v_bot: float,
+                 label: str, bubble_r: float,
+                 color: QColor, fill: QColor, pen_w: float,
+                 opacity: float = 1.0):
+        super().__init__(h_pos, v_top, h_pos, v_bot)
+        self._h = h_pos
+        self._bubble_r = bubble_r
+
+        # Line pen — suppress default; drawn manually in paint()
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+
+        self._grid_color = color
+        self._pen_w = pen_w
+
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setZValue(-95)
+        self.setOpacity(opacity)
+        self.setData(_ROLE_ELEV_ANNOTATION, True)
+
+        # Bubbles at top and bottom
+        self.bubble1 = _ElevBubble(bubble_r, label, color, fill, self)
+        self.bubble2 = _ElevBubble(bubble_r, label, color, fill, self)
+        self._update_bubble_positions()
+
+    def _update_bubble_positions(self):
+        line = self.line()
+        self.bubble1.setPos(line.p1())
+        self.bubble2.setPos(line.p2())
+
+    # ── Drawing ──────────────────────────────────────────────────────────
+
+    def boundingRect(self):
+        br = super().boundingRect()
+        m = self._bubble_r
+        return br.adjusted(-m, -m, m, m)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        r = self._bubble_r
+        path.addEllipse(self.bubble1.pos(), r, r)
+        path.addEllipse(self.bubble2.pos(), r, r)
+        return path
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.StateFlag.State_Selected
+        line = self.line()
+        p1, p2 = line.p1(), line.p2()
+
+        # Shorten to meet bubbles at edge
+        dy = p2.y() - p1.y()
+        length = abs(dy)
+        if length > 1e-9:
+            uy = dy / length
+            r1 = self._bubble_r * self.bubble1.scale()
+            r2 = self._bubble_r * self.bubble2.scale()
+            draw_p1 = QPointF(p1.x(), p1.y() + uy * r1) if self.bubble1.isVisible() else p1
+            draw_p2 = QPointF(p2.x(), p2.y() - uy * r2) if self.bubble2.isVisible() else p2
+        else:
+            draw_p1, draw_p2 = p1, p2
+
+        pen = QPen(self._grid_color, self._pen_w, Qt.PenStyle.DashDotLine)
+        painter.setPen(pen)
+        painter.drawLine(draw_p1, draw_p2)
+
+        if self.isSelected():
+            sel_pen = QPen(self._grid_color.lighter(150),
+                           self._pen_w * 2, Qt.PenStyle.DashDotLine)
+            painter.setPen(sel_pen)
+            painter.drawLine(draw_p1, draw_p2)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self.bubble1.update()
+            self.bubble2.update()
+        return super().itemChange(change, value)
+
+    # ── Grip handles ─────────────────────────────────────────────────────
+
+    def grip_points(self) -> list[QPointF]:
+        line = self.line()
+        return [line.p1(), line.p2()]
+
+    def apply_grip(self, index: int, new_pos: QPointF):
+        """Move grip along the vertical line (constrained to H position)."""
+        line = self.line()
+        p1, p2 = line.p1(), line.p2()
+        if index == 0:
+            self.setLine(self._h, new_pos.y(), self._h, p2.y())
+        elif index == 1:
+            self.setLine(self._h, p1.y(), self._h, new_pos.y())
+        self._update_bubble_positions()
+        self.update()
+
+
+class ElevDatumItem(QGraphicsLineItem):
+    """Interactive level datum in an elevation view — selectable with grip handles."""
+
+    def __init__(self, v_pos: float, h_min: float, h_max: float,
+                 level_name: str, elev_str: str,
+                 bubble_r: float, datum_color: QColor, fill_color: QColor,
+                 pen_w: float, name_font: QFont, elev_font: QFont,
+                 scale: float = 1.0, opacity: float = 1.0):
+        super().__init__(h_min, v_pos, h_max, v_pos)
+        self._v = v_pos
+        self._bubble_r = bubble_r
+        self._datum_color = datum_color
+        self._fill_color = fill_color
+        self._pen_w = pen_w
+        self._scale = scale
+        self._level_name = level_name.upper() if level_name else "LEVEL"
+        self._elev_str = elev_str
+
+        # Preserve the original fonts so grip moves don't lose sizing
+        self._name_font = QFont(name_font)
+        self._elev_font = QFont(elev_font)
+
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setZValue(-100)
+        self.setOpacity(opacity)
+        self.setData(_ROLE_ELEV_ANNOTATION, True)
+
+        # ── Bubble (4-quadrant) at left end ──────────────────────────────
+        bx = h_min - bubble_r * 0.5
+        self._bx = bx
+        self._build_bubble(bx, v_pos, bubble_r, datum_color, fill_color, pen_w)
+
+        # ── Labels ───────────────────────────────────────────────────────
+        self._build_labels()
+
+    def _build_bubble(self, bx, by, r, datum_color, fill_color, pen_w):
+        """Build the 4-quadrant datum bubble as child items."""
+        circle_pen = QPen(datum_color, pen_w)
+        circle_pen.setCosmetic(False)
+
+        circle = QGraphicsEllipseItem(bx - r, by - r, r * 2, r * 2, self)
+        circle.setPen(circle_pen)
+        circle.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        circle.setZValue(-95)
+
+        QGraphicsLineItem(bx - r, by, bx + r, by, self).setPen(circle_pen)
+        QGraphicsLineItem(bx, by - r, bx, by + r, self).setPen(circle_pen)
+
+        arc_rect = QRectF(bx - r, by - r, r * 2, r * 2)
+
+        lq = QPainterPath()
+        lq.moveTo(bx, by); lq.arcTo(arc_rect, 0, 90); lq.closeSubpath()
+        lq.moveTo(bx, by); lq.arcTo(arc_rect, 180, 90); lq.closeSubpath()
+        lq_item = QGraphicsPathItem(lq, self)
+        lq_item.setPen(QPen(Qt.PenStyle.NoPen))
+        lq_item.setBrush(QBrush(datum_color))
+        lq_item.setZValue(-97)
+
+        fq = QPainterPath()
+        fq.moveTo(bx, by); fq.arcTo(arc_rect, 90, 90); fq.closeSubpath()
+        fq.moveTo(bx, by); fq.arcTo(arc_rect, 270, 90); fq.closeSubpath()
+        fq_item = QGraphicsPathItem(fq, self)
+        fq_item.setPen(QPen(Qt.PenStyle.NoPen))
+        fq_item.setBrush(QBrush(fill_color))
+        fq_item.setZValue(-96)
+
+    def _build_labels(self):
+        """Create or recreate label items using the stored fonts."""
+        tag_gap = 50 * self._scale
+        tag_x = self._bx + self._bubble_r + tag_gap
+
+        self._name_text = QGraphicsSimpleTextItem(self._level_name, self)
+        self._name_text.setFont(self._name_font)
+        self._name_text.setBrush(QBrush(self._datum_color))
+        name_br = self._name_text.boundingRect()
+        self._name_text.setPos(tag_x, self._v - name_br.height() - 20)
+        self._name_text.setZValue(-99)
+
+        self._elev_text = QGraphicsSimpleTextItem(self._elev_str, self)
+        self._elev_text.setFont(self._elev_font)
+        self._elev_text.setBrush(QBrush(self._datum_color.lighter(130)))
+        self._elev_text.setPos(tag_x, self._v + 20)
+        self._elev_text.setZValue(-99)
+
+    # ── Drawing ──────────────────────────────────────────────────────────
+
+    def boundingRect(self):
+        br = super().boundingRect()
+        m = self._bubble_r * 2
+        return br.adjusted(-m, -m, m, m)
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        r = self._bubble_r
+        path.addEllipse(QPointF(self._bx, self._v), r, r)
+        return path
+
+    def paint(self, painter, option, widget=None):
+        option.state &= ~QStyle.StateFlag.State_Selected
+        line = self.line()
+        p1, p2 = line.p1(), line.p2()
+
+        # Shorten left end to meet bubble edge
+        r = self._bubble_r
+        bubble_right_edge = self._bx + r
+        draw_p1 = QPointF(max(p1.x(), bubble_right_edge), p1.y())
+
+        pen = QPen(self._datum_color, self._pen_w, Qt.PenStyle.DashDotLine)
+        painter.setPen(pen)
+        painter.drawLine(draw_p1, p2)
+
+        if self.isSelected():
+            sel_pen = QPen(self._datum_color.lighter(150),
+                           self._pen_w * 2, Qt.PenStyle.DashDotLine)
+            painter.setPen(sel_pen)
+            painter.drawLine(draw_p1, p2)
+
+    def mousePressEvent(self, event):
+        """Clicking the bubble area selects this item."""
+        r = self._bubble_r
+        bp = QPointF(self._bx, self._v)
+        if (event.scenePos() - bp).manhattanLength() < r * 1.5:
+            scene = self.scene()
+            if scene is not None:
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    self.setSelected(not self.isSelected())
+                else:
+                    scene.clearSelection()
+                    self.setSelected(True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self.update()
+        return super().itemChange(change, value)
+
+    # ── Grip handles ─────────────────────────────────────────────────────
+
+    def grip_points(self) -> list[QPointF]:
+        line = self.line()
+        return [line.p1(), line.p2()]
+
+    def apply_grip(self, index: int, new_pos: QPointF):
+        """Move grip along the horizontal line (constrained to V position)."""
+        line = self.line()
+        p1, p2 = line.p1(), line.p2()
+        if index == 0:
+            new_x = new_pos.x()
+            self.setLine(new_x, self._v, p2.x(), self._v)
+            r = self._bubble_r
+            self._bx = new_x - r * 0.5
+            self._reposition_children()
+        elif index == 1:
+            self.setLine(p1.x(), self._v, new_pos.x(), self._v)
+        self.prepareGeometryChange()
+        self.update()
+
+    def _reposition_children(self):
+        """Rebuild child items after left-grip move, preserving fonts."""
+        for child in list(self.childItems()):
+            if self.scene():
+                self.scene().removeItem(child)
+
+        self._build_bubble(self._bx, self._v, self._bubble_r,
+                           self._datum_color, self._fill_color, self._pen_w)
+        self._build_labels()
 
 
 class ElevationScene(QGraphicsScene):
@@ -53,6 +387,11 @@ class ElevationScene(QGraphicsScene):
         self._lm = level_manager
         self._sm = scale_manager
         self._show_datums = True
+
+        # Grip-drag state (mirrors Model_Space pattern)
+        self._grip_item = None
+        self._grip_index: int = -1
+        self._grip_dragging = False
 
         # Theme
         _t = th.detect()
@@ -88,6 +427,80 @@ class ElevationScene(QGraphicsScene):
                     self.entitySelected.emit(source)
                     return
         self.entitySelected.emit(None)
+
+    # ── Grip-drag handling ────────────────────────────────────────────────
+
+    def _find_grip_hit(self, pos: QPointF):
+        """Return (item, grip_index) if pos is near a grip handle, else None."""
+        views = self.views()
+        if not views:
+            return None
+        scale = views[0].transform().m11()
+        tol = 16.0 / max(abs(scale), 1e-6)
+
+        for item in self.selectedItems():
+            if not hasattr(item, "grip_points"):
+                continue
+            for idx, gpt in enumerate(item.grip_points()):
+                if (pos - gpt).manhattanLength() <= tol * 1.5:
+                    return (item, idx)
+        return None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            hit = self._find_grip_hit(event.scenePos())
+            if hit is not None:
+                self._grip_item, self._grip_index = hit
+                self._grip_dragging = True
+                # Snapshot grip positions of co-selected items for delta propagation
+                self._grip_start_pos = event.scenePos()
+                self._grip_co_items = []
+                primary_type = type(self._grip_item)
+                for sel in self.selectedItems():
+                    if sel is self._grip_item:
+                        continue
+                    if isinstance(sel, primary_type) and hasattr(sel, "grip_points"):
+                        grips = sel.grip_points()
+                        if len(grips) > self._grip_index:
+                            self._grip_co_items.append(
+                                (sel, grips[self._grip_index]))
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._grip_dragging and self._grip_item is not None:
+            pos = event.scenePos()
+            # Move primary item
+            old_grips = self._grip_item.grip_points()
+            self._grip_item.apply_grip(self._grip_index, pos)
+            new_grips = self._grip_item.grip_points()
+
+            # Compute delta and propagate to co-selected items
+            if len(old_grips) > self._grip_index and len(new_grips) > self._grip_index:
+                delta = new_grips[self._grip_index] - old_grips[self._grip_index]
+                for sel, start_pt in self._grip_co_items:
+                    sg = sel.grip_points()
+                    if len(sg) > self._grip_index:
+                        target = QPointF(
+                            sg[self._grip_index].x() + delta.x(),
+                            sg[self._grip_index].y() + delta.y())
+                        sel.apply_grip(self._grip_index, target)
+
+            self.update()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._grip_dragging:
+            self._grip_item = None
+            self._grip_index = -1
+            self._grip_dragging = False
+            self._grip_co_items = []
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     # ── Properties ───────────────────────────────────────────────────────
 
@@ -159,7 +572,20 @@ class ElevationScene(QGraphicsScene):
     # ── Walls ────────────────────────────────────────────────────────────
 
     def _project_walls(self):
+        props = self._wall_display_props()
+        if not props["visible"]:
+            return
+        dm_color = QColor(props["color"])
+        dm_fill = QColor(props["fill"])
+        dm_opacity = props["opacity"] / 100.0
+        has_explicit_fill = props.get("has_explicit_fill", False)
+
         ppm = self._ppm()
+        d = self._direction
+
+        # Collect all wall rects with their depth for sorting
+        wall_rects: list[tuple[float, QGraphicsRectItem]] = []
+
         for wall in getattr(self._ms, "_walls", []):
             # Get Z extents
             base_z = 0.0
@@ -195,6 +621,23 @@ class ElevationScene(QGraphicsScene):
             if width < 0.5:
                 continue
 
+            # Compute depth (distance from camera along view direction)
+            # for sorting: closer walls should be drawn on top (higher Z)
+            all_wx = [c[0] for c in corners_world]
+            all_wy = [c[1] for c in corners_world]
+            centroid_x = sum(all_wx) / len(all_wx)
+            centroid_y = sum(all_wy) / len(all_wy)
+            if d == "north":
+                depth = centroid_y   # camera at +Y, closer = larger Y
+            elif d == "south":
+                depth = -centroid_y  # camera at -Y, closer = smaller Y
+            elif d == "east":
+                depth = centroid_x   # camera at +X, closer = larger X
+            elif d == "west":
+                depth = -centroid_x
+            else:
+                depth = centroid_y
+
             # Elevation scene rect: (h_min, -top_z) to (h_max, -base_z)
             v_top = -top_z      # Qt Y for top of wall
             v_bottom = -base_z  # Qt Y for bottom of wall
@@ -202,24 +645,26 @@ class ElevationScene(QGraphicsScene):
 
             rect = QGraphicsRectItem(h_min, v_top, width, height)
 
-            # Apply wall color and fill
-            pen = QPen(self._edge_color, 1)
+            # Use display manager colour; fall back to wall's own colour
+            pen = QPen(dm_color, 1)
             pen.setCosmetic(True)
             rect.setPen(pen)
-
-            fill_mode = getattr(wall, "_fill_mode", "Solid")
-            color = QColor(wall._color) if hasattr(wall, "_color") else QColor("#cccccc")
-            if fill_mode == "Solid":
-                rect.setBrush(QBrush(color))
-            elif fill_mode == "Hatch":
-                color.setAlpha(80)
-                rect.setBrush(QBrush(color, Qt.BrushStyle.BDiagPattern))
+            if has_explicit_fill:
+                fill_col = dm_fill
             else:
-                rect.setBrush(QBrush())
+                fill_col = QColor(wall._color) if hasattr(wall, "_color") else dm_fill
+                fill_col.setAlpha(255)
+            rect.setBrush(QBrush(fill_col))
+            rect.setOpacity(dm_opacity)
 
             rect.setData(_ROLE_SOURCE, wall)
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-            rect.setZValue(-50)
+            wall_rects.append((depth, rect))
+
+        # Sort by depth: farthest first (lowest Z), closest last (highest Z)
+        wall_rects.sort(key=lambda x: x[0])
+        for i, (depth, rect) in enumerate(wall_rects):
+            rect.setZValue(-50 + i)  # closer walls get higher Z → drawn on top
             self.addItem(rect)
 
     # ── Pipes ────────────────────────────────────────────────────────────
@@ -287,11 +732,17 @@ class ElevationScene(QGraphicsScene):
     # ── Floor slabs ──────────────────────────────────────────────────────
 
     def _project_floor_slabs(self):
+        props = self._floor_display_props()
+        if not props["visible"]:
+            return
+        dm_color = QColor(props["color"])
+        dm_fill = QColor(props["fill"])
+        dm_opacity = props["opacity"] / 100.0
+
         for slab in getattr(self._ms, "_floor_slabs", []):
             z = self._level_z(getattr(slab, "level", DEFAULT_LEVEL))
             thickness = getattr(slab, "_thickness_mm", 150.0)
 
-            # Get slab boundary extents in world mm
             pts = getattr(slab, "_points", [])
             if not pts:
                 continue
@@ -305,12 +756,11 @@ class ElevationScene(QGraphicsScene):
             v_top = -(z)
             v_bottom = -(z - thickness)
             rect = QGraphicsRectItem(h_min, v_top, h_max - h_min, v_bottom - v_top)
-            pen = QPen(self._edge_color, 1)
+            pen = QPen(dm_color, 1)
             pen.setCosmetic(True)
             rect.setPen(pen)
-            col = QColor("#8080cc")
-            col.setAlpha(80)
-            rect.setBrush(QBrush(col))
+            rect.setBrush(QBrush(dm_fill))
+            rect.setOpacity(dm_opacity)
             rect.setData(_ROLE_SOURCE, slab)
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
             rect.setZValue(-80)
@@ -319,6 +769,13 @@ class ElevationScene(QGraphicsScene):
     # ── Roofs ────────────────────────────────────────────────────────────
 
     def _project_roofs(self):
+        props = self._roof_display_props()
+        if not props["visible"]:
+            return
+        dm_color = QColor(props["color"])
+        dm_fill = QColor(props["fill"])
+        dm_opacity = props["opacity"] / 100.0
+
         for roof in getattr(self._ms, "_roofs", []):
             mesh_data = None
             try:
@@ -349,12 +806,11 @@ class ElevationScene(QGraphicsScene):
                 min(h_vals), min(v_vals),
                 max(h_vals) - min(h_vals), max(v_vals) - min(v_vals),
             )
-            pen = QPen(self._edge_color, 1)
+            pen = QPen(dm_color, 1)
             pen.setCosmetic(True)
             rect.setPen(pen)
-            rc = QColor.fromRgbF(col[0], col[1], col[2])
-            rc.setAlpha(int(col[3] * 255) if len(col) > 3 else 128)
-            rect.setBrush(QBrush(rc))
+            rect.setBrush(QBrush(dm_fill))
+            rect.setOpacity(dm_opacity)
             rect.setData(_ROLE_SOURCE, roof)
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
             rect.setZValue(-70)
@@ -362,15 +818,58 @@ class ElevationScene(QGraphicsScene):
 
     # ── Display manager helpers ──────────────────────────────────────────
 
+    def _wall_display_props(self) -> dict:
+        """Read Wall display properties from QSettings (display manager)."""
+        s = QSettings("GV", "FirePro3D")
+        return {
+            "color":   s.value("display/Wall/color",   "#666666"),
+            "fill":    s.value("display/Wall/fill",    "#999999"),
+            "opacity": int(float(s.value("display/Wall/opacity", 100))),
+            "visible": str(s.value("display/Wall/visible", "true")).lower() not in ("false", "0"),
+            "has_explicit_fill": s.contains("display/Wall/fill"),
+        }
+
+    def _roof_display_props(self) -> dict:
+        """Read Roof display properties from QSettings (display manager)."""
+        s = QSettings("GV", "FirePro3D")
+        return {
+            "color":   s.value("display/Roof/color",   "#8B4513"),
+            "fill":    s.value("display/Roof/fill",    "#D2B48C"),
+            "opacity": int(float(s.value("display/Roof/opacity", 100))),
+            "visible": str(s.value("display/Roof/visible", "true")).lower() not in ("false", "0"),
+        }
+
+    def _floor_display_props(self) -> dict:
+        """Read Floor display properties from QSettings (display manager)."""
+        s = QSettings("GV", "FirePro3D")
+        return {
+            "color":   s.value("display/Floor/color",   "#8888cc"),
+            "fill":    s.value("display/Floor/fill",    "#8888cc"),
+            "opacity": int(float(s.value("display/Floor/opacity", 100))),
+            "visible": str(s.value("display/Floor/visible", "true")).lower() not in ("false", "0"),
+        }
+
     def _gridline_display_props(self) -> dict:
         """Read Grid Line display properties from QSettings (display manager)."""
         s = QSettings("GV", "FirePro3D")
         return {
             "color":   s.value("display/Grid Line/color",   "#4488cc"),
             "fill":    s.value("display/Grid Line/fill",    "#1a1a2e"),
-            "opacity": int(s.value("display/Grid Line/opacity", 100)),
+            "opacity": int(float(s.value("display/Grid Line/opacity", 100))),
             "visible": str(s.value("display/Grid Line/visible", "true")).lower() not in ("false", "0"),
             "scale":   float(s.value("display/Grid Line/scale", 1.0)),
+        }
+
+    def _datum_display_props(self) -> dict:
+        """Read Level Datum display properties from QSettings (display manager)."""
+        s = QSettings("GV", "FirePro3D")
+        return {
+            "color":   s.value("display/Level Datum/color",   "#4488cc"),
+            "fill":    s.value("display/Level Datum/fill",    "#1a1a2e"),
+            "opacity": int(float(s.value("display/Level Datum/opacity", 100))),
+            "visible": str(s.value("display/Level Datum/visible", "true")).lower() not in ("false", "0"),
+            "scale":   float(s.value("display/Level Datum/scale", 1.0)),
+            "font":    int(float(s.value("display/Level Datum/font", 10))),
         }
 
     # ── Gridlines ────────────────────────────────────────────────────────
@@ -406,6 +905,7 @@ class ElevationScene(QGraphicsScene):
         opacity = props["opacity"] / 100.0
         bubble_scale = props["scale"]
         BUBBLE_R = 203.2 * bubble_scale  # 8" in mm, scaled
+        gl_pen_w = max(1.0, BUBBLE_R * 0.04)
 
         for gl in getattr(self._ms, "_gridlines", []):
             line_geom = gl.line()
@@ -414,58 +914,26 @@ class ElevationScene(QGraphicsScene):
             if not self._should_show_gridline(line_geom):
                 continue
 
-            # Get both endpoints in world mm
             wx1, wy1 = self._scene_to_world(line_geom.x1(), line_geom.y1())
             wx2, wy2 = self._scene_to_world(line_geom.x2(), line_geom.y2())
             h1, _ = self._world_to_elev(wx1, wy1, 0)
             h2, _ = self._world_to_elev(wx2, wy2, 0)
-
             h_avg = (h1 + h2) / 2.0
 
-            # Vertical dashed line spanning all levels
             levels = self._lm.levels
             if not levels:
                 continue
             z_min = min(l.elevation for l in levels) - 1000
             z_max = max(l.elevation for l in levels) + 4000
 
-            line = QGraphicsLineItem(h_avg, -z_max, h_avg, -z_min)
-            pen = QPen(grid_color, 1, Qt.PenStyle.DashDotLine)
-            pen.setCosmetic(True)
-            line.setPen(pen)
-            line.setOpacity(opacity)
-            line.setZValue(-95)
-            self.addItem(line)
-
-            # Bubble at top and bottom
             label_text = getattr(gl, "_label_text", "")
-            for v_pos in (-z_max - BUBBLE_R - 50, -z_min + BUBBLE_R + 50):
-                bubble = QGraphicsEllipseItem(
-                    h_avg - BUBBLE_R, v_pos - BUBBLE_R,
-                    BUBBLE_R * 2, BUBBLE_R * 2,
-                )
-                b_pen = QPen(grid_color, max(1, BUBBLE_R * 0.04))
-                bubble.setPen(b_pen)
-                bubble.setBrush(QBrush(fill_color))
-                bubble.setOpacity(opacity)
-                bubble.setZValue(-90)
-                self.addItem(bubble)
+            v_top = -z_max - BUBBLE_R - 50
+            v_bot = -z_min + BUBBLE_R + 50
 
-                if label_text:
-                    label = QGraphicsSimpleTextItem(label_text)
-                    font = QFont("Arial")
-                    font.setPixelSize(max(8, int(BUBBLE_R * 0.9)))
-                    font.setBold(True)
-                    label.setFont(font)
-                    label.setBrush(QBrush(grid_color.lighter(150)))
-                    br = label.boundingRect()
-                    label.setPos(
-                        h_avg - br.width() / 2,
-                        v_pos - br.height() / 2,
-                    )
-                    label.setOpacity(opacity)
-                    label.setZValue(-89)
-                    self.addItem(label)
+            item = ElevGridlineItem(
+                h_avg, v_top, v_bot, label_text, BUBBLE_R,
+                grid_color, fill_color, gl_pen_w, opacity)
+            self.addItem(item)
 
     # ── Construction geometry ────────────────────────────────────────────
 
@@ -535,8 +1003,10 @@ class ElevationScene(QGraphicsScene):
         if not self._show_datums:
             return
 
-        # Use same display properties as gridlines
-        props = self._gridline_display_props()
+        # Use Level Datum display properties from display manager
+        props = self._datum_display_props()
+        if not props.get("visible", True):
+            return
         datum_color = QColor(props["color"])
         fill_color = QColor(props.get("fill", "#1a1a2e"))
         opacity = props["opacity"] / 100.0
@@ -544,14 +1014,15 @@ class ElevationScene(QGraphicsScene):
 
         h_min, h_max = self._datum_extent()
 
-        # Datum line pen — dash-dot-dash (same as gridlines)
+        # Datum line pen — dash-dot-dash, weight matched to gridline
         from gridline import BUBBLE_RADIUS_MM
-        pen_w = max(1.0, BUBBLE_RADIUS_MM * 0.04 * scale)
-        pen = QPen(datum_color, pen_w, Qt.PenStyle.DashDotLine)
-        pen.setCosmetic(False)  # world-space width (scales with zoom)
+        grid_props = self._gridline_display_props()
+        grid_scale = grid_props.get("scale", 1.0)
+        pen_w = max(1.0, BUBBLE_RADIUS_MM * 0.04 * grid_scale)
 
-        # Text size: 175mm (scales with display manager scale factor)
-        text_height = 175.0 * scale
+        # Text size: base 175mm, scaled by display manager font size (pt)
+        font_pt = props.get("font", 10)
+        text_height = 175.0 * scale * (font_pt / 10.0)
         name_font = QFont("Consolas")
         name_font.setPixelSize(max(1, int(text_height)))
         name_font.setBold(True)
@@ -566,87 +1037,15 @@ class ElevationScene(QGraphicsScene):
             z = lvl.elevation
             v = -z  # Qt Y
 
-            # ── Datum line ───────────────────────────────────────────
-            line = QGraphicsLineItem(h_min, v, h_max, v)
-            line.setPen(pen)
-            line.setOpacity(opacity)
-            line.setZValue(-100)
-            self.addItem(line)
-
-            # ── Classic elevation bubble at left end (4-quadrant) ────
-            bx = h_min - bubble_r * 0.5
-            by = v
-
-            circle_pen = QPen(datum_color, pen_w)
-            circle_pen.setCosmetic(False)
-
-            # Full circle outline
-            circle = QGraphicsEllipseItem(
-                bx - bubble_r, by - bubble_r,
-                bubble_r * 2, bubble_r * 2,
-            )
-            circle.setPen(circle_pen)
-            circle.setBrush(QBrush(fill_color))
-            circle.setOpacity(opacity)
-            circle.setZValue(-98)
-            self.addItem(circle)
-
-            # Cross lines (horizontal + vertical through center)
-            h_line = QGraphicsLineItem(bx - bubble_r, by, bx + bubble_r, by)
-            h_line.setPen(circle_pen)
-            h_line.setOpacity(opacity)
-            h_line.setZValue(-97)
-            self.addItem(h_line)
-
-            v_line = QGraphicsLineItem(bx, by - bubble_r, bx, by + bubble_r)
-            v_line.setPen(circle_pen)
-            v_line.setOpacity(opacity)
-            v_line.setZValue(-97)
-            self.addItem(v_line)
-
-            # Fill two opposite quadrants (top-right + bottom-left)
-            q_path = QPainterPath()
-            q_path.moveTo(bx, by)
-            q_path.arcTo(bx - bubble_r, by - bubble_r,
-                         bubble_r * 2, bubble_r * 2,
-                         0, 90)
-            q_path.closeSubpath()
-            q_path.moveTo(bx, by)
-            q_path.arcTo(bx - bubble_r, by - bubble_r,
-                         bubble_r * 2, bubble_r * 2,
-                         180, 90)
-            q_path.closeSubpath()
-
-            filled_quads = QGraphicsPathItem(q_path)
-            filled_quads.setPen(QPen(Qt.PenStyle.NoPen))
-            filled_quads.setBrush(QBrush(datum_color))
-            filled_quads.setOpacity(opacity * 0.6)
-            filled_quads.setZValue(-96)
-            self.addItem(filled_quads)
-
-            # ── Tag to the right of bubble: Level name above, elevation below
-            tag_x = bx + bubble_r + 50  # gap right of bubble
-
-            # Level name (capitalized, above line)
-            display_name = lvl.name.upper() if lvl.name else "LEVEL"
-            name_text = QGraphicsSimpleTextItem(display_name)
-            name_text.setFont(name_font)
-            name_text.setBrush(QBrush(datum_color))
-            name_text.setOpacity(opacity)
-            name_br = name_text.boundingRect()
-            name_text.setPos(tag_x, v - name_br.height() - 20)
-            name_text.setZValue(-99)
-            self.addItem(name_text)
-
-            # Elevation value (below line)
             elev_str = self._sm.format_length(z) if self._sm else f"{z:.0f} mm"
-            elev_text = QGraphicsSimpleTextItem(elev_str)
-            elev_text.setFont(elev_font)
-            elev_text.setBrush(QBrush(datum_color.lighter(130)))
-            elev_text.setOpacity(opacity)
-            elev_text.setPos(tag_x, v + 20)
-            elev_text.setZValue(-99)
-            self.addItem(elev_text)
+
+            item = ElevDatumItem(
+                v, h_min, h_max,
+                lvl.name, elev_str,
+                bubble_r, datum_color, fill_color,
+                pen_w, name_font, elev_font,
+                scale, opacity)
+            self.addItem(item)
 
     # ── Selection ────────────────────────────────────────────────────────
     # Selection is handled by Qt's built-in rubber-band + ItemIsSelectable

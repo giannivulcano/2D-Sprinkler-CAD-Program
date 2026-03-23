@@ -272,18 +272,19 @@ class FillPickerDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 _CATEGORIES: list[dict] = [
-    {"key": "Pipe",             "color": "#4488ff", "fill": None,      "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Sprinkler",        "color": "#ff4444", "fill": "#000000",  "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Fitting",          "color": "#44cc44", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Water Supply",     "color": "#00cccc", "fill": "#2b2b2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Node",             "color": "#888888", "fill": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Hydraulic Badge",  "color": "#ffffff", "fill": "#2b2b2b", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
-    {"key": "Wall",             "color": "#666666", "fill": "#999999", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
-    {"key": "Roof",             "color": "#8B4513", "fill": "#D2B48C", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
-    {"key": "Room",             "color": "#4488cc", "fill": "#4488cc", "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
-    {"key": "Grid Line",        "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
-    {"key": "Level Datum",      "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
-    {"key": "Elevation Marker", "color": "#4488cc", "fill": "#1a1a2e", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
+    {"key": "Pipe",             "color": "#4488ff", "fill": None,      "hatch": None,      "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Sprinkler",        "color": "#ff4444", "fill": "#000000", "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Fitting",          "color": "#44cc44", "fill": None,      "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Water Supply",     "color": "#00cccc", "fill": "#2b2b2e", "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Node",             "color": "#888888", "fill": None,      "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Hydraulic Badge",  "color": "#ffffff", "fill": "#2b2b2b", "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Fire Suppression"},
+    {"key": "Wall",             "color": "#666666", "fill": "#999999", "hatch": "#666666", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Roof",             "color": "#8B4513", "fill": "#D2B48C", "hatch": "#8B4513", "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Room",             "color": "#4488cc", "fill": "#4488cc", "hatch": None,      "font": 12,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Floor",            "color": "#8888cc", "fill": "#8888cc", "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Architecture"},
+    {"key": "Grid Line",        "color": "#4488cc", "fill": "#1a1a2e", "hatch": None,      "font": None, "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
+    {"key": "Level Datum",      "color": "#4488cc", "fill": "#1a1a2e", "hatch": None,      "font": 10,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
+    {"key": "Elevation Marker", "color": "#4488cc", "fill": "#1a1a2e", "hatch": None,      "font": 10,   "scale": 1.0, "opacity": 100, "visible": True, "group": "Grids & Levels"},
 ]
 
 # Group display order
@@ -294,10 +295,11 @@ _COL_NAME    = 0
 _COL_VIS     = 1
 _COL_COLOR   = 2
 _COL_FILL    = 3
-_COL_SCALE   = 4
-_COL_OPACITY = 5
-_COL_FONT    = 6
-_COL_RESET   = 7
+_COL_HATCH   = 4
+_COL_SCALE   = 5
+_COL_OPACITY = 6
+_COL_FONT    = 7
+_COL_RESET   = 8
 
 
 _CATEGORY_MAP: dict[str, dict] = {c["key"]: c for c in _CATEGORIES}
@@ -307,6 +309,20 @@ def _category_has_fill(key: str) -> bool:
     """Return True if this category supports a fill colour column."""
     c = _CATEGORY_MAP.get(key)
     return c is not None and c["fill"] is not None
+
+
+def _category_has_hatch(key: str) -> bool:
+    """Return True if this category supports a hatch colour column."""
+    c = _CATEGORY_MAP.get(key)
+    return c is not None and c.get("hatch") is not None
+
+
+_NO_SCALE_CATEGORIES = {"Wall", "Roof", "Room", "Floor"}
+
+
+def _category_has_scale(key: str) -> bool:
+    """Return True if this category supports the scale column."""
+    return key not in _NO_SCALE_CATEGORIES
 
 
 def _category_has_font(key: str) -> bool:
@@ -450,6 +466,11 @@ def _is_elevation_marker(item) -> bool:
     return type(item).__name__ == "ViewMarkerArrow"
 
 
+def _is_floor_slab(item) -> bool:
+    """Check if item is a FloorSlab without importing at module level."""
+    return type(item).__name__ == "FloorSlab"
+
+
 def _apply_elevation_marker(marker, color, scale, opacity, visible, fill_color,
                             font_size=None):
     """Apply display settings to a ViewMarkerArrow."""
@@ -466,6 +487,14 @@ def _apply_elevation_marker(marker, color, scale, opacity, visible, fill_color,
     elif scale == 1.0:
         marker.setScale(1.0)
     marker._display_scale = scale if scale else 1.0
+    if font_size is not None:
+        marker._display_font_size = font_size
+        # Update the label text size if the marker has a label child
+        label = getattr(marker, "_label", None)
+        if label is not None:
+            f = label.font()
+            f.setPointSize(int(font_size))
+            label.setFont(f)
     marker.setOpacity(opacity / 100.0 if opacity > 1 else opacity)
     marker.setVisible(visible)
     marker.update()
@@ -534,6 +563,8 @@ def apply_category_defaults(item):
         key = "Wall"
     elif isinstance(item, Room):
         key = "Room"
+    elif _is_floor_slab(item):
+        key = "Floor"
     elif _is_elevation_marker(item):
         key = "Elevation Marker"
     else:
@@ -545,11 +576,13 @@ def apply_category_defaults(item):
 
     settings = QSettings("GV", "FirePro3D")
 
-    # Only apply display overrides when the user has explicitly saved
-    # settings (via the Display Manager dialog).  Without this guard,
-    # every new SVG item would get a QGraphicsColorizeEffect with the
-    # default category colour, mangling its natural appearance.
-    if not settings.contains(f"display/{key}/color"):
+    # For SVG-based categories, only apply overrides when the user has
+    # explicitly saved settings — otherwise the default colour tint would
+    # mangle the SVG's natural appearance.  Non-SVG categories (walls,
+    # roofs, rooms, floors) always apply so they match the display manager.
+    _SVG_CATEGORIES = {"Sprinkler", "Fitting", "Water Supply",
+                       "Hydraulic Badge", "Node"}
+    if key in _SVG_CATEGORIES and not settings.contains(f"display/{key}/color"):
         return
 
     color = settings.value(f"display/{key}/color", cat_def["color"])
@@ -582,6 +615,11 @@ class DisplayManager(QDialog):
         self.setMinimumSize(850, 420)
         self._scene = scene
         self._settings = QSettings("GV", "FirePro3D")
+
+        # Restore last window size
+        saved_size = self._settings.value("display_manager/window_size")
+        if saved_size is not None:
+            self.resize(saved_size)
         self._suppress = False  # guard against recursive signal loops
 
         # {id(item): {visible, opacity, color, scale, effect}} — for revert
@@ -594,6 +632,10 @@ class DisplayManager(QDialog):
 
         self._take_snapshot()
         self._build_ui()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._settings.setValue("display_manager/window_size", self.size())
 
     # ------------------------------------------------------------------
     # Snapshot / revert
@@ -643,6 +685,16 @@ class DisplayManager(QDialog):
                     "bubble_scale": item.bubble1.scale(),
                     "overrides": dict(getattr(item, "_display_overrides", {})),
                 }
+
+        # Snapshot QSettings for elevation-only categories so cancel can revert
+        self._elev_settings_snapshot: dict[str, dict] = {}
+        for key in ("Grid Line", "Level Datum", "Elevation Marker", "Wall", "Roof", "Floor"):
+            snap: dict = {}
+            for prop in ("color", "fill", "hatch", "scale", "opacity", "visible", "font"):
+                v = self._settings.value(f"display/{key}/{prop}")
+                if v is not None:
+                    snap[prop] = v
+            self._elev_settings_snapshot[key] = snap
 
     def _restore_snapshot(self):
         """Revert every item to its snapshotted state."""
@@ -728,6 +780,16 @@ class DisplayManager(QDialog):
 
         # Force scene repaint
         self._scene.update()
+
+        # Restore QSettings for elevation-only categories and rebuild
+        if hasattr(self, "_elev_settings_snapshot"):
+            for key, snap in self._elev_settings_snapshot.items():
+                for prop, val in snap.items():
+                    self._settings.setValue(f"display/{key}/{prop}", val)
+            self._settings.sync()
+            elev_mgr = getattr(self._scene, "_elevation_manager", None)
+            if elev_mgr is not None and hasattr(elev_mgr, "rebuild_all"):
+                elev_mgr.rebuild_all()
 
     # ------------------------------------------------------------------
     # Item iteration helpers
@@ -851,15 +913,27 @@ class DisplayManager(QDialog):
             fill = (getattr(item, "_display_fill_color", None)
                     or cat_def.get("fill"))
             font = None
+        elif _is_elevation_marker(item):
+            color = (getattr(item, "_marker_color", cat_def["color"])
+                     if not isinstance(getattr(item, "_marker_color", None), QColor)
+                     else item._marker_color.name())
+            fill_c = getattr(item, "_fill_color", None)
+            fill = fill_c.name() if isinstance(fill_c, QColor) else cat_def.get("fill")
+            font = getattr(item, "_display_font_size", cat_def.get("font"))
         else:
             # Node or unknown
             color = cat_def["color"]
             fill = cat_def.get("fill")
             font = cat_def.get("font")
 
+        # Hatch colour — read from item or fall back to category default
+        hatch = (getattr(item, "_display_hatch_color", None)
+                 or cat_def.get("hatch"))
+
         return {
             "color": color,
             "fill": fill,
+            "hatch": hatch,
             "scale": scale,
             "opacity": opa,
             "visible": vis,
@@ -876,9 +950,9 @@ class DisplayManager(QDialog):
 
         # ── Tree widget ──────────────────────────────────────────────
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(8)
+        self._tree.setColumnCount(9)
         self._tree.setHeaderLabels(
-            ["Name", "Vis", "Colour", "Fill", "Scale", "Opacity", "Font", ""])
+            ["Name", "Vis", "Colour", "Fill", "Hatch", "Scale", "Opacity", "Font", ""])
         self._tree.setRootIsDecorated(True)
         self._tree.setIndentation(20)
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -889,6 +963,7 @@ class DisplayManager(QDialog):
         hdr.setSectionResizeMode(_COL_VIS, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_COLOR, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_FILL, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(_COL_HATCH, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_SCALE, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_OPACITY, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(_COL_FONT, QHeaderView.ResizeMode.Fixed)
@@ -896,6 +971,7 @@ class DisplayManager(QDialog):
         self._tree.setColumnWidth(_COL_VIS, 40)
         self._tree.setColumnWidth(_COL_COLOR, 60)
         self._tree.setColumnWidth(_COL_FILL, 60)
+        self._tree.setColumnWidth(_COL_HATCH, 60)
         self._tree.setColumnWidth(_COL_SCALE, 90)
         self._tree.setColumnWidth(_COL_OPACITY, 90)
         self._tree.setColumnWidth(_COL_FONT, 70)
@@ -905,7 +981,12 @@ class DisplayManager(QDialog):
         # Snapshot was already taken in __init__ before _build_ui().
         self._suppress = True
         self._populate_tree()
-        self._tree.expandAll()
+        # Expand all group headers; collapse every category (child) node
+        for i in range(self._tree.topLevelItemCount()):
+            grp = self._tree.topLevelItem(i)
+            grp.setExpanded(True)
+            for j in range(grp.childCount()):
+                grp.child(j).setExpanded(False)
         self._suppress = False
         outer.addWidget(self._tree)
 
@@ -968,6 +1049,7 @@ class DisplayManager(QDialog):
                 saved_opacity = _first["opacity"]
                 saved_visible = _first["visible"]
                 saved_font    = _first["font"]
+                saved_hatch   = _first.get("hatch")
             else:
                 saved_color = self._settings.value(
                     f"display/{key}/color", cat_def["color"])
@@ -985,19 +1067,29 @@ class DisplayManager(QDialog):
                 if saved_font is not None:
                     saved_font = int(float(self._settings.value(
                         f"display/{key}/font", saved_font)))
+                saved_hatch = self._settings.value(
+                    f"display/{key}/hatch", cat_def.get("hatch"))
 
             # ── Category row (child of its group) ─────────────────────
             grp_name = cat_def.get("group", "Other")
             parent_item = group_items.get(grp_name, self._tree)
             cat_item = QTreeWidgetItem(parent_item)
-            cat_item.setText(_COL_NAME, f"{key}  ({len(items)})")
+            # For Level Datum, show the number of levels even though
+            # they aren't scene items in the plan view.
+            if key == "Level Datum":
+                lm = getattr(self._scene, "_level_manager", None)
+                count = len(lm.levels) if lm else 0
+            else:
+                count = len(items)
+            cat_item.setText(_COL_NAME, f"{key}  ({count})")
             cat_item.setFont(_COL_NAME, bold)
             cat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
 
             cat_widgets = self._make_row_widgets(
                 cat_item, saved_visible, saved_color, saved_fill,
                 saved_scale, saved_opacity, saved_font,
-                is_category=True, category_key=key)
+                is_category=True, category_key=key,
+                hatch=saved_hatch)
 
             self._cat_data[key] = {
                 "items": items,
@@ -1015,6 +1107,7 @@ class DisplayManager(QDialog):
                 inst_opacity = _ist["opacity"]
                 inst_visible = _ist["visible"]
                 inst_font    = _ist["font"]
+                inst_hatch   = _ist.get("hatch")
 
                 child = QTreeWidgetItem(cat_item)
                 child.setText(_COL_NAME, self._label_for_item(obj, i, key))
@@ -1024,7 +1117,7 @@ class DisplayManager(QDialog):
                     child, inst_visible, inst_color, inst_fill,
                     inst_scale, inst_opacity, inst_font,
                     is_category=False, category_key=key,
-                    item_ref=obj)
+                    item_ref=obj, hatch=inst_hatch)
 
                 self._inst_data[id(obj)] = {
                     "tree_item": child,
@@ -1040,11 +1133,16 @@ class DisplayManager(QDialog):
                           font: int | None = None, *,
                           is_category: bool,
                           category_key: str,
-                          item_ref=None) -> dict:
+                          item_ref=None,
+                          hatch: str | None = None) -> dict:
         """Create and embed widgets for one tree row. Returns widget dict."""
         _t = th.detect()
         has_fill = _category_has_fill(category_key)
+        has_hatch = _category_has_hatch(category_key)
+        has_scale = _category_has_scale(category_key)
         has_font = _category_has_font(category_key)
+        _disabled_ss = (f"background: {_t.bg_sunken}; color: {_t.text_disabled}; "
+                        f"border: 1px solid {_t.border_subtle}; border-radius: 2px;")
 
         # ── Visibility checkbox ──────────────────────────────────────
         vis_container = QWidget()
@@ -1065,25 +1163,38 @@ class DisplayManager(QDialog):
             f"border-radius: 2px;")
         self._tree.setItemWidget(tree_item, _COL_COLOR, color_btn)
 
-        # ── Fill colour swatch ───────────────────────────────────────
+        # ── Fill colour swatch (solid only — no hatch option) ────────
         fill_btn = QPushButton()
         fill_btn.setFixedSize(40, 20)
         if has_fill and fill:
-            fill_btn.setProperty("_color", fill)
-            mode, hex_col = _parse_fill_value(fill)
-            pix = _make_fill_icon(mode, hex_col, 40, 20)
-            fill_btn.setIcon(QIcon(pix))
-            fill_btn.setIconSize(pix.size())
+            # Strip any legacy "hatch:" prefix — fill is now solid-only
+            _, hex_col = _parse_fill_value(fill)
+            fill_btn.setProperty("_color", hex_col)
             fill_btn.setStyleSheet(
+                f"background: {hex_col}; border: 1px solid {_t.border_subtle}; "
+                f"border-radius: 2px;")
+        else:
+            fill_btn.setProperty("_color", "")
+            fill_btn.setStyleSheet(_disabled_ss)
+            fill_btn.setEnabled(False)
+        self._tree.setItemWidget(tree_item, _COL_FILL, fill_btn)
+
+        # ── Hatch colour swatch (for sectioned geometry) ─────────────
+        hatch_btn = QPushButton()
+        hatch_btn.setFixedSize(40, 20)
+        if has_hatch and hatch:
+            hatch_btn.setProperty("_color", hatch)
+            pix = _make_fill_icon("hatch", hatch, 40, 20)
+            hatch_btn.setIcon(QIcon(pix))
+            hatch_btn.setIconSize(pix.size())
+            hatch_btn.setStyleSheet(
                 f"border: 1px solid {_t.border_subtle}; border-radius: 2px; "
                 f"background: transparent;")
         else:
-            fill_btn.setProperty("_color", "")
-            fill_btn.setStyleSheet(
-                f"background: {_t.bg_sunken}; border: 1px solid {_t.border_subtle}; "
-                f"border-radius: 2px;")
-            fill_btn.setEnabled(False)
-        self._tree.setItemWidget(tree_item, _COL_FILL, fill_btn)
+            hatch_btn.setProperty("_color", "")
+            hatch_btn.setStyleSheet(_disabled_ss)
+            hatch_btn.setEnabled(False)
+        self._tree.setItemWidget(tree_item, _COL_HATCH, hatch_btn)
 
         # ── Scale spinbox ────────────────────────────────────────────
         scale_spin = QDoubleSpinBox()
@@ -1093,6 +1204,9 @@ class DisplayManager(QDialog):
         scale_spin.setValue(scale)
         scale_spin.setSuffix("x")
         scale_spin.setFixedHeight(22)
+        if not has_scale:
+            scale_spin.setEnabled(False)
+            scale_spin.setStyleSheet(_disabled_ss)
         self._tree.setItemWidget(tree_item, _COL_SCALE, scale_spin)
 
         # ── Opacity spinbox ──────────────────────────────────────────
@@ -1111,10 +1225,11 @@ class DisplayManager(QDialog):
         font_spin.setFixedHeight(22)
         if has_font and font is not None:
             font_spin.setValue(int(font))
-            font_spin.setSuffix("pt" if category_key == "Grid Line" else "in")
+            font_spin.setSuffix("pt" if category_key in ("Grid Line", "Level Datum", "Elevation Marker") else "in")
         else:
             font_spin.setValue(10)
             font_spin.setEnabled(False)
+            font_spin.setStyleSheet(_disabled_ss)
         self._tree.setItemWidget(tree_item, _COL_FONT, font_spin)
 
         # ── Reset button (instance rows only) ────────────────────────
@@ -1134,6 +1249,9 @@ class DisplayManager(QDialog):
             if has_fill:
                 fill_btn.clicked.connect(
                     lambda _, k=category_key: self._pick_category_fill(k))
+            if has_hatch:
+                hatch_btn.clicked.connect(
+                    lambda _, k=category_key: self._pick_category_hatch(k))
             scale_spin.valueChanged.connect(
                 lambda v, k=category_key: self._on_category_changed(k, "scale", v))
             opacity_spin.valueChanged.connect(
@@ -1149,6 +1267,9 @@ class DisplayManager(QDialog):
             if has_fill:
                 fill_btn.clicked.connect(
                     lambda _, ref=item_ref: self._pick_instance_fill(ref))
+            if has_hatch:
+                hatch_btn.clicked.connect(
+                    lambda _, ref=item_ref: self._pick_instance_hatch(ref))
             scale_spin.valueChanged.connect(
                 lambda v, ref=item_ref: self._on_instance_changed(ref, "scale", v))
             opacity_spin.valueChanged.connect(
@@ -1164,6 +1285,7 @@ class DisplayManager(QDialog):
             "vis": vis_cb,
             "color_btn": color_btn,
             "fill_btn": fill_btn,
+            "hatch_btn": hatch_btn,
             "scale": scale_spin,
             "opacity": opacity_spin,
             "font": font_spin,
@@ -1195,24 +1317,45 @@ class DisplayManager(QDialog):
 
     def _pick_category_fill(self, category_key: str):
         widgets = self._cat_data[category_key]["widgets"]
-        cur_val = widgets["fill_btn"].property("_color") or "#000000"
-        dlg = FillPickerDialog(self, cur_val)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            val = dlg.get_value()
-            self._update_fill_btn(widgets["fill_btn"], val)
-            self._on_category_changed(category_key, "fill", val)
+        cur_hex = widgets["fill_btn"].property("_color") or "#000000"
+        color = QColorDialog.getColor(QColor(cur_hex), self,
+                                      f"{category_key} fill colour")
+        if color.isValid():
+            self._update_color_btn(widgets["fill_btn"], color.name())
+            self._on_category_changed(category_key, "fill", color.name())
 
     def _pick_instance_fill(self, item_ref):
         data = self._inst_data.get(id(item_ref))
         if data is None:
             return
         widgets = data["widgets"]
-        cur_val = widgets["fill_btn"].property("_color") or "#000000"
-        dlg = FillPickerDialog(self, cur_val)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            val = dlg.get_value()
-            self._update_fill_btn(widgets["fill_btn"], val)
-            self._on_instance_changed(item_ref, "fill", val)
+        cur_hex = widgets["fill_btn"].property("_color") or "#000000"
+        color = QColorDialog.getColor(QColor(cur_hex), self,
+                                      "Instance fill colour")
+        if color.isValid():
+            self._update_color_btn(widgets["fill_btn"], color.name())
+            self._on_instance_changed(item_ref, "fill", color.name())
+
+    def _pick_category_hatch(self, category_key: str):
+        widgets = self._cat_data[category_key]["widgets"]
+        cur_hex = widgets["hatch_btn"].property("_color") or "#666666"
+        color = QColorDialog.getColor(QColor(cur_hex), self,
+                                      f"{category_key} hatch colour")
+        if color.isValid():
+            self._update_hatch_btn(widgets["hatch_btn"], color.name())
+            self._on_category_changed(category_key, "hatch", color.name())
+
+    def _pick_instance_hatch(self, item_ref):
+        data = self._inst_data.get(id(item_ref))
+        if data is None:
+            return
+        widgets = data["widgets"]
+        cur_hex = widgets["hatch_btn"].property("_color") or "#666666"
+        color = QColorDialog.getColor(QColor(cur_hex), self,
+                                      "Instance hatch colour")
+        if color.isValid():
+            self._update_hatch_btn(widgets["hatch_btn"], color.name())
+            self._on_instance_changed(item_ref, "hatch", color.name())
 
     def _update_color_btn(self, btn: QPushButton, hex_color: str):
         _t = th.detect()
@@ -1222,11 +1365,21 @@ class DisplayManager(QDialog):
             f"border-radius: 2px;")
 
     def _update_fill_btn(self, btn: QPushButton, fill_value: str):
-        """Update a fill button to show solid colour or hatch icon."""
+        """Update a fill button to show solid colour swatch."""
         _t = th.detect()
-        btn.setProperty("_color", fill_value)
-        mode, hex_col = _parse_fill_value(fill_value)
-        pix = _make_fill_icon(mode, hex_col, 40, 20)
+        _, hex_col = _parse_fill_value(fill_value)
+        btn.setProperty("_color", hex_col)
+        btn.setIcon(QIcon())
+        btn.setText("")
+        btn.setStyleSheet(
+            f"background: {hex_col}; border: 1px solid {_t.border_subtle}; "
+            f"border-radius: 2px;")
+
+    def _update_hatch_btn(self, btn: QPushButton, hex_color: str):
+        """Update a hatch button to show hatch swatch."""
+        _t = th.detect()
+        btn.setProperty("_color", hex_color)
+        pix = _make_fill_icon("hatch", hex_color, 40, 20)
         btn.setIcon(QIcon(pix))
         btn.setIconSize(pix.size())
         btn.setText("")
@@ -1288,6 +1441,10 @@ class DisplayManager(QDialog):
                 fill_val = cat_widgets["fill_btn"].property("_color")
                 if fill_val:
                     self._update_fill_btn(w["fill_btn"], fill_val)
+            if _category_has_hatch(cat_key):
+                hatch_val = cat_widgets["hatch_btn"].property("_color")
+                if hatch_val:
+                    self._update_hatch_btn(w["hatch_btn"], hatch_val)
             w["scale"].setValue(cat_widgets["scale"].value())
             w["opacity"].setValue(cat_widgets["opacity"].value())
             if _category_has_font(cat_key):
@@ -1307,6 +1464,8 @@ class DisplayManager(QDialog):
                 self._update_color_btn(cw["color_btn"], cat_def["color"])
                 if _category_has_fill(key) and cat_def["fill"]:
                     self._update_fill_btn(cw["fill_btn"], cat_def["fill"])
+                if _category_has_hatch(key) and cat_def.get("hatch"):
+                    self._update_hatch_btn(cw["hatch_btn"], cat_def["hatch"])
                 cw["scale"].setValue(cat_def["scale"])
                 cw["opacity"].setValue(cat_def["opacity"])
                 if _category_has_font(key) and cat_def["font"] is not None:
@@ -1322,6 +1481,8 @@ class DisplayManager(QDialog):
                         self._update_color_btn(iw["color_btn"], cat_def["color"])
                         if _category_has_fill(key) and cat_def["fill"]:
                             self._update_fill_btn(iw["fill_btn"], cat_def["fill"])
+                        if _category_has_hatch(key) and cat_def.get("hatch"):
+                            self._update_hatch_btn(iw["hatch_btn"], cat_def["hatch"])
                         iw["scale"].setValue(cat_def["scale"])
                         iw["opacity"].setValue(cat_def["opacity"])
                         if _category_has_font(key) and cat_def["font"] is not None:
@@ -1346,6 +1507,8 @@ class DisplayManager(QDialog):
             self._settings.setValue(f"display/{key}/default_visible", s["visible"])
             if s.get("fill"):
                 self._settings.setValue(f"display/{key}/default_fill", s["fill"])
+            if s.get("hatch"):
+                self._settings.setValue(f"display/{key}/default_hatch", s["hatch"])
             if s.get("font") is not None:
                 self._settings.setValue(f"display/{key}/default_font", s["font"])
             # Also save as current settings so they persist across sessions
@@ -1355,6 +1518,8 @@ class DisplayManager(QDialog):
             self._settings.setValue(f"display/{key}/visible", s["visible"])
             if s.get("fill"):
                 self._settings.setValue(f"display/{key}/fill", s["fill"])
+            if s.get("hatch"):
+                self._settings.setValue(f"display/{key}/hatch", s["hatch"])
             if s.get("font") is not None:
                 self._settings.setValue(f"display/{key}/font", s["font"])
         self._settings.sync()
@@ -1372,6 +1537,9 @@ class DisplayManager(QDialog):
         elif prop == "fill":
             if widgets["fill_btn"].isEnabled() and value:
                 self._update_fill_btn(widgets["fill_btn"], value)
+        elif prop == "hatch":
+            if widgets["hatch_btn"].isEnabled() and value:
+                self._update_hatch_btn(widgets["hatch_btn"], value)
         elif prop == "scale":
             widgets["scale"].setValue(value)
         elif prop == "opacity":
@@ -1393,6 +1561,10 @@ class DisplayManager(QDialog):
             result["fill"] = w["fill_btn"].property("_color") or None
         else:
             result["fill"] = None
+        if _category_has_hatch(key):
+            result["hatch"] = w["hatch_btn"].property("_color") or None
+        else:
+            result["hatch"] = None
         if _category_has_font(key):
             result["font"] = w["font"].value()
         else:
@@ -1403,10 +1575,15 @@ class DisplayManager(QDialog):
     # Live preview
     # ------------------------------------------------------------------
 
+    # Categories whose display is read from QSettings by the elevation scene
+    _ELEV_CATEGORIES = {"Grid Line", "Level Datum", "Elevation Marker",
+                         "Wall", "Roof", "Floor"}
+
     def _apply_preview(self):
         """Apply current dialog state to all scene items (live preview)."""
         from fitting import Fitting
 
+        elev_dirty = False
         for cat_def in _CATEGORIES:
             key = cat_def["key"]
             cat_settings = self._read_category_settings(key)
@@ -1425,7 +1602,29 @@ class DisplayManager(QDialog):
                                       fill_color=eff_fill,
                                       font_size=eff_font)
 
+            # Sync elevation-related categories to QSettings so elevation
+            # scene rebuilds pick up changes during live preview.
+            if key in self._ELEV_CATEGORIES:
+                self._settings.setValue(f"display/{key}/color", cat_settings["color"])
+                self._settings.setValue(f"display/{key}/scale", cat_settings["scale"])
+                self._settings.setValue(f"display/{key}/opacity", cat_settings["opacity"])
+                self._settings.setValue(f"display/{key}/visible", cat_settings["visible"])
+                if cat_settings.get("fill"):
+                    self._settings.setValue(f"display/{key}/fill", cat_settings["fill"])
+                if cat_settings.get("hatch"):
+                    self._settings.setValue(f"display/{key}/hatch", cat_settings["hatch"])
+                if cat_settings.get("font") is not None:
+                    self._settings.setValue(f"display/{key}/font", cat_settings["font"])
+                elev_dirty = True
+
         self._scene.update()
+
+        # Rebuild open elevation views so changes are visible immediately
+        if elev_dirty:
+            self._settings.sync()
+            elev_mgr = getattr(self._scene, "_elevation_manager", None)
+            if elev_mgr is not None and hasattr(elev_mgr, "rebuild_all"):
+                elev_mgr.rebuild_all()
 
     # ------------------------------------------------------------------
     # Accept / Reject
@@ -1442,9 +1641,18 @@ class DisplayManager(QDialog):
             self._settings.setValue(f"display/{key}/visible", s["visible"])
             if s.get("fill"):
                 self._settings.setValue(f"display/{key}/fill", s["fill"])
+            if s.get("hatch"):
+                self._settings.setValue(f"display/{key}/hatch", s["hatch"])
             if s.get("font") is not None:
                 self._settings.setValue(f"display/{key}/font", s["font"])
         self._settings.sync()
+
+        # Rebuild open elevation views so Level Datum / Grid Line / Elevation
+        # Marker changes take effect immediately.
+        elev_mgr = getattr(self._scene, "_elevation_manager", None)
+        if elev_mgr is not None and hasattr(elev_mgr, "rebuild_all"):
+            elev_mgr.rebuild_all()
+
         super().accept()
 
     def reject(self):
@@ -1523,6 +1731,9 @@ def apply_default_display_settings(scene):
         fill = settings.value(
             f"display/{key}/default_fill",
             settings.value(f"display/{key}/fill", cat_def.get("fill")))
+        hatch = settings.value(
+            f"display/{key}/default_hatch",
+            settings.value(f"display/{key}/hatch", cat_def.get("hatch")))
         font = cat_def.get("font")
         if font is not None:
             font = int(float(settings.value(
@@ -1536,6 +1747,8 @@ def apply_default_display_settings(scene):
         settings.setValue(f"display/{key}/visible", visible)
         if fill:
             settings.setValue(f"display/{key}/fill", fill)
+        if hatch:
+            settings.setValue(f"display/{key}/hatch", hatch)
         if font is not None:
             settings.setValue(f"display/{key}/font", font)
 
@@ -1567,6 +1780,9 @@ def get_display_settings_for_save() -> dict:
         fill = settings.value(f"display/{key}/fill", cat_def.get("fill"))
         if fill:
             entry["fill"] = fill
+        hatch = settings.value(f"display/{key}/hatch", cat_def.get("hatch"))
+        if hatch:
+            entry["hatch"] = hatch
         font = cat_def.get("font")
         if font is not None:
             font = int(float(settings.value(
@@ -1601,6 +1817,8 @@ def apply_project_display_settings(scene, display_dict: dict):
             visible = visible.lower() not in ("false", "0")
         fill = proj.get("fill",
                         settings.value(f"display/{key}/fill", cat_def.get("fill")))
+        hatch = proj.get("hatch",
+                         settings.value(f"display/{key}/hatch", cat_def.get("hatch")))
         font = proj.get("font")
         if font is None:
             f_def = cat_def.get("font")
@@ -1615,6 +1833,8 @@ def apply_project_display_settings(scene, display_dict: dict):
         settings.setValue(f"display/{key}/visible", visible)
         if fill:
             settings.setValue(f"display/{key}/fill", fill)
+        if hatch:
+            settings.setValue(f"display/{key}/hatch", hatch)
         if font is not None:
             settings.setValue(f"display/{key}/font", font)
 
@@ -1662,6 +1882,8 @@ def _items_for_category_static(scene, key: str) -> list:
         return list(getattr(scene, "_walls", []))
     elif key == "Room":
         return list(getattr(scene, "_rooms", []))
+    elif key == "Floor":
+        return list(getattr(scene, "_floor_slabs", []))
     elif key == "Elevation Marker":
         return [i for i in scene.items() if _is_elevation_marker(i)]
     return []

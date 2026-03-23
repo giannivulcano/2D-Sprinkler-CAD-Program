@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, QSizePolicy,
+    QMenu, QInputDialog,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QColor, QBrush, QIcon
@@ -59,6 +60,7 @@ class ProjectBrowser(QWidget):
     activatePaperSheet = pyqtSignal(str)   # sheet name
     activateElevation = pyqtSignal(str)    # direction name (North/South/East/West)
     activatePlanView = pyqtSignal(str)     # level name (Level 1, Level 2, etc.)
+    createPaperSheet = pyqtSignal(str)     # new sheet name
 
     # Stub categories under 2D Model (Plans and Elevations are live)
     _MS_STUBS = ["Schematics", "Details", "Schedules"]
@@ -105,6 +107,8 @@ class ProjectBrowser(QWidget):
         )
         self._tree.itemActivated.connect(self._on_item_activated)
         self._tree.itemDoubleClicked.connect(self._on_item_activated)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._tree)
 
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -217,3 +221,43 @@ class ProjectBrowser(QWidget):
         elif role == "sheet":
             name = item.data(0, _ROLE_NAME)
             self.activatePaperSheet.emit(name)
+
+    def _on_context_menu(self, pos):
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        role = item.data(0, _ROLE_TYPE)
+        menu = QMenu(self)
+        if role == "paper_root":
+            act = menu.addAction("New Drawing")
+            act.triggered.connect(self._create_new_sheet)
+        elif role == "sheet":
+            act = menu.addAction("New Drawing")
+            act.triggered.connect(self._create_new_sheet)
+        else:
+            return
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _create_new_sheet(self):
+        """Prompt for a name and emit createPaperSheet."""
+        # Auto-generate next layout number
+        existing = []
+        for i in range(self._paper_root.childCount()):
+            existing.append(self._paper_root.child(i).text(0))
+        n = len(existing) + 1
+        default_name = f"Layout {n}"
+        while default_name in existing:
+            n += 1
+            default_name = f"Layout {n}"
+
+        name, ok = QInputDialog.getText(
+            self, "New Drawing", "Drawing name:", text=default_name)
+        if ok and name.strip():
+            name = name.strip()
+            # Add to tree
+            child = QTreeWidgetItem(self._paper_root, [name])
+            child.setData(0, _ROLE_TYPE, "sheet")
+            child.setData(0, _ROLE_NAME, name)
+            self._paper_root.setExpanded(True)
+            # Emit signal so main window can open the tab
+            self.createPaperSheet.emit(name)

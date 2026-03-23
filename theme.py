@@ -356,6 +356,17 @@ QTabBar::tab:selected {{
 QTabBar::tab:hover:!selected {{
     background: {t.btn_hover};
 }}
+QTabBar::close-button {{
+    subcontrol-position: right;
+    background: transparent;
+    border: none;
+    padding: 2px;
+    margin: 2px;
+}}
+QTabBar::close-button:hover {{
+    background: {t.btn_hover};
+    border-radius: 2px;
+}}
 
 /* ── Scroll bars ────────────────────────────────────────────────────────── */
 QScrollBar:vertical {{

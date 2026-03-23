@@ -42,7 +42,7 @@ from wall import WallSegment
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-SNAP_TOLERANCE_PX = 15      # screen-pixel search radius
+SNAP_TOLERANCE_PX = 40      # screen-pixel search radius
 
 SNAP_COLORS: dict[str, str] = {
     "endpoint":      "#ffff00",   # yellow  – square marker
@@ -68,14 +68,14 @@ SNAP_MARKERS: dict[str, str] = {
 
 # Priority ordering — lower value = higher priority (endpoint wins over nearest)
 SNAP_PRIORITY: dict[str, int] = {
-    "endpoint":      0,
-    "intersection":  0,       # same priority as endpoint
-    "midpoint":      1,
-    "center":        2,
-    "perpendicular": 3,
-    "quadrant":      4,
-    "tangent":       5,
-    "nearest":       6,
+    "intersection":  0,       # highest priority — always wins within band
+    "endpoint":      1,
+    "midpoint":      2,
+    "center":        3,
+    "perpendicular": 4,
+    "quadrant":      5,
+    "tangent":       6,
+    "nearest":       7,
 }
 
 
@@ -111,6 +111,7 @@ class SnapEngine:
         # Per-type toggles (all on by default)
         self.snap_endpoint:      bool = True
         self.snap_midpoint:      bool = True
+        self.snap_intersection:  bool = True
         self.snap_center:        bool = True
         self.snap_quadrant:      bool = True
         self.snap_nearest:       bool = True
@@ -211,7 +212,7 @@ class SnapEngine:
         # Use ALL gridlines in the scene (not just those in search_rect)
         # because gridline shapes may be too thin for the small search rect.
         # Intersection snaps override perpendicular/nearest when within tol.
-        if self.snap_endpoint:
+        if self.snap_intersection:
             gl_items = list(getattr(scene, "_gridlines", []))
             for i, g1 in enumerate(gl_items):
                 l1 = g1.line()
@@ -237,12 +238,33 @@ class SnapEngine:
                                 source_item2=g2,
                             )
 
+        # ── Gridline point + edge snaps (gridline shape is bubbles-only,
+        #    so scene.items(search_rect) may miss the line itself) ──────
+        for gl in getattr(scene, "_gridlines", []):
+            if exclude is not None and gl is exclude:
+                continue
+            if not gl.isVisible():
+                continue
+            for snap_type, pt in self._collect(gl):
+                _check(snap_type, pt, gl)
+            for snap_type, pt in self._geometric_snaps(cursor_scene, gl):
+                _check(snap_type, pt, gl)
+
         # ── Geometry-to-geometry intersection snaps ─────────────────────
         # Check line-based items near the cursor for pairwise intersections.
-        if self.snap_endpoint or self.snap_midpoint:
+        if self.snap_intersection:
 
             _segments: list[tuple[QPointF, QPointF, QGraphicsItem]] = []
             _circles: list[tuple[QPointF, float, QGraphicsItem]] = []
+
+            # Include ALL gridlines (their shape is bubbles-only so
+            # scene.items(search_rect) misses the line body).
+            for gl in getattr(scene, "_gridlines", []):
+                if gl.isVisible() and (exclude is None or gl is not exclude):
+                    line = gl.line()
+                    _segments.append((gl.mapToScene(line.p1()),
+                                     gl.mapToScene(line.p2()), gl))
+
             for item in scene.items(search_rect):
                 if exclude is not None and item is exclude:
                     continue

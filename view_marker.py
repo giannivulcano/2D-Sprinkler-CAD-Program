@@ -119,11 +119,16 @@ class SharedCropBox(QGraphicsRectItem):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ViewMarkerArrow(QGraphicsPolygonItem):
-    """Filled triangle marker for an elevation (or section) view.
+    """Elevation marker: circle with cardinal letter + two tangent lines
+    meeting at a point toward the building.
 
-    Triangle size and label font derived from gridline bubble dimensions.
     Shares a single crop box managed by ViewMarkerManager.
     """
+
+    _CIRCLE_R = BUBBLE_RADIUS_MM * 3.0          # circle radius (3× default)
+    # Tip distance chosen so the two tangent lines meet at ~80°:
+    # half-angle = 40°, D = R / sin(40°) ≈ R * 1.556
+    _POINT_DIST = BUBBLE_RADIUS_MM * 3.0 / math.sin(math.radians(40))
 
     def __init__(self, direction: str, view_type: str = "elevation",
                  parent: QGraphicsItem | None = None):
@@ -132,9 +137,9 @@ class ViewMarkerArrow(QGraphicsPolygonItem):
         self._view_type = view_type
         self._manager = None  # set by ViewMarkerManager
 
-        # Build triangle polygon
+        # Build bounding polygon (used for hit-testing footprint)
         self._size = MARKER_SIZE
-        self.setPolygon(self._build_triangle())
+        self.setPolygon(self._build_outline_polygon())
 
         # Appearance: use gridline color scheme
         self._marker_color = QColor(GRID_COLOR)
@@ -168,71 +173,140 @@ class ViewMarkerArrow(QGraphicsPolygonItem):
             return self._manager._crop_box
         return None
 
-    def _build_triangle(self) -> QPolygonF:
-        """Build a triangle polygon pointing toward the building."""
-        s = self._size
-        h = s * 0.866  # equilateral height
+    # ── Geometry ──────────────────────────────────────────────────────────
 
+    def _tip_direction(self) -> tuple[float, float]:
+        """Unit vector from circle center toward the building (tip direction)."""
         if self._direction == "north":
-            return QPolygonF([
-                QPointF(-s / 2, -h / 2),
-                QPointF(s / 2, -h / 2),
-                QPointF(0, h / 2),
-            ])
+            return (0, 1)     # tip points down (+Y = toward building in plan)
         elif self._direction == "south":
-            return QPolygonF([
-                QPointF(0, -h / 2),
-                QPointF(s / 2, h / 2),
-                QPointF(-s / 2, h / 2),
-            ])
+            return (0, -1)
         elif self._direction == "east":
-            return QPolygonF([
-                QPointF(-h / 2, 0),
-                QPointF(h / 2, -s / 2),
-                QPointF(h / 2, s / 2),
-            ])
+            return (-1, 0)    # east looks left (−X toward building)
         elif self._direction == "west":
-            return QPolygonF([
-                QPointF(h / 2, 0),
-                QPointF(-h / 2, -s / 2),
-                QPointF(-h / 2, s / 2),
-            ])
-        return QPolygonF([QPointF(0, -s/2), QPointF(s/2, s/2), QPointF(-s/2, s/2)])
+            return (1, 0)     # west looks right (+X toward building)
+        return (0, 1)
+
+    def _tangent_points_and_tip(self):
+        """Return (tangent_left, tangent_right, tip) in local coords."""
+        R = self._CIRCLE_R
+        D = self._POINT_DIST
+        dx, dy = self._tip_direction()
+
+        # Tip point
+        tip = QPointF(dx * D, dy * D)
+
+        # Angle of tangent lines from center-to-tip axis
+        # For a circle of radius R and external point at distance D:
+        # tangent touches at angle ±arccos(R/D) from the axis
+        alpha = math.acos(min(R / D, 1.0))
+
+        # Base angle of the direction vector
+        base_angle = math.atan2(dy, dx)
+
+        # Tangent points on the circle
+        a1 = base_angle + alpha
+        a2 = base_angle - alpha
+        t1 = QPointF(R * math.cos(a1), R * math.sin(a1))
+        t2 = QPointF(R * math.cos(a2), R * math.sin(a2))
+
+        return t1, t2, tip
+
+    def _build_outline_polygon(self) -> QPolygonF:
+        """Build a polygon that encloses the circle + tangent lines for hit-testing."""
+        t1, t2, tip = self._tangent_points_and_tip()
+        R = self._CIRCLE_R
+        # Approximate: polygon = circle bounding box corners + tip
+        return QPolygonF([
+            QPointF(-R, -R), QPointF(R, -R),
+            QPointF(R, R), QPointF(-R, R),
+            tip,
+        ])
+
+    # ── Drawing ──────────────────────────────────────────────────────────
 
     def paint(self, painter: QPainter, option, widget=None):
-        """Draw the triangle fill, outline, and the cardinal letter inside."""
+        """Draw circle with cardinal letter + two tangent lines to a point."""
         option.state &= ~QStyle.StateFlag.State_Selected
-        super().paint(painter, option, widget)
 
-        # Selection highlight
+        R = self._CIRCLE_R
+        pen_w = max(1.0, R * 0.04)
+        t1, t2, tip = self._tangent_points_and_tip()
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # ── Filled wedge (area enclosed by tangent lines + arc) ───────
+        # Build path: t1 → tip → t2 → arc back to t1
+        dx, dy = self._tip_direction()
+        base_angle = math.atan2(dy, dx)
+        alpha = math.acos(min(R / self._POINT_DIST, 1.0))
+        # Qt arc angles in degrees × 16, measured counter-clockwise from 3-o'clock
+        a1_deg = -math.degrees(base_angle + alpha)   # tangent point 1 angle
+        a2_deg = -math.degrees(base_angle - alpha)   # tangent point 2 angle
+        sweep = a1_deg - a2_deg
+        # Normalise sweep to go the short way around (through the side away from tip)
+        while sweep > 180:
+            sweep -= 360
+        while sweep < -180:
+            sweep += 360
+
+        wedge = QPainterPath()
+        wedge.moveTo(t1)
+        wedge.lineTo(tip)
+        wedge.lineTo(t2)
+        arc_rect = QRectF(-R, -R, 2 * R, 2 * R)
+        wedge.arcTo(arc_rect, a2_deg, sweep)
+        wedge.closeSubpath()
+
+        painter.setPen(QPen(self._marker_color, pen_w))
+        painter.setBrush(QBrush(self._marker_color))
+        painter.drawPath(wedge)
+
+        # ── Filled circle ────────────────────────────────────────────
+        painter.setBrush(QBrush(self._fill_color))
+        painter.drawEllipse(QPointF(0, 0), R, R)
+
+        # ── Selection highlight ──────────────────────────────────────
         if self.isSelected():
             highlight_pen = QPen(self._marker_color.lighter(150),
-                                 max(1, BUBBLE_RADIUS_MM * 0.08))
+                                 max(1, R * 0.08))
             painter.setPen(highlight_pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPolygon(self.polygon())
+            painter.drawEllipse(QPointF(0, 0), R, R)
+            painter.drawLine(t1, tip)
+            painter.drawLine(t2, tip)
 
-        # Cardinal letter
+        # ── Cardinal letter centered in circle ───────────────────────
         letter = self._direction[0].upper()
         font = QFont("Consolas")
-        font.setPixelSize(max(1, int(BUBBLE_RADIUS_MM * 1.0)))
+        font_pt = getattr(self, "_display_font_size", None)
+        if font_pt is not None:
+            font.setPixelSize(max(1, int(R * (font_pt / 10.0))))
+        else:
+            font.setPixelSize(max(1, int(R * 1.0)))
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QPen(self._marker_color.lighter(150)))
-
-        br = self.boundingRect()
-        painter.drawText(br, Qt.AlignmentFlag.AlignCenter, letter)
+        # Draw letter centered in the circle, not the full bounding rect
+        circle_rect = QRectF(-R, -R, 2 * R, 2 * R)
+        painter.drawText(circle_rect, Qt.AlignmentFlag.AlignCenter, letter)
 
     def boundingRect(self) -> QRectF:
-        return super().boundingRect()
+        R = self._CIRCLE_R
+        D = self._POINT_DIST
+        m = max(R, D) + R * 0.1  # small margin
+        return QRectF(-m, -m, 2 * m, 2 * m)
 
     def shape(self) -> QPainterPath:
-        """Selectable area = the filled triangle polygon."""
+        """Selectable area = circle + tangent-line region."""
         path = QPainterPath()
-        poly = self.polygon()
-        if poly.count() >= 3:
-            path.addPolygon(poly)
-            path.closeSubpath()
+        R = self._CIRCLE_R
+        path.addEllipse(QPointF(0, 0), R, R)
+        t1, t2, tip = self._tangent_points_and_tip()
+        path.moveTo(t1)
+        path.lineTo(tip)
+        path.lineTo(t2)
+        path.closeSubpath()
         return path
 
     # ── Selection → show/hide shared crop box ─────────────────────────────
@@ -330,16 +404,19 @@ class ViewMarkerManager:
         self._reposition_markers_to_rect(crop_rect)
 
     def _reposition_markers_to_rect(self, rect: QRectF):
-        """Pin all markers to midpoints of the rect's edges + offset."""
+        """Pin all markers so the arrow tip meets the midpoint of each edge."""
         cx = rect.center().x()
         cy = rect.center().y()
-        offset = MARKER_SIZE * 0.6  # triangle tip just touches the rect edge
+        # The circle center is _POINT_DIST away from the tip, so offset
+        # the center by that amount + a 25 mm gap outward from the rect edge.
+        gap = 25.0  # mm offset between tip and bounding box edge
+        d = ViewMarkerArrow._POINT_DIST + gap
 
         positions = {
-            "north": QPointF(cx, rect.top() - offset),
-            "south": QPointF(cx, rect.bottom() + offset),
-            "east":  QPointF(rect.right() + offset, cy),
-            "west":  QPointF(rect.left() - offset, cy),
+            "north": QPointF(cx, rect.top() - d),
+            "south": QPointF(cx, rect.bottom() + d),
+            "east":  QPointF(rect.right() + d, cy),
+            "west":  QPointF(rect.left() - d, cy),
         }
 
         for direction, pos in positions.items():

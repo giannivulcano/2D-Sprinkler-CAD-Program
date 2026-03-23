@@ -220,9 +220,15 @@ class MainWindow(QMainWindow):
         self.paper_space_widget = PaperSpaceWidget(self.scene)
         self.view_3d = View3D(self.scene, self.level_mgr, self.scene.scale_manager)
         self.central_tabs = QTabWidget()
-        self.central_tabs.addTab(self.view, "2D Model")
+        self.central_tabs.setTabsClosable(True)
+        self.central_tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        # White close-button icon for dark theme
+        self._setup_tab_close_icon()
         self.central_tabs.addTab(self.view_3d, "3D Model")
-        self.central_tabs.addTab(self.paper_space_widget, "Layout 1")
+        # Protect core tabs from being closed (hide their close buttons)
+        for i in range(self.central_tabs.count()):
+            self.central_tabs.tabBar().setTabButton(
+                i, self.central_tabs.tabBar().ButtonPosition.RightSide, None)
 
         # Ribbon spans full window width (above docks) via setMenuWidget
         self._splash_progress(55, "Building ribbon toolbar...")
@@ -269,9 +275,12 @@ class MainWindow(QMainWindow):
         self.project_browser = ProjectBrowser(level_manager=self.scene._level_manager,
                                                      scale_manager=self.scene.scale_manager)
         self.project_browser.activateModelSpace.connect(
-            lambda: self.central_tabs.setCurrentWidget(self.view)
+            lambda: self._activate_plan_view(self.scene.active_level)
         )
         self.project_browser.activatePaperSheet.connect(
+            self._activate_paper_sheet
+        )
+        self.project_browser.createPaperSheet.connect(
             self._activate_paper_sheet
         )
         self.project_browser.activateElevation.connect(self._activate_elevation)
@@ -285,6 +294,8 @@ class MainWindow(QMainWindow):
             self.scene, self.level_mgr, self.scene.scale_manager,
             self.central_tabs,
         )
+        # Expose on the scene so the Display Manager can trigger rebuilds
+        self.scene._elevation_manager = self.elevation_manager
         self.level_widget.levelsChanged.connect(self.elevation_manager.rebuild_all)
 
         self.model_browser = ModelBrowser()
@@ -370,9 +381,7 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.mode_name_label)
         self.mode_label = QLabel("")
         status_bar.addWidget(self.mode_label)
-        self.level_label = QLabel("Level: Level 1")
-        self.level_label.setMinimumWidth(150)
-        status_bar.addPermanentWidget(self.level_label)
+        # Level indicator removed — active level is now implicit from the plan tab
         self.scene.cursorMoved.connect(self.coord_label.setText)
         self.scene.modeChanged.connect(self._update_mode_label)
         self.scene.modeChanged.connect(self._sync_mode_buttons)
@@ -413,7 +422,7 @@ class MainWindow(QMainWindow):
         self.scene._clear_scene()
         self.level_widget.populate()
         self.user_layer_widget.populate()
-        self.level_label.setText("Level: Level 1")
+        pass  # level indicator removed
         self._place_default_gridlines()
         self._create_elevation_markers()
         from display_manager import apply_default_display_settings
@@ -453,6 +462,22 @@ class MainWindow(QMainWindow):
             self.view.set_grid(self.view._grid_visible, grid)
         if self.settings.contains("snap/angle_deg"):
             self.scene._snap_angle_deg = self.settings.value("snap/angle_deg", 45, type=float)
+        if self.settings.contains("snap/tolerance_px"):
+            import snap_engine
+            snap_engine.SNAP_TOLERANCE_PX = self.settings.value("snap/tolerance_px", 40, type=int)
+        if self.settings.contains("snap/grip_tolerance_px"):
+            self.scene._grip_tolerance_px = self.settings.value(
+                "snap/grip_tolerance_px", 200, type=int)
+        # Restore per-type snap toggles
+        _snap_attrs = ["snap_endpoint", "snap_midpoint", "snap_intersection",
+                       "snap_center", "snap_quadrant", "snap_nearest",
+                       "snap_perpendicular", "snap_tangent"]
+        for attr in _snap_attrs:
+            if self.settings.contains(f"snap/{attr}"):
+                val = self.settings.value(f"snap/{attr}", True)
+                if isinstance(val, str):
+                    val = val.lower() not in ("false", "0")
+                setattr(self.scene._snap_engine, attr, bool(val))
         # Restore display unit and precision from user preference
         self._apply_persistent_unit_prefs()
         # Restore pipe and sprinkler template settings
@@ -501,19 +526,24 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if not self._initial_fit_done:
             self._initial_fit_done = True
-            # Ensure 2D tab is active so the viewport has its final geometry
-            self.central_tabs.setCurrentIndex(0)
-            self.view.setFocus()
-            QTimer.singleShot(200, self.view.fit_to_screen)
+            # Open Plan: Level 1 as the default view
+            from constants import DEFAULT_LEVEL
+            self._activate_plan_view(DEFAULT_LEVEL)
 
     def _activate_paper_sheet(self, name: str):
-        """Switch the central area to the paper space tab matching *name*."""
+        """Open or switch to a paper space tab matching *name*.
+
+        If the tab already exists, switch to it.  Otherwise create a new one.
+        """
         for i in range(self.central_tabs.count()):
             if self.central_tabs.tabText(i) == name:
                 self.central_tabs.setCurrentIndex(i)
                 return
-        # Sheet not found — switch to the first paper space tab as fallback
-        self.central_tabs.setCurrentWidget(self.paper_space_widget)
+        # Create a new paper space tab
+        from paper_space import PaperSpaceWidget
+        ps = PaperSpaceWidget(self.scene)
+        idx = self.central_tabs.addTab(ps, name)
+        self.central_tabs.setCurrentIndex(idx)
 
     def _activate_plan_view(self, level_name: str):
         """Open or switch to a Plan: <level> tab.
@@ -550,12 +580,70 @@ class MainWindow(QMainWindow):
             level_name = tab_text[len("Plan: "):]
             self._apply_plan_level(level_name)
 
+    def _on_tab_close_requested(self, index: int):
+        """Close a view tab (Plan/Elevation). Core tabs are protected."""
+        tab_text = self.central_tabs.tabText(index)
+        # Never close the 3D Model tab
+        if tab_text == "3D Model":
+            return
+        widget = self.central_tabs.widget(index)
+        self.central_tabs.removeTab(index)
+        # Clean up elevation manager tracking
+        if tab_text.startswith("Elevation: "):
+            direction = tab_text[len("Elevation: "):].lower()
+            self.elevation_manager._views.pop(direction, None)
+        if widget is not None:
+            widget.deleteLater()
+
     def _apply_plan_level(self, level_name: str):
         """Set the active level and refresh visibility for a plan view."""
-        if self.scene._level_manager:
-            self.scene._level_manager.active_level = level_name
-            self.level_mgr.apply_to_scene(self.scene)
-            self.level_label.setText(f"Level: {level_name}")
+        self.scene.active_level = level_name
+        self.level_mgr.apply_to_scene(self.scene, level_name)
+        pass  # level indicator removed
+
+    def _get_active_plan_view(self):
+        """Return the currently visible plan view, falling back to self.view."""
+        w = self.central_tabs.currentWidget()
+        from Model_View import Model_View
+        if isinstance(w, Model_View):
+            return w
+        # Find any plan tab
+        for i in range(self.central_tabs.count()):
+            if self.central_tabs.tabText(i).startswith("Plan: "):
+                return self.central_tabs.widget(i)
+        return self.view
+
+    def _fit_active_plan_view(self):
+        """Fit the active plan view to screen."""
+        v = self._get_active_plan_view()
+        v.fit_to_screen()
+
+    def _setup_tab_close_icon(self):
+        """Create a white close-button icon for tabs (dark theme)."""
+        from PyQt6.QtGui import QPixmap, QPainter, QPen, QIcon
+        from PyQt6.QtWidgets import QStyle, QStyleFactory
+        import os, tempfile
+
+        size = 16
+        pix = QPixmap(size, size)
+        pix.fill(QColor(0, 0, 0, 0))
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor("#ffffff"), 1.5)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        m = 4  # margin
+        p.drawLine(m, m, size - m, size - m)
+        p.drawLine(size - m, m, m, size - m)
+        p.end()
+
+        icon_path = os.path.join(tempfile.gettempdir(), "fp3d_tab_close.png")
+        pix.save(icon_path)
+        # Apply via stylesheet (path needs forward slashes for QSS on Windows)
+        css_path = icon_path.replace("\\", "/")
+        self.central_tabs.tabBar().setStyleSheet(
+            f'QTabBar::close-button {{ image: url("{css_path}"); }}'
+        )
 
     def _activate_elevation(self, direction: str):
         """Open or switch to an elevation view tab from the project browser."""
@@ -685,6 +773,31 @@ class MainWindow(QMainWindow):
             "Snaps", _I("info_icon.svg"), self._open_snap_settings)
         _btn.setToolTip("Configure grid spacing and angle snap")
 
+        # --- Snap (moved from Draw tab) ---
+        g_snap = manage_page.add_group("Snap")
+        self._osnap_btn = g_snap.add_large_button(
+            "OSNAP",
+            _I("placeholder_icon.svg"),
+            self._toggle_osnap, checkable=True, shortcut="F3")
+        self._osnap_btn.setChecked(True)
+        self._osnap_btn.setToolTip("Object Snap  [F3]")
+        _btn = g_snap.add_small_button(
+            "Snap to\nUnderlay",
+            _I("placeholder_icon.svg"),
+            lambda checked: setattr(self.scene, "_snap_to_underlay", checked),
+            checkable=True)
+        _btn.setToolTip("Snap to DXF underlay geometry")
+        _btn = g_snap.add_small_menu_button(
+            "Angle Snap",
+            _I("placeholder_icon.svg"),
+            self._build_snap_angle_menu())
+        _btn.setToolTip("Set Ctrl-drag angle snap increment")
+        _btn = g_snap.add_small_button(
+            "Snap\nSettings",
+            _I("placeholder_icon.svg"),
+            self._open_snap_tolerance_dialog)
+        _btn.setToolTip("Adjust snap tolerance and type settings")
+
         # --- Edit (Undo/Redo always accessible) ---
         g_edit = manage_page.add_group("Edit")
         _btn = g_edit.add_large_button(
@@ -711,7 +824,7 @@ class MainWindow(QMainWindow):
         g_view = manage_page.add_group("View")
         _btn = g_view.add_large_button(
             "Fit to\nScreen", _I("placeholder_icon.svg"),
-            self.view.fit_to_screen)
+            self._fit_active_plan_view)
         _btn.setToolTip("Zoom to fit all content [F]")
 
         # --- Panels (dock toggles) ---
@@ -796,26 +909,6 @@ class MainWindow(QMainWindow):
             "Insert\nBlock", _I("placeholder_icon.svg"), self._insert_block)
         g_blocks.add_small_button(
             "Create\nBlock", _I("placeholder_icon.svg"), self._create_block)
-
-        # --- Snap ---
-        g_snap = draw_page.add_group("Snap")
-        self._osnap_btn = g_snap.add_large_button(
-            "OSNAP",
-            _I("placeholder_icon.svg"),
-            self._toggle_osnap, checkable=True, shortcut="F3")
-        self._osnap_btn.setChecked(True)
-        self._osnap_btn.setToolTip("Object Snap  [F3]")
-        _btn = g_snap.add_small_button(
-            "Snap to\nUnderlay",
-            _I("placeholder_icon.svg"),
-            lambda checked: setattr(self.scene, "_snap_to_underlay", checked),
-            checkable=True)
-        _btn.setToolTip("Snap to DXF underlay geometry")
-        _btn = g_snap.add_small_menu_button(
-            "Angle Snap",
-            _I("placeholder_icon.svg"),
-            self._build_snap_angle_menu())
-        _btn.setToolTip("Set Ctrl-drag angle snap increment")
 
         # --- Annotations ---
         g_ann = draw_page.add_group("Annotations")
@@ -1160,7 +1253,7 @@ class MainWindow(QMainWindow):
         _btn = g_ws.add_large_button(
             "Layout 1\nPaper",
             _I("placeholder_icon.svg"),
-            lambda: self.central_tabs.setCurrentIndex(1))
+            lambda: self._activate_paper_sheet("Layout 1"))
         _btn.setToolTip("Switch to Paper Space layout")
 
         # --- Page ---
@@ -1319,6 +1412,112 @@ class MainWindow(QMainWindow):
             self.settings.setValue("snap/grid_size", new_grid)
             self.settings.setValue("snap/angle_deg", new_angle)
 
+    def _open_snap_tolerance_dialog(self):
+        """Live-adjustable snap settings dialog with per-type toggles."""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout,
+                                      QDialogButtonBox, QGroupBox, QCheckBox)
+        import snap_engine
+
+        eng = self.scene._snap_engine
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Snap Settings")
+        dlg.setMinimumWidth(300)
+        outer = QVBoxLayout(dlg)
+
+        # ── Tolerance ────────────────────────────────────────────────
+        tol_group = QGroupBox("Tolerance")
+        tol_layout = QFormLayout(tol_group)
+        tol_spin = QSpinBox()
+        tol_spin.setRange(5, 100)
+        tol_spin.setSingleStep(5)
+        tol_spin.setValue(snap_engine.SNAP_TOLERANCE_PX)
+        tol_spin.setSuffix(" px")
+        tol_spin.valueChanged.connect(
+            lambda v: setattr(snap_engine, "SNAP_TOLERANCE_PX", v))
+        tol_layout.addRow("Snap radius:", tol_spin)
+
+        grip_spin = QSpinBox()
+        grip_spin.setRange(100, 1000)
+        grip_spin.setSingleStep(50)
+        grip_spin.setValue(int(getattr(self.scene, "_grip_tolerance_px", 200)))
+        grip_spin.setSuffix(" px")
+        grip_spin.valueChanged.connect(
+            lambda v: setattr(self.scene, "_grip_tolerance_px", v))
+        tol_layout.addRow("Grip handle radius:", grip_spin)
+
+        outer.addWidget(tol_group)
+
+        # ── Snap types ───────────────────────────────────────────────
+        types_group = QGroupBox("Snap Types")
+        types_layout = QVBoxLayout(types_group)
+
+        snap_types = [
+            ("Endpoint",      "snap_endpoint"),
+            ("Midpoint",      "snap_midpoint"),
+            ("Intersection",  "snap_endpoint"),  # intersections use endpoint flag gate
+            ("Center",        "snap_center"),
+            ("Quadrant",      "snap_quadrant"),
+            ("Nearest",       "snap_nearest"),
+            ("Perpendicular", "snap_perpendicular"),
+            ("Tangent",       "snap_tangent"),
+        ]
+
+        # Intersection has its own toggle — add a dedicated attribute
+        if not hasattr(eng, "snap_intersection"):
+            eng.snap_intersection = True
+
+        checkboxes: list[tuple[QCheckBox, str]] = []
+        for label, attr in snap_types:
+            cb = QCheckBox(label)
+            if label == "Intersection":
+                cb.setChecked(getattr(eng, "snap_intersection", True))
+            else:
+                cb.setChecked(getattr(eng, attr, True))
+
+            # Live update
+            if label == "Intersection":
+                cb.toggled.connect(
+                    lambda v: setattr(eng, "snap_intersection", v))
+            else:
+                _attr = attr  # capture
+                cb.toggled.connect(
+                    lambda v, a=_attr: setattr(eng, a, v))
+
+            types_layout.addWidget(cb)
+            checkboxes.append((cb, attr if label != "Intersection" else "snap_intersection"))
+
+        outer.addWidget(types_group)
+
+        # ── Buttons ──────────────────────────────────────────────────
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        outer.addWidget(buttons)
+
+        # Snapshot for cancel
+        old_tol = snap_engine.SNAP_TOLERANCE_PX
+        old_grip = getattr(self.scene, "_grip_tolerance_px", 200)
+        old_flags = {attr: getattr(eng, attr) for _, attr in checkboxes}
+        if not hasattr(eng, "snap_intersection"):
+            old_flags["snap_intersection"] = True
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            # Persist
+            self.settings.setValue("snap/tolerance_px", snap_engine.SNAP_TOLERANCE_PX)
+            self.settings.setValue("snap/grip_tolerance_px",
+                                  getattr(self.scene, "_grip_tolerance_px", 200))
+            for _, attr in checkboxes:
+                self.settings.setValue(f"snap/{attr}", getattr(eng, attr))
+        else:
+            # Revert
+            snap_engine.SNAP_TOLERANCE_PX = old_tol
+            self.scene._grip_tolerance_px = old_grip
+            for attr, val in old_flags.items():
+                setattr(eng, attr, val)
+
     # ── Ribbon helper menu builders ───────────────────────────────────────────
 
     def _build_units_menu(self) -> QMenu:
@@ -1457,11 +1656,8 @@ class MainWindow(QMainWindow):
     # ── Level helpers ──────────────────────────────────────────────────────────
 
     def _on_active_level_changed(self, name: str):
-        """Handle active level change from widget or ribbon combo."""
-        self.scene.active_level = name
-        self.level_mgr.active_level = name
-        self.level_mgr.apply_to_scene(self.scene)
-        self.level_label.setText(f"Level: {name}")
+        """Handle active level change from widget — opens the plan tab."""
+        self._activate_plan_view(name)
 
     # ── Template workflow helpers ─────────────────────────────────────────────
 
@@ -1825,7 +2021,7 @@ class MainWindow(QMainWindow):
         self.scene.load_from_file(file)
         self.level_widget.populate()
         self.user_layer_widget.populate()
-        self.level_label.setText(f"Level: {self.level_mgr.active_level}")
+        pass  # level indicator removed
         self._modified = False
         self._update_title()
         self._add_recent_file(file)
@@ -1931,7 +2127,7 @@ class MainWindow(QMainWindow):
         self.scene._clear_scene()
         self.level_widget.populate()
         self.user_layer_widget.populate()
-        self.level_label.setText("Level: Level 1")
+        pass  # level indicator removed
 
         # Place a default 3 × 3 grid (3 vertical + 3 horizontal)
         self._place_default_gridlines()
@@ -1949,7 +2145,7 @@ class MainWindow(QMainWindow):
 
         self._modified = False
         self._update_title()
-        QTimer.singleShot(100, self.view.fit_to_screen)
+        QTimer.singleShot(100, self._fit_active_plan_view)
 
     def _update_title(self):
         name = os.path.basename(self._current_file) if self._current_file else "Untitled"
@@ -2014,8 +2210,8 @@ class MainWindow(QMainWindow):
                 return
             if not params.geom_list:
                 return
-            # Switch to model space
-            self.central_tabs.setCurrentWidget(self.view)
+            # Switch to model space (plan view)
+            self._activate_plan_view(self.scene.active_level)
             if params.insert_at_origin:
                 self.scene._place_import_params = params
                 self.scene._commit_place_import(QPointF(0, 0))

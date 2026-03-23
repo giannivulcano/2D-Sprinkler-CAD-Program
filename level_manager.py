@@ -86,28 +86,24 @@ DEFAULT_LEVELS: list[Level] = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 class LevelManager:
-    """Manages the ordered list of floor levels and the active level."""
+    """Manages the ordered list of floor levels.
+
+    The "active level" concept is now purely view-driven: whichever
+    Plan tab is currently displayed defines the active level.  The
+    manager no longer stores active-level state; callers pass the
+    level name explicitly to ``apply_for_level()``.
+    """
 
     def __init__(self):
         self._levels: list[Level] = [
             Level(**vars(l)) for l in DEFAULT_LEVELS
         ]
-        self._active: str = DEFAULT_LEVEL
 
     # ── Level list API ────────────────────────────────────────────────────────
 
     @property
     def levels(self) -> list[Level]:
         return list(self._levels)
-
-    @property
-    def active_level(self) -> str:
-        return self._active
-
-    @active_level.setter
-    def active_level(self, name: str):
-        if self.get(name) is not None:
-            self._active = name
 
     def get(self, name: str) -> Level | None:
         for lvl in self._levels:
@@ -131,8 +127,6 @@ class LevelManager:
         if len(self._levels) <= 1:
             return
         self._levels = [l for l in self._levels if l.name != name]
-        if self._active == name:
-            self._active = self._levels[0].name
 
     def rename_level(self, old_name: str, new_name: str, items) -> bool:
         """Rename a level and update all items that referenced the old name."""
@@ -143,8 +137,6 @@ class LevelManager:
         if lvl is None:
             return False
         lvl.name = new_name
-        if self._active == old_name:
-            self._active = new_name
         for item in items:
             if getattr(item, "level", None) == old_name:
                 item.level = new_name
@@ -160,14 +152,10 @@ class LevelManager:
         # Ensure at least one level exists
         if not self._levels:
             self._levels = [Level(**vars(l)) for l in DEFAULT_LEVELS]
-        # Reset active to first level if current active no longer exists
-        if self.get(self._active) is None:
-            self._active = self._levels[0].name
 
     def reset(self):
         """Reset to default levels (used on new file)."""
         self._levels = [Level(**vars(l)) for l in DEFAULT_LEVELS]
-        self._active = DEFAULT_LEVEL
 
     # ── Elevation helpers ───────────────────────────────────────────────────
 
@@ -183,11 +171,15 @@ class LevelManager:
 
     # ── Apply to scene ────────────────────────────────────────────────────────
 
-    def apply_to_scene(self, scene):
-        """Show/hide/fade entities based on active level and display_mode,
+    def apply_to_scene(self, scene, active_level: str | None = None):
+        """Show/hide/fade entities based on *active_level* and display_mode,
         then re-apply layer visibility so both level AND layer filtering
-        are respected."""
-        active = self._active
+        are respected.
+
+        *active_level* is the level of the current plan view.  If ``None``,
+        falls back to ``scene.active_level``.
+        """
+        active = active_level or getattr(scene, "active_level", DEFAULT_LEVEL)
         lvl_map = {l.name: l for l in self._levels}
 
         def _set_level_vis(item):
@@ -438,10 +430,10 @@ class LevelWidget(QWidget):
         )
         layout.addWidget(hdr)
 
-        # Active level dropdown
+        # View level dropdown — switches to the corresponding plan tab
         active_row = QHBoxLayout()
         active_row.setContentsMargins(0, 0, 0, 0)
-        active_lbl = QLabel("Active Level:")
+        active_lbl = QLabel("View Level:")
         active_lbl.setStyleSheet(f"color: {_t.text_primary}; font-size: 11px;")
         active_row.addWidget(active_lbl)
         self._active_combo = QComboBox()
@@ -526,35 +518,15 @@ class LevelWidget(QWidget):
         self.table.setItemDelegateForColumn(_COL_ELEV, self._elev_delegate)
         layout.addWidget(self.table)
 
-        # Assign button
-        assign_btn = QPushButton("Assign Selection -> Active Level")
-        assign_btn.setToolTip(
-            "Move selected scene items onto the active level"
-        )
-        assign_btn.clicked.connect(self._assign_selection)
-        layout.addWidget(assign_btn)
-
     # ── Populate ──────────────────────────────────────────────────────────────
 
     def populate(self):
-        """Rebuild the table and active-level combo from manager.levels."""
+        """Rebuild the table and view-level combo from manager.levels."""
         self._building = True
         self.table.setRowCount(0)
         for lvl in self.manager.levels:
             self._append_row(lvl)
-        # Refresh active-level combo
-        self._active_combo.blockSignals(True)
-        self._active_combo.clear()
-        active = self.manager.active_level
-        active_idx = 0
-        for i, lvl in enumerate(self.manager.levels):
-            self._active_combo.addItem(
-                f"{lvl.name}  ({self._fmt_elev(lvl.elevation)})", lvl.name
-            )
-            if lvl.name == active:
-                active_idx = i
-        self._active_combo.setCurrentIndex(active_idx)
-        self._active_combo.blockSignals(False)
+        self._refresh_active_combo()
         self._building = False
         self._highlight_active()
 
@@ -594,7 +566,7 @@ class LevelWidget(QWidget):
     # ── Active-level highlight ────────────────────────────────────────────────
 
     def _highlight_active(self):
-        active = self.manager.active_level
+        active = getattr(self.scene, "active_level", DEFAULT_LEVEL) if self.scene else DEFAULT_LEVEL
         bold   = QFont(); bold.setBold(True)
         normal = QFont()
         for row in range(self.table.rowCount()):
@@ -650,7 +622,8 @@ class LevelWidget(QWidget):
                     self._highlight_active()
                     self._refresh_active_combo()
                     self.levelsChanged.emit()
-                    if self.manager.active_level == new_name:
+                    current = getattr(self.scene, "active_level", DEFAULT_LEVEL) if self.scene else DEFAULT_LEVEL
+                    if current == old_name or current == new_name:
                         self.activeLevelChanged.emit(new_name)
 
         elif col == _COL_ELEV:
@@ -710,22 +683,22 @@ class LevelWidget(QWidget):
         if self._building or idx < 0:
             return
         name = self._active_combo.itemData(idx)
-        if name and name != self.manager.active_level:
-            self.manager.active_level = name
+        current = getattr(self.scene, "active_level", DEFAULT_LEVEL) if self.scene else DEFAULT_LEVEL
+        if name and name != current:
             self._highlight_active()
             self.activeLevelChanged.emit(name)
 
     def _refresh_active_combo(self):
-        """Rebuild the active-level combo after add/delete/rename."""
+        """Rebuild the view-level combo after add/delete/rename."""
         self._active_combo.blockSignals(True)
         self._active_combo.clear()
-        active = self.manager.active_level
+        current = getattr(self.scene, "active_level", DEFAULT_LEVEL) if self.scene else DEFAULT_LEVEL
         active_idx = 0
         for i, lvl in enumerate(self.manager.levels):
             self._active_combo.addItem(
                 f"{lvl.name}  ({self._fmt_elev(lvl.elevation)})", lvl.name
             )
-            if lvl.name == active:
+            if lvl.name == current:
                 active_idx = i
         self._active_combo.setCurrentIndex(active_idx)
         self._active_combo.blockSignals(False)
@@ -772,12 +745,16 @@ class LevelWidget(QWidget):
         self.manager.remove_level(lvl.name)
         self.populate()
         self.levelsChanged.emit()
-        self.activeLevelChanged.emit(self.manager.active_level)
+        # If the deleted level was active, switch to the first level
+        current = getattr(self.scene, "active_level", DEFAULT_LEVEL) if self.scene else DEFAULT_LEVEL
+        if self.manager.get(current) is None:
+            fallback_name = self.manager.levels[0].name if self.manager.levels else DEFAULT_LEVEL
+            self.activeLevelChanged.emit(fallback_name)
 
     def _assign_selection(self):
         if self.scene is None:
             return
-        active = self.manager.active_level
+        active = getattr(self.scene, "active_level", DEFAULT_LEVEL)
         for item in self.scene.selectedItems():
             if hasattr(item, "level"):
                 item.level = active

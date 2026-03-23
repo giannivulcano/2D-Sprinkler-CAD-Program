@@ -278,6 +278,7 @@ class Fitting():
         elif self.type in ("tee", "wye"):
 
             M1 = pipe_vectors
+            M2 = M1[:2]  # safe default — use first two vectors
             #find the pipe vectors angle that is 135 or 90 and assign these to M1
             if (math.isclose(CAD_Math.get_angle_between_vectors(M1[0],M1[1],signed=False), 180, rel_tol=1e-2) or 
                 math.isclose(CAD_Math.get_angle_between_vectors(M1[0],M1[1],signed=False), 0, rel_tol=1e-2)):
@@ -314,7 +315,7 @@ class Fitting():
             M3 = self.SYMBOLS[self.type].get("through")
             try:
                 transform = CAD_Math.make_qtransform_from_qpoints(M3, M2)
-            except (ValueError, TypeError, ZeroDivisionError):
+            except (ValueError, TypeError, ZeroDivisionError, UnboundLocalError):
                 pass  # fallback to identity transform below
             
         # Fallback: if no condition produced a transform, use identity

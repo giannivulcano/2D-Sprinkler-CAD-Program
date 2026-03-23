@@ -1,7 +1,8 @@
 import sys, json, math, shutil
 from PyQt6.QtWidgets import (QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem,
                               QGraphicsItem, QGraphicsItemGroup, QGraphicsPixmapItem,
-                              QGraphicsTextItem, QGraphicsPathItem, QGraphicsRectItem,
+                              QGraphicsTextItem, QGraphicsSimpleTextItem,
+                              QGraphicsPathItem, QGraphicsRectItem,
                               QApplication, QProgressDialog, QMenu,
                               QInputDialog, QMessageBox, QDialog,
                               QHBoxLayout, QVBoxLayout, QLabel, QLineEdit)
@@ -233,8 +234,15 @@ class Model_Space(QGraphicsScene):
         pen.setCosmetic(True)
         self.preview_pipe.setPen(pen)
         self.preview_pipe.setZValue(200)
+        self.preview_pipe.setOpacity(0.7)
         self.addItem(self.preview_pipe)
         self.preview_pipe.hide()
+
+        # Preview label (child of preview_pipe)
+        self._preview_label = QGraphicsSimpleTextItem("", self.preview_pipe)
+        self._preview_label.setBrush(QBrush(QColor("#ffffff")))
+        self._preview_label.setZValue(201)
+        self._preview_label.hide()
 
     def init_preview_node(self):
         self.preview_node = QGraphicsEllipseItem(-5, -5, 10, 10)
@@ -428,7 +436,7 @@ class Model_Space(QGraphicsScene):
             "display_settings":    display_settings_data,
             "user_layers":         layers_data,
             "levels":              levels_data,
-            "active_level":        self._level_manager.active_level if self._level_manager else DEFAULT_LEVEL,
+            "active_level":        self.active_level,
             "nodes":               nodes_data,
             "pipes":               pipes_data,
             "annotations":         annotations_data,
@@ -509,7 +517,6 @@ class Model_Space(QGraphicsScene):
         # Restore active level (must come after from_list so level exists)
         saved_active = payload.get("active_level", "")
         if saved_active and self._level_manager and self._level_manager.get(saved_active):
-            self._level_manager.active_level = saved_active
             self.active_level = saved_active
 
         # --- Nodes ---
@@ -1392,6 +1399,7 @@ class Model_Space(QGraphicsScene):
                     node.z_pos = lvl.elevation + node.ceiling_offset
             self.addItem(node)
             apply_category_defaults(node)
+            node.setVisible(True)
             self.sprinkler_system.add_node(node)
         return node
 
@@ -1419,6 +1427,13 @@ class Model_Space(QGraphicsScene):
         self.addItem(pipe)
         apply_category_defaults(pipe)
         pipe.update_label()   # re-run now that pipe.scene() is valid
+        pipe.update_geometry()
+        # Ensure visibility — level filtering may not have run yet
+        pipe.setVisible(True)
+        pipe.setOpacity(1.0)
+        pipe.update()
+        for v in self.views():
+            v.viewport().update()
 
         # Propagate the pipe's ceiling properties to both endpoint nodes
         # so their 3D elevation matches what the user set on the template.
@@ -1438,6 +1453,162 @@ class Model_Space(QGraphicsScene):
                     node._recompute_z_pos()
 
         return pipe
+
+    def _would_backtrack(self, start_node, end_node) -> bool:
+        """Return True if placing a pipe from *start_node* to *end_node*
+        would overlap an existing pipe (backtracking).
+
+        Checks:
+        1. Direct duplicate — a pipe already connects the same two nodes.
+        2. End lands on an existing pipe connected to start — the new end
+           point lies between the endpoints of a pipe already attached to
+           start_node.
+        """
+        ep = end_node.scenePos()
+        for pipe in start_node.pipes:
+            other = pipe.node2 if pipe.node1 is start_node else pipe.node1
+            # Direct duplicate
+            if other is end_node:
+                return True
+            # End point lies on an existing pipe segment
+            op = other.scenePos()
+            sp = start_node.scenePos()
+            dx, dy = op.x() - sp.x(), op.y() - sp.y()
+            length_sq = dx * dx + dy * dy
+            if length_sq < 1e-6:
+                continue
+            t = ((ep.x() - sp.x()) * dx + (ep.y() - sp.y()) * dy) / length_sq
+            if 0.01 < t < 0.99:
+                # Project and check perpendicular distance
+                proj_x = sp.x() + t * dx
+                proj_y = sp.y() + t * dy
+                dist = math.hypot(ep.x() - proj_x, ep.y() - proj_y)
+                if dist < 10.0:  # within snap tolerance
+                    return True
+        return False
+
+    def _try_extend_collinear(self, start_node, end_node, template) -> bool:
+        """If start_node has exactly one other pipe and the new direction is
+        collinear, extend that pipe to *end_node* and remove start_node.
+
+        Returns True if extension happened, False otherwise.
+        """
+        # Don't merge if the node has a sprinkler
+        if start_node.has_sprinkler():
+            return False
+
+        other_pipes = [p for p in start_node.pipes]
+        if len(other_pipes) != 1:
+            return False  # junction or isolated — don't merge
+
+        existing = other_pipes[0]
+        far_node = existing.node2 if existing.node1 is start_node else existing.node1
+
+        # Direction of existing pipe (far_node → start_node)
+        sp = start_node.scenePos()
+        fp = far_node.scenePos()
+        ep = end_node.scenePos()
+
+        dx_old = sp.x() - fp.x()
+        dy_old = sp.y() - fp.y()
+        dx_new = ep.x() - sp.x()
+        dy_new = ep.y() - sp.y()
+
+        len_old = math.hypot(dx_old, dy_old)
+        len_new = math.hypot(dx_new, dy_new)
+        if len_old < 1e-6 or len_new < 1e-6:
+            return False
+
+        # Normalise
+        ux_old, uy_old = dx_old / len_old, dy_old / len_old
+        ux_new, uy_new = dx_new / len_new, dy_new / len_new
+
+        # Dot product: collinear if ≈ 1.0 (same direction continuation)
+        dot = ux_old * ux_new + uy_old * uy_new
+        if abs(dot - 1.0) > 0.05:  # ~5° tolerance
+            return False
+
+        # Extend: reconnect existing pipe from far_node → end_node
+        # Remove old connections
+        if start_node in (existing.node1, existing.node2):
+            existing.node1.pipes.remove(existing) if existing in existing.node1.pipes else None
+            existing.node2.pipes.remove(existing) if existing in existing.node2.pipes else None
+
+        # Reconnect
+        if existing.node1 is start_node:
+            existing.node1 = end_node
+        else:
+            existing.node2 = end_node
+        end_node.pipes.append(existing)
+        existing.update_geometry()
+        existing.set_pipe_display()
+        existing.update_label()
+        existing.update()
+
+        # Remove orphaned start_node
+        if len(start_node.pipes) == 0:
+            self.sprinkler_system.remove_node(start_node)
+            self.removeItem(start_node)
+
+        # Update fittings
+        far_node.fitting.update()
+        end_node.fitting.update()
+        self.update()
+        return True
+
+    def _convert_45_elbow_to_wye(self, junction_node, template):
+        """If the junction has a sharp 45° angle between pipe vectors,
+        add a 1-ft capped stub on the through branch to create a wye.
+
+        A 135° angle between vectors is a normal 45° elbow (keep it).
+        A 45° angle between vectors is too sharp for a real fitting —
+        add a stub continuing the *first* (through) pipe direction so
+        the node becomes a 3-pipe wye.
+        """
+        if junction_node.fitting.type != "45elbow":
+            return
+
+        pipes = list(junction_node.pipes)
+        if len(pipes) != 2:
+            return
+
+        jp = junction_node.scenePos()
+
+        v = []
+        for p in pipes:
+            far = p.node2 if p.node1 is junction_node else p.node1
+            fp = far.scenePos()
+            dx, dy = fp.x() - jp.x(), fp.y() - jp.y()
+            length = math.hypot(dx, dy)
+            if length < 1e-6:
+                return
+            v.append((dx / length, dy / length, p))
+
+        angle = abs(CAD_Math.get_angle_between_vectors(
+            QPointF(v[0][0], v[0][1]), QPointF(v[1][0], v[1][1]),
+            signed=False))
+
+        # 135° between vectors → normal 45° elbow (body angle), leave it
+        if math.isclose(angle, 135, abs_tol=10):
+            return
+
+        # ~45° angle: too sharp — add a stub on the through branch.
+        # The through pipe is the one placed FIRST (earlier in the list).
+        # The new pipe (branch) was just appended, so it's last.
+        through_dir = (v[0][0], v[0][1])
+
+        # Stub continues opposite the through direction (away from the first pipe)
+        STUB_LENGTH = 304.8  # 1 ft in mm
+        stub_x = jp.x() - through_dir[0] * STUB_LENGTH
+        stub_y = jp.y() - through_dir[1] * STUB_LENGTH
+        stub_node = self.add_node(stub_x, stub_y)
+
+        # Add stub pipe
+        self.add_pipe(junction_node, stub_node, template)
+
+        # Let the existing fitting logic determine type (3 pipes → wye)
+        junction_node.fitting.update()
+        stub_node.fitting.update()
 
     # ── Vertical pipe helpers ─────────────────────────────────────────────
 
@@ -1571,8 +1742,12 @@ class Model_Space(QGraphicsScene):
         if template:
             sprinkler.set_properties(template)
         apply_category_defaults(sprinkler)
+        sprinkler.setVisible(True)
+        sprinkler.update()
         if n.has_fitting():
             n.fitting.update()
+        for v in self.views():
+            v.viewport().update()
         return sprinkler
 
     def remove_sprinkler(self, n):
@@ -3839,10 +4014,61 @@ class Model_Space(QGraphicsScene):
             snapped_end = self.node_start_pos.snap_point_45(start, snapped)
             self.update_preview_node(snapped_end)
             self.preview_pipe.setLine(start.x(), start.y(), snapped_end.x(), snapped_end.y())
+
+            # Style preview from current template
+            template = getattr(self, "current_template", None)
+            if template:
+                from pipe import Pipe
+                _PIPE_COLORS = {
+                    "Red": "#e62828", "Blue": "#3366e6", "Black": "#1a1a1a",
+                    "White": "#f2f2f2", "Grey": "#8c8c8c",
+                }
+                col_name = template._properties.get("Colour", {}).get("value", "Red")
+                color = QColor(_PIPE_COLORS.get(col_name, "#e62828"))
+                width = Pipe.display_width_mm(template)
+                pen = QPen(color, width)
+                self.preview_pipe.setPen(pen)
+
+                # Preview label — diameter on top, length below
+                dx = snapped_end.x() - start.x()
+                dy = snapped_end.y() - start.y()
+                length_mm = math.hypot(dx, dy)
+                sm = self.scale_manager
+                dia_str = template._properties.get("Diameter", {}).get("value", "")
+                if sm and dia_str:
+                    try:
+                        dia_str = sm.format_length(float(dia_str))
+                    except (ValueError, TypeError):
+                        pass
+                len_str = sm.format_length(length_mm) if sm else f"{length_mm:.0f} mm"
+                lbl = f"{dia_str}\n{len_str}" if dia_str else len_str
+                self._preview_label.setText(lbl)
+                # Font size from template label size (inches → mm scene units)
+                label_size = 12
+                try:
+                    label_size = int(template._properties.get(
+                        "Label Size", {}).get("value", 12))
+                except (ValueError, TypeError):
+                    pass
+                font = QFont("Consolas")
+                font.setPixelSize(max(1, int(label_size * 25.4)))
+                self._preview_label.setFont(font)
+                mid_x = (start.x() + snapped_end.x()) / 2
+                mid_y = (start.y() + snapped_end.y()) / 2
+                br = self._preview_label.boundingRect()
+                self._preview_label.setPos(mid_x - br.width() / 2, mid_y - br.height() - 50)
+                self._preview_label.show()
+            else:
+                pen = QPen(Qt.GlobalColor.darkGray, 3, Qt.PenStyle.DashLine)
+                pen.setCosmetic(True)
+                self.preview_pipe.setPen(pen)
+                self._preview_label.hide()
+
             self.preview_pipe.show()
         else:
             self.update_preview_node(snapped)
             self.preview_pipe.hide()
+            self._preview_label.hide()
 
     def _move_set_scale(self, event, snapped):
         self.update_preview_node(snapped)
@@ -4625,9 +4851,34 @@ class Model_Space(QGraphicsScene):
                         self.requestPropertyUpdate.emit(template)
                         # Fall through to normal add_pipe — template now matches end node
 
-            self.add_pipe(self.node_start_pos, end_node, template)
-            self.node_start_pos.fitting.update()
-            end_node.fitting.update()
+            # ── Backtrack check ───────────────────────────────────────
+            if self._would_backtrack(self.node_start_pos, end_node):
+                QMessageBox.warning(
+                    self.views()[0] if self.views() else None,
+                    "Pipe Overlap",
+                    "Cannot place a pipe back over an existing pipe segment.",
+                )
+                # Remove end_node if it was newly created for this click
+                if len(end_node.pipes) == 0:
+                    if end_node in self.sprinkler_system.nodes:
+                        self.sprinkler_system.remove_node(end_node)
+                    if end_node.scene() is self:
+                        self.removeItem(end_node)
+                return
+
+            # ── Collinear extension check ─────────────────────────────
+            extended = self._try_extend_collinear(
+                self.node_start_pos, end_node, template)
+
+            if not extended:
+                new_pipe = self.add_pipe(
+                    self.node_start_pos, end_node, template)
+                self.node_start_pos.fitting.update()
+                end_node.fitting.update()
+                # ── 45° elbow → wye + stub ────────────────────────────
+                self._convert_45_elbow_to_wye(
+                    self.node_start_pos, template)
+
             # Continuous polyline: end node becomes the next start node
             self.node_start_pos = end_node
             self._pipe_node_was_new = False
@@ -7671,7 +7922,8 @@ class Model_Space(QGraphicsScene):
         if not views:
             return None
         scale = views[0].transform().m11()
-        tol   = 8.0 / max(scale, 1e-6)   # 8 viewport px → scene units
+        grip_px = getattr(self, "_grip_tolerance_px", 200)
+        tol   = grip_px / max(scale, 1e-6)
 
         for item in self.selectedItems():
             if not hasattr(item, "grip_points"):

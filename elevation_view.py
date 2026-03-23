@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import QGraphicsView
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QShortcut
 
 import theme as th
 
@@ -48,6 +48,53 @@ class ElevationView(QGraphicsView):
         self._panning = False
         self._pan_start = QPoint()
         self._zoom_factor = 1.15
+
+        # Ctrl+A — select all (excluding gridlines and datums)
+        QShortcut(QKeySequence("Ctrl+A"), self).activated.connect(
+            self._select_all_items)
+
+    # ── Select All (filter annotations) ──────────────────────────────────
+
+    def _select_all_items(self):
+        from elevation_scene import ElevGridlineItem, ElevDatumItem
+        scene = self.scene()
+        if scene:
+            scene.blockSignals(True)
+            for item in scene.items():
+                if isinstance(item, (ElevGridlineItem, ElevDatumItem)):
+                    continue
+                if item.flags() & item.GraphicsItemFlag.ItemIsSelectable:
+                    item.setSelected(True)
+            scene.blockSignals(False)
+            scene.selectionChanged.emit()
+            self.viewport().update()
+
+    # ── Grip handle rendering ────────────────────────────────────────────
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        scene = self.scene()
+        if scene is None:
+            return
+
+        selected = [i for i in scene.selectedItems() if hasattr(i, "grip_points")]
+        if not selected:
+            return
+
+        active_item = getattr(scene, "_grip_item", None)
+        active_idx = getattr(scene, "_grip_index", -1)
+
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for item in selected:
+            for idx, gpt in enumerate(item.grip_points()):
+                vp = self.mapFromScene(gpt)
+                is_active = (item is active_item and idx == active_idx)
+                fill = QColor("#ff4400") if is_active else QColor("#00aaff")
+                painter.setPen(QPen(QColor("#000000"), 1))
+                painter.setBrush(QBrush(fill))
+                painter.drawRect(vp.x() - 4, vp.y() - 4, 8, 8)
+        painter.end()
 
     # ── Pan (middle mouse) ───────────────────────────────────────────────
 
