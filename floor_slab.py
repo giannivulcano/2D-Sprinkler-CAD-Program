@@ -41,7 +41,10 @@ def _scene_hit_width(item) -> float:
 
 # ── FloorSlab ────────────────────────────────────────────────────────────────
 
-class FloorSlab(QGraphicsPathItem):
+from displayable_item import DisplayableItemMixin
+
+
+class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
     """A floor slab defined by a closed boundary polygon.
 
     2D rendering: semi-transparent filled polygon with outline.
@@ -55,17 +58,8 @@ class FloorSlab(QGraphicsPathItem):
         self._color = QColor(color) if isinstance(color, str) else QColor(color)
         self._thickness_mm: float = DEFAULT_THICKNESS_MM
 
-        self.level: str = DEFAULT_LEVEL
-        self.user_layer: str = DEFAULT_USER_LAYER
+        self.init_displayable()
         self.name: str = ""
-
-        # Scale manager reference for formatting before scene attachment
-        self._scale_manager_ref = None
-
-        # Display Manager overrides
-        self._display_color: str | None = None       # line/pen override
-        self._display_fill_color: str | None = None  # fill/brush override
-        self._display_overrides: dict = {}
 
         self.setZValue(-80)      # behind walls and pipes
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -193,10 +187,6 @@ class FloorSlab(QGraphicsPathItem):
         self._rebuild_path()
 
     # ── Properties API ───────────────────────────────────────────────────────
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
 
     def get_properties(self) -> dict:
         return {

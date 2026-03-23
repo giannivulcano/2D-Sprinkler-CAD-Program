@@ -6,8 +6,9 @@ from PyQt6.QtGui import QBrush, QPen, QColor, QPainterPath
 from fitting import Fitting
 from sprinkler import Sprinkler
 from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from displayable_item import DisplayableItemMixin
 
-class Node(QGraphicsEllipseItem):
+class Node(DisplayableItemMixin, QGraphicsEllipseItem):
     RADIUS = 13
 
     # Class-level toggle — all nodes share the same visibility state.
@@ -34,12 +35,12 @@ class Node(QGraphicsEllipseItem):
         self.sprinkler = None
         self.fitting = Fitting(self)
         self.pipes = []
-        self.user_layer: str = DEFAULT_USER_LAYER   # user-defined layer name
-        self.level: str = DEFAULT_LEVEL          # floor level (visibility)
-        self.ceiling_level: str = DEFAULT_LEVEL  # ceiling level (3D elevation)
+        # Shared display-manager attributes
+        self.init_displayable()
+        # Node-specific
+        self.ceiling_level: str = DEFAULT_LEVEL
         self.ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
-        self._hydraulic_badge = None         # HydraulicNodeBadge child (transient)
-        self._display_overrides: dict = {}  # per-instance display overrides
+        self._hydraulic_badge = None
 
         # Property panel support — shown for plain (non-sprinkler) nodes
         self._properties: dict = {
@@ -51,9 +52,7 @@ class Node(QGraphicsEllipseItem):
     # -------------------------------------------------------------------------
     # Property API (used by PropertyManager and hydraulic solver)
 
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
+
 
     def get_properties(self) -> dict:
         props = self._properties.copy()

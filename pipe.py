@@ -4,9 +4,10 @@ from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainterPathStroker
 from PyQt6.QtCore import Qt, QPointF
 from CAD_Math import CAD_Math
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from displayable_item import DisplayableItemMixin
 
-class Pipe(QGraphicsLineItem):
+class Pipe(DisplayableItemMixin, QGraphicsLineItem):
     SNAP_TOLERANCE_DEG = 7.5  # snap if within this angle
 
     # Line Type display widths (mm, real-world, scales with zoom)
@@ -81,15 +82,14 @@ class Pipe(QGraphicsLineItem):
         self.node2 = node2
         self.colour = None
         self.length = 0.0
-        self.user_layer: str = DEFAULT_USER_LAYER   # user-defined layer name
-        self.level: str = DEFAULT_LEVEL          # floor level name
-        self.ceiling_level: str = DEFAULT_LEVEL  # ceiling level (3D elevation)
-        self.ceiling_offset: float = -50.8    # mm offset from ceiling level (negative = below)
 
+        # Shared display-manager attributes
+        self.init_displayable()
 
-        self._display_overrides: dict = {}       # per-instance display overrides
-        self._display_scale: float = 1.0        # display scale multiplier
-        self._display_color: str | None = None  # display colour override (hex)
+        # Pipe-specific attributes
+        self.ceiling_level: str = DEFAULT_LEVEL
+        self.ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
+        self._display_scale: float = 1.0
 
         self.label = QGraphicsTextItem("", self)  # Child of pipe
 
@@ -280,14 +280,6 @@ class Pipe(QGraphicsLineItem):
         else:
             return end
         
-    def _get_scale_manager(self):
-        from format_utils import get_scale_manager
-        return get_scale_manager(self)
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
-
     def _is_metric_display(self) -> bool:
         """True when the current display unit is metric (mm or m)."""
         sm = self._get_scale_manager()

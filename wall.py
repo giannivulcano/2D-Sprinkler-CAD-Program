@@ -100,7 +100,10 @@ def compute_wall_quad(
 
 # ── WallSegment ──────────────────────────────────────────────────────────────
 
-class WallSegment(QGraphicsPathItem):
+from displayable_item import DisplayableItemMixin
+
+
+class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
     """A straight wall segment defined by two centerline endpoints.
 
     2D rendering: two parallel lines at +/- thickness/2 from the centerline,
@@ -120,8 +123,10 @@ class WallSegment(QGraphicsPathItem):
         self._color = QColor(color) if isinstance(color, str) else QColor(color)
         self._fill_mode: str = FILL_NONE
 
+        # Shared display-manager attributes
+        self.init_displayable()
+
         # Level / height (all in mm)
-        self.level: str = DEFAULT_LEVEL               # also the base level
         self._base_level: str = DEFAULT_LEVEL
         self._top_level: str = "Level 2"
         self._height_mm: float = 3048.0            # 10 ft fallback
@@ -144,16 +149,6 @@ class WallSegment(QGraphicsPathItem):
         # Wall openings (doors / windows)
         self.openings: list[WallOpening] = []
 
-        # Display Manager overrides
-        self._display_color: str | None = None       # line/pen override
-        self._display_fill_color: str | None = None  # fill/brush override
-        self._display_overrides: dict = {}
-
-        # Scale manager reference for formatting before scene attachment
-        self._scale_manager_ref = None
-
-        # Cosmetic / user layer
-        self.user_layer: str = DEFAULT_USER_LAYER
         self.name: str = ""
 
         self.setZValue(-50)                         # behind pipes, above underlays
@@ -418,10 +413,6 @@ class WallSegment(QGraphicsPathItem):
         base_elev_mm = (base_lvl.elevation if base_lvl else 0.0)
         top_elev_mm = (top_lvl.elevation if top_lvl else 0.0)
         return (top_elev_mm + self._top_offset_mm) - (base_elev_mm + self._base_offset_mm)
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
 
     def get_properties(self) -> dict:
         height_mm = self._computed_height_mm()

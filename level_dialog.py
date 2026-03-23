@@ -9,7 +9,8 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QPushButton, QHBoxLayout
 from PyQt6.QtCore import pyqtSignal, Qt
 
-from level_manager import LevelWidget, LevelManager
+from level_manager import LevelManager
+from level_widget import LevelWidget
 
 
 class LevelDialog(QDialog):

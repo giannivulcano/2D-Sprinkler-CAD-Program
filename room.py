@@ -71,7 +71,10 @@ class _RoundedRectBgItem(QGraphicsRectItem):
 # ── Room class ──────────────────────────────────────────────────────────
 
 
-class Room(QGraphicsPolygonItem):
+from displayable_item import DisplayableItemMixin
+
+
+class Room(DisplayableItemMixin, QGraphicsPolygonItem):
     """A closed polygonal room/space region derived from wall boundaries."""
 
     def __init__(self, boundary: list[QPointF] | None = None,
@@ -80,29 +83,24 @@ class Room(QGraphicsPolygonItem):
         self._boundary: list[QPointF] = list(boundary) if boundary else []
         self._color = QColor(color) if isinstance(color, str) else QColor(color)
 
+        # Shared display-manager attributes
+        self.init_displayable()
+
         # Identity
         self.name: str = ""
         self._tag: str = ""
         self._show_label: bool = True
-        self.level: str = DEFAULT_LEVEL
         self._ceiling_level: str = "Level 2"
-        self.user_layer: str = DEFAULT_USER_LAYER
 
         # NFPA / fire protection
         self._hazard_class: str = "Light Hazard"
         self._compartment_type: str = "Room"
         self._ceiling_type: str = "Noncombustible unobstructed"
 
-        # Display
-        self._display_color: str | None = None
-        self._display_fill_color: str | None = None
-        self._display_overrides: dict = {}
+        # Room-specific display extras (beyond mixin)
         self._display_scale: float = 1.0
         self._display_opacity: float = 100
         self._display_visible: bool = True
-
-        # Scale manager fallback for templates
-        self._scale_manager_ref: ScaleManager | None = None
 
         # Label in scene units (scales with zoom like pipe labels)
         self._label_bg = None  # background rect, created in _update_label
@@ -288,17 +286,9 @@ class Room(QGraphicsPolygonItem):
 
     # ── Formatting helpers ───────────────────────────────────────────────
 
-    def _get_sm(self):
-        from format_utils import get_scale_manager
-        return get_scale_manager(self)
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
-
     def _fmt_area(self, mm2: float) -> str:
         """Format area in display units (sq ft or sq m)."""
-        sm = self._get_sm()
+        sm = self._get_scale_manager()
         if sm is None:
             return f"{mm2:.0f} mm²"
         from scale_manager import DisplayUnit
@@ -311,7 +301,7 @@ class Room(QGraphicsPolygonItem):
         return f"{mm2:.0f} mm²"
 
     def _fmt_volume(self, mm3: float) -> str:
-        sm = self._get_sm()
+        sm = self._get_scale_manager()
         if sm is None:
             return f"{mm3:.0f} mm³"
         from scale_manager import DisplayUnit

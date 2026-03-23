@@ -21,7 +21,8 @@ from layer_manager import LayerManager
 from hydraulic_report import HydraulicReportWidget
 from thermal_radiation_report import ThermalRadiationReportWidget
 from user_layer_manager import UserLayerManager, UserLayerWidget
-from level_manager import LevelManager, LevelWidget
+from level_manager import LevelManager
+from level_widget import LevelWidget
 from paper_space import PaperSpaceWidget, PAPER_SIZES
 from ribbon_bar import RibbonBar
 # view_3d deferred — imports pyvista/VTK which is slow

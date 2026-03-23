@@ -115,7 +115,10 @@ def _scene_hit_width(item) -> float:
 
 # ── RoofItem ─────────────────────────────────────────────────────────────────
 
-class RoofItem(QGraphicsPathItem):
+from displayable_item import DisplayableItemMixin
+
+
+class RoofItem(DisplayableItemMixin, QGraphicsPathItem):
     """A roof defined by a closed boundary polygon.
 
     2D rendering: semi-transparent filled polygon with ridge lines.
@@ -135,17 +138,8 @@ class RoofItem(QGraphicsPathItem):
         self._ridge_direction: str = "auto"   # "auto", "horizontal", "vertical"
         self._ridge_position: float = 0.5     # reserved for future offset
 
-        self.level: str = DEFAULT_LEVEL
-        self.user_layer: str = DEFAULT_USER_LAYER
+        self.init_displayable()
         self.name: str = ""
-
-        # Scale manager reference for overhang calc before scene attachment
-        self._scale_manager_ref = None
-
-        # Display Manager overrides
-        self._display_color: str | None = None
-        self._display_fill_color: str | None = None
-        self._display_overrides: dict = {}
 
         self.setZValue(Z_ROOF)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -426,10 +420,6 @@ class RoofItem(QGraphicsPathItem):
         self._rebuild_path()
 
     # ── Properties API ───────────────────────────────────────────────────
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
 
     def get_properties(self) -> dict:
         return {

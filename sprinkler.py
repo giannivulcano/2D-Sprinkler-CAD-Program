@@ -8,7 +8,10 @@ from PyQt6.QtCore import Qt
 
 from constants import DEFAULT_LEVEL
 
-class Sprinkler(QGraphicsSvgItem):
+from displayable_item import DisplayableItemMixin
+
+
+class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
     GRAPHICS = {
         "Sprinkler0": r"graphics/sprinkler_graphics/sprinkler0.svg",
         "Sprinkler1": r"graphics/sprinkler_graphics/sprinkler1.svg",
@@ -22,9 +25,8 @@ class Sprinkler(QGraphicsSvgItem):
     def __init__(self, node):
         super().__init__()
         self.node = node
-        self._display_overrides: dict = {}  # per-instance display overrides
-        self._display_scale: float = 1.0    # display scale multiplier
-        self._display_fill_color: str | None = None
+        self.init_displayable()
+        self._display_scale: float = 1.0
         self._properties = {
             "Manufacturer":    {"type": "enum",   "value": "Tyco",       "options": ["Victaulic", "Tyco", "Viking", "Central"]},
             "Model":           {"type": "enum",   "value": "",           "options": []},
@@ -105,14 +107,6 @@ class Sprinkler(QGraphicsSvgItem):
 
     # -------------------------------------------------------------------------
     # Public property API
-
-    def _get_scale_manager(self):
-        from format_utils import get_scale_manager
-        return get_scale_manager(self)
-
-    def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
-        return fmt_length(self, mm)
 
     def get_properties(self) -> dict:
         props = self._properties.copy()
