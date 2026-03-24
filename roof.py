@@ -89,18 +89,7 @@ def _offset_polygon(points: list[QPointF], dist: float) -> list[QPointF]:
     return result if len(result) >= 3 else list(points)
 
 
-def _line_intersect(p1: QPointF, p2: QPointF,
-                    p3: QPointF, p4: QPointF) -> QPointF | None:
-    """Return intersection of lines (p1-p2) and (p3-p4), or None."""
-    d1x = p2.x() - p1.x()
-    d1y = p2.y() - p1.y()
-    d2x = p4.x() - p3.x()
-    d2y = p4.y() - p3.y()
-    denom = d1x * d2y - d1y * d2x
-    if abs(denom) < 1e-12:
-        return None
-    t = ((p3.x() - p1.x()) * d2y - (p3.y() - p1.y()) * d2x) / denom
-    return QPointF(p1.x() + t * d1x, p1.y() + t * d1y)
+from geometry_intersect import line_line_intersection_unbounded as _line_intersect
 
 
 def _scene_hit_width(item) -> float:

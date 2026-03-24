@@ -92,6 +92,31 @@ class OsnapResult:
     source_item2: QGraphicsItem | None = field(default=None, repr=False)
 
 
+class _SnapCtx:
+    """Mutable snap-tracking context passed between find() phases."""
+    __slots__ = ("cursor", "tol", "priority_band",
+                 "best_dist", "best_prio", "best_result")
+
+    def __init__(self, cursor: QPointF, tol: float, priority_band: float):
+        self.cursor = cursor
+        self.tol = tol
+        self.priority_band = priority_band
+        self.best_dist: float = tol
+        self.best_prio: int = 999
+        self.best_result: OsnapResult | None = None
+
+    def check(self, snap_type: str, pt: QPointF, src_item: QGraphicsItem):
+        """Compare a candidate snap against the current best."""
+        d = math.hypot(pt.x() - self.cursor.x(), pt.y() - self.cursor.y())
+        prio = SNAP_PRIORITY.get(snap_type, 6)
+        if (d < self.best_dist - self.priority_band or
+                (d < self.best_dist + self.priority_band and prio < self.best_prio)):
+            self.best_dist = d
+            self.best_prio = prio
+            self.best_result = OsnapResult(point=pt, snap_type=snap_type,
+                                            source_item=src_item)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SnapEngine
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,20 +152,7 @@ class SnapEngine:
         view_transform: QTransform,
         exclude:        QGraphicsItem | None = None,
     ) -> OsnapResult | None:
-        """
-        Return the nearest snappable point within tolerance, or *None*.
-
-        Parameters
-        ----------
-        cursor_scene :
-            Cursor in scene (world) coordinates.
-        scene :
-            Active QGraphicsScene.
-        view_transform :
-            View's current QTransform (used to convert screen-px → scene units).
-        exclude :
-            Optional item to skip (e.g. the item being grip-dragged).
-        """
+        """Return the nearest snappable point within tolerance, or *None*."""
         if not self.enabled:
             return None
 
@@ -155,176 +167,164 @@ class SnapEngine:
             tol * 2, tol * 2,
         )
 
+        # Mutable snap-tracking state shared across phases
+        ctx = _SnapCtx(cursor=cursor_scene, tol=tol,
+                        priority_band=tol * 0.3)
+
+        # Phase 1 — Scene items (endpoints, midpoints, perpendicular, etc.)
+        self._check_scene_items(ctx, scene, search_rect, exclude)
+
+        # Phase 2 — Gridline-to-gridline intersections
+        gl_items = [gl for gl in getattr(scene, "_gridlines", [])
+                     if gl.isVisible() and (exclude is None or gl is not exclude)]
+        if self.snap_intersection:
+            self._check_gridline_intersections(ctx, gl_items)
+
+        # Phase 3 — Gridline point + edge snaps
+        self._check_gridline_snaps(ctx, gl_items)
+
+        # Phase 4 — Geometry-to-geometry intersections
+        if self.snap_intersection:
+            self._check_geometry_intersections(ctx, scene, search_rect, exclude, gl_items)
+
+        return ctx.best_result
+
+    # ── Phase methods ──────────────────────────────────────────────────────
+
+    def _check_scene_items(self, ctx: "_SnapCtx", scene: QGraphicsScene,
+                           search_rect: QRectF,
+                           exclude: QGraphicsItem | None):
+        """Phase 1: Check all scene items in the search rect for basic snaps."""
         _anno_types = (DimensionAnnotation, NoteAnnotation)
 
-        best_dist   = tol
-        best_prio   = 999
-        best_result: OsnapResult | None = None
-
-        priority_band = tol * 0.3  # 30% of snap tolerance for priority influence
-
-        def _check(snap_type: str, pt: QPointF, src_item: QGraphicsItem):
-            nonlocal best_dist, best_prio, best_result
-            d = math.hypot(pt.x() - cursor_scene.x(), pt.y() - cursor_scene.y())
-            prio = SNAP_PRIORITY.get(snap_type, 6)
-            # Strictly closer always wins; within priority band, prefer higher priority
-            if d < best_dist - priority_band or (d < best_dist + priority_band and prio < best_prio):
-                best_dist   = d
-                best_prio   = prio
-                best_result = OsnapResult(point=pt, snap_type=snap_type, source_item=src_item)
-
         for item in scene.items(search_rect):
-            # Skip excluded item (e.g. the item being grip-dragged)
             if exclude is not None and item is exclude:
                 continue
-            # Skip child items (parts of groups) — underlay children handled below
             if item.parentItem() is not None:
                 continue
-            # Skip pure preview/overlay items (very high z)
-            z = item.zValue()
-            if z > 150:
+            if item.zValue() > 150:
                 continue
-            # Skip annotations (dimensions, notes) and origin markers
-            if _anno_types and isinstance(item, _anno_types):
+            if isinstance(item, _anno_types):
                 continue
             if item.data(0) == "origin":
                 continue
-            # In design_area mode, skip pipe items
             if self.skip_pipes and isinstance(item, Pipe):
                 continue
 
-            # DXF underlay groups — descend into children for snap
+            # DXF underlay groups — descend into children
             if isinstance(item, QGraphicsItemGroup) and item.data(0) == "DXF Underlay":
                 for child in item.childItems():
                     for snap_type, scene_pt in self._collect(child):
-                        # _collect already returns scene-mapped points
-                        _check(snap_type, scene_pt, child)
+                        ctx.check(snap_type, scene_pt, child)
                 continue
 
             for snap_type, pt in self._collect(item):
-                _check(snap_type, pt, item)
+                ctx.check(snap_type, pt, item)
+            for snap_type, pt in self._geometric_snaps(ctx.cursor, item):
+                ctx.check(snap_type, pt, item)
 
-            # Perpendicular and tangent snaps (computed from cursor position)
-            for snap_type, pt in self._geometric_snaps(cursor_scene, item):
-                _check(snap_type, pt, item)
+    def _check_gridline_intersections(self, ctx: "_SnapCtx",
+                                       gl_items: list):
+        """Phase 2: Pairwise gridline intersection snaps."""
+        for i, g1 in enumerate(gl_items):
+            l1 = g1.line()
+            a1 = g1.mapToScene(l1.p1())
+            a2 = g1.mapToScene(l1.p2())
+            for g2 in gl_items[i + 1:]:
+                l2 = g2.line()
+                b1 = g2.mapToScene(l2.p1())
+                b2 = g2.mapToScene(l2.p2())
+                ix = self._line_line_intersect(a1, a2, b1, b2)
+                if ix is not None:
+                    d = math.hypot(ix.x() - ctx.cursor.x(),
+                                   ix.y() - ctx.cursor.y())
+                    if d <= ctx.tol:
+                        # Force intersection to win over perpendicular/nearest
+                        ctx.best_dist = d
+                        ctx.best_prio = 0
+                        ctx.best_result = OsnapResult(
+                            point=ix, snap_type="intersection",
+                            source_item=g1, source_item2=g2)
 
-        # ── Gridline-to-gridline intersection snaps ─────────────────────
-        # Use ALL gridlines in the scene (not just those in search_rect)
-        # because gridline shapes may be too thin for the small search rect.
-        # Intersection snaps override perpendicular/nearest when within tol.
-        if self.snap_intersection:
-            gl_items = list(getattr(scene, "_gridlines", []))
-            for i, g1 in enumerate(gl_items):
-                l1 = g1.line()
-                a1 = g1.mapToScene(l1.p1())
-                a2 = g1.mapToScene(l1.p2())
-                for g2 in gl_items[i + 1:]:
-                    l2 = g2.line()
-                    b1 = g2.mapToScene(l2.p1())
-                    b2 = g2.mapToScene(l2.p2())
-                    ix = self._line_line_intersect(a1, a2, b1, b2)
-                    if ix is not None:
-                        d = math.hypot(ix.x() - cursor_scene.x(),
-                                       ix.y() - cursor_scene.y())
-                        if d <= tol:
-                            # Force intersection to win over
-                            # perpendicular/nearest that may be closer
-                            best_dist = d
-                            best_prio = 0
-                            best_result = OsnapResult(
-                                point=ix,
-                                snap_type="intersection",
-                                source_item=g1,
-                                source_item2=g2,
-                            )
-
-        # ── Gridline point + edge snaps (gridline shape is bubbles-only,
-        #    so scene.items(search_rect) may miss the line itself) ──────
-        for gl in getattr(scene, "_gridlines", []):
-            if exclude is not None and gl is exclude:
-                continue
-            if not gl.isVisible():
-                continue
+    def _check_gridline_snaps(self, ctx: "_SnapCtx", gl_items: list):
+        """Phase 3: Gridline point + edge snaps (shape is bubbles-only)."""
+        for gl in gl_items:
             for snap_type, pt in self._collect(gl):
-                _check(snap_type, pt, gl)
-            for snap_type, pt in self._geometric_snaps(cursor_scene, gl):
-                _check(snap_type, pt, gl)
+                ctx.check(snap_type, pt, gl)
+            for snap_type, pt in self._geometric_snaps(ctx.cursor, gl):
+                ctx.check(snap_type, pt, gl)
 
-        # ── Geometry-to-geometry intersection snaps ─────────────────────
-        # Check line-based items near the cursor for pairwise intersections.
-        if self.snap_intersection:
+    def _check_geometry_intersections(self, ctx: "_SnapCtx",
+                                       scene: QGraphicsScene,
+                                       search_rect: QRectF,
+                                       exclude: QGraphicsItem | None,
+                                       gl_items: list):
+        """Phase 4: Line-line and line-circle intersection snaps."""
+        _segments: list[tuple[QPointF, QPointF, QGraphicsItem]] = []
+        _circles: list[tuple[QPointF, float, QGraphicsItem]] = []
 
-            _segments: list[tuple[QPointF, QPointF, QGraphicsItem]] = []
-            _circles: list[tuple[QPointF, float, QGraphicsItem]] = []
+        # Include all gridlines (shape is bubbles-only, missed by search_rect)
+        for gl in gl_items:
+            line = gl.line()
+            _segments.append((gl.mapToScene(line.p1()),
+                             gl.mapToScene(line.p2()), gl))
 
-            # Include ALL gridlines (their shape is bubbles-only so
-            # scene.items(search_rect) misses the line body).
-            for gl in getattr(scene, "_gridlines", []):
-                if gl.isVisible() and (exclude is None or gl is not exclude):
-                    line = gl.line()
-                    _segments.append((gl.mapToScene(line.p1()),
-                                     gl.mapToScene(line.p2()), gl))
+        for item in scene.items(search_rect):
+            if exclude is not None and item is exclude:
+                continue
+            if item.parentItem() is not None:
+                continue
+            if isinstance(item, ConstructionLine):
+                _segments.append((item.pt1, item.pt2, item))
+            elif isinstance(item, QGraphicsLineItem):
+                line = item.line()
+                _segments.append((item.mapToScene(line.p1()),
+                                 item.mapToScene(line.p2()), item))
+            elif isinstance(item, PolylineItem):
+                verts = item._points
+                for j in range(len(verts) - 1):
+                    _segments.append((item.mapToScene(verts[j]),
+                                     item.mapToScene(verts[j + 1]), item))
+            elif isinstance(item, RectangleItem):
+                r = item.rect()
+                corners = [
+                    item.mapToScene(QPointF(r.left(),  r.top())),
+                    item.mapToScene(QPointF(r.right(), r.top())),
+                    item.mapToScene(QPointF(r.right(), r.bottom())),
+                    item.mapToScene(QPointF(r.left(),  r.bottom())),
+                ]
+                for j in range(4):
+                    _segments.append((corners[j], corners[(j + 1) % 4], item))
+            elif isinstance(item, WallSegment):
+                try:
+                    p1l, p1r, p2r, p2l = item.quad_points()
+                    _segments.append((p1l, p2l, item))
+                    _segments.append((p1r, p2r, item))
+                except (ValueError, AttributeError):
+                    pass
+            elif isinstance(item, CircleItem):
+                _circles.append((item._center, item._radius, item))
 
-            for item in scene.items(search_rect):
-                if exclude is not None and item is exclude:
+        # Segment–segment intersections
+        for i, (sa1, sa2, src1) in enumerate(_segments):
+            for sb1, sb2, src2 in _segments[i + 1:]:
+                if src1 is src2:
                     continue
-                if item.parentItem() is not None:
-                    continue
-                # ConstructionLine: use anchor points, not extended line
-                if isinstance(item, ConstructionLine):
-                    _segments.append((item.pt1, item.pt2, item))
-                elif isinstance(item, QGraphicsLineItem):
-                    line = item.line()
-                    _segments.append((item.mapToScene(line.p1()),
-                                     item.mapToScene(line.p2()), item))
-                elif isinstance(item, PolylineItem):
-                    verts = item._points
-                    for j in range(len(verts) - 1):
-                        _segments.append((item.mapToScene(verts[j]),
-                                         item.mapToScene(verts[j + 1]), item))
-                elif isinstance(item, RectangleItem):
-                    r = item.rect()
-                    corners = [
-                        item.mapToScene(QPointF(r.left(),  r.top())),
-                        item.mapToScene(QPointF(r.right(), r.top())),
-                        item.mapToScene(QPointF(r.right(), r.bottom())),
-                        item.mapToScene(QPointF(r.left(),  r.bottom())),
-                    ]
-                    for j in range(4):
-                        _segments.append((corners[j], corners[(j + 1) % 4], item))
-                elif isinstance(item, WallSegment):
-                    try:
-                        p1l, p1r, p2r, p2l = item.quad_points()
-                        _segments.append((p1l, p2l, item))
-                        _segments.append((p1r, p2r, item))
-                    except (ValueError, AttributeError):
-                        pass
-                elif isinstance(item, CircleItem):
-                    _circles.append((item._center, item._radius, item))
+                ix = self._line_line_intersect(sa1, sa2, sb1, sb2)
+                if ix is not None:
+                    d = math.hypot(ix.x() - ctx.cursor.x(),
+                                   ix.y() - ctx.cursor.y())
+                    if d <= ctx.tol:
+                        ctx.check("intersection", ix, src1)
 
-            # Segment–segment intersections
-            for i, (sa1, sa2, src1) in enumerate(_segments):
-                for sb1, sb2, src2 in _segments[i + 1:]:
-                    if src1 is src2:
-                        continue
-                    ix = self._line_line_intersect(sa1, sa2, sb1, sb2)
-                    if ix is not None:
-                        d = math.hypot(ix.x() - cursor_scene.x(),
-                                       ix.y() - cursor_scene.y())
-                        if d <= tol:
-                            _check("intersection", ix, src1)
-
-            # Segment–circle intersections
-            for center, radius, c_item in _circles:
-                for sa1, sa2, src in _segments:
-                    for ix in self._line_circle_intersect(
-                            sa1, sa2, center, radius):
-                        d = math.hypot(ix.x() - cursor_scene.x(),
-                                       ix.y() - cursor_scene.y())
-                        if d <= tol:
-                            _check("intersection", ix, src)
-
-        return best_result
+        # Segment–circle intersections
+        for center, radius, c_item in _circles:
+            for sa1, sa2, src in _segments:
+                for ix in self._line_circle_intersect(sa1, sa2, center, radius):
+                    d = math.hypot(ix.x() - ctx.cursor.x(),
+                                   ix.y() - ctx.cursor.y())
+                    if d <= ctx.tol:
+                        ctx.check("intersection", ix, src)
 
     # ── Internal ─────────────────────────────────────────────────────────────
 

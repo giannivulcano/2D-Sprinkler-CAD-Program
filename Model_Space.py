@@ -1,10 +1,12 @@
-import sys, json, math, shutil
+import sys, json, math, shutil, logging
+
+log = logging.getLogger("FirePro3D")
 from PyQt6.QtWidgets import (QGraphicsScene, QGraphicsEllipseItem, QGraphicsLineItem,
                               QGraphicsItem, QGraphicsItemGroup, QGraphicsPixmapItem,
                               QGraphicsTextItem, QGraphicsSimpleTextItem,
                               QGraphicsPathItem, QGraphicsRectItem,
                               QApplication, QProgressDialog, QMenu,
-                              QInputDialog, QMessageBox, QDialog,
+                              QDialog,
                               QHBoxLayout, QVBoxLayout, QLabel, QLineEdit)
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import (QPen, QBrush, QColor, QPixmap, QPainterPath, QFont,
@@ -61,6 +63,10 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
     radiationConfirm = pyqtSignal()       # Enter pressed during radiation selection
     radiationCancel = pyqtSignal()        # Escape pressed during radiation selection
     openViewRequested = pyqtSignal(str, str)  # (view_type, direction) — marker double-click
+    # Dialog signals — UI shown by main.py, result fed back via callback
+    numericInputRequested = pyqtSignal(str, str, str, float, float, float)  # mode, title, label, default, min, max
+    warningIssued = pyqtSignal(str, str)                                    # title, message
+    confirmRequested = pyqtSignal(str, str, str)                            # action_id, title, message
 
     def __init__(self):
         super().__init__()
@@ -1611,7 +1617,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         import os
         if not os.path.isfile(file_path):
             self._show_status(f"PDF not found: {file_path}")
-            print(f"[FirePro3D] PDF not found: {file_path}")
+            log.warning("PDF not found: %s", file_path)
             return
 
         pixmap = None
@@ -1636,7 +1642,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         except ImportError:
             pass  # fitz not installed — fall through to QPdfDocument
         except Exception as e:
-            print(f"[FirePro3D] fitz PDF render failed: {e}")
+            log.warning("fitz PDF render failed: %s", e)
 
         # --- Strategy 2: QPdfDocument (Qt built-in) ----------------------
         if pixmap is None:
@@ -1669,7 +1675,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 pixmap = QPixmap.fromImage(image)
             except Exception as e:
                 self._show_status(f"Error importing PDF: {e}")
-                print(f"[FirePro3D] QPdfDocument PDF render failed: {e}")
+                log.warning("QPdfDocument PDF render failed: %s", e)
                 return
 
         if pixmap is None or pixmap.isNull():
@@ -2640,78 +2646,27 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             return
 
         # ── Offset / Rotate / Scale / Fillet / Chamfer: Tab opens value input ──
+        # Dialogs are shown by main.py; results arrive via complete_numeric_input()
         if self.mode == "offset_side":
-            val, ok = QInputDialog.getDouble(
-                None, "Offset Distance", "Distance:",
-                self._offset_dist if self._offset_dist > 0 else 10.0,
-                0.01, 1_000_000, 3)
-            if ok:
-                self._offset_dist = val
-                self._offset_manual = True
-                self._show_status(
-                    f"Offset: {val:.1f} mm (fixed)  "
-                    f"Click to pick side and commit.", timeout=0)
+            default = self._offset_dist if self._offset_dist > 0 else 10.0
+            self.numericInputRequested.emit(
+                "offset_side", "Offset Distance", "Distance:", default, 0.01, 1_000_000)
             return
         if self.mode == "rotate" and self._rotate_pivot is not None:
-            val, ok = QInputDialog.getDouble(
-                None, "Rotate Angle", "Angle (degrees):", 90.0, -360, 360, 2)
-            if ok:
-                self._apply_rotate(self._rotate_pivot, val)
-                self.push_undo_state()
-                self._selected_items = []
-                self.set_mode(None)
+            self.numericInputRequested.emit(
+                "rotate", "Rotate Angle", "Angle (degrees):", 90.0, -360.0, 360.0)
             return
         if self.mode == "scale" and self._scale_base is not None:
-            val, ok = QInputDialog.getDouble(
-                None, "Scale Factor", "Factor:", 2.0, 0.001, 10000, 4)
-            if ok:
-                self._apply_scale(self._scale_base, val)
-                self.push_undo_state()
-                self._selected_items = []
-                self.set_mode(None)
+            self.numericInputRequested.emit(
+                "scale", "Scale Factor", "Factor:", 2.0, 0.001, 10000.0)
             return
         if self.mode == "fillet" and self._fillet_item2 is not None:
-            val, ok = QInputDialog.getDouble(
-                None, "Fillet Radius", "Radius:",
-                self._fillet_radius, 0.01, 1_000_000, 3)
-            if ok:
-                self._fillet_radius = val
-                if self._fillet_preview is not None:
-                    if self._fillet_preview.scene() is self:
-                        self.removeItem(self._fillet_preview)
-                    self._fillet_preview = None
-                data = self._compute_fillet(self._fillet_item1, self._fillet_item2,
-                                            self._fillet_radius)
-                if data is not None:
-                    pp = QPainterPath()
-                    pp.addEllipse(data["center"], data["radius"], data["radius"])
-                    self._fillet_preview = self.addPath(
-                        pp, QPen(QColor("#00ff00"), 1, Qt.PenStyle.DashLine))
-                self._show_status(
-                    f"Fillet radius: {val:.1f}  Press Enter to commit", timeout=0)
+            self.numericInputRequested.emit(
+                "fillet", "Fillet Radius", "Radius:", self._fillet_radius, 0.01, 1_000_000)
             return
         if self.mode == "chamfer" and self._chamfer_item2 is not None:
-            val, ok = QInputDialog.getDouble(
-                None, "Chamfer Distance", "Distance:",
-                self._chamfer_dist, 0.01, 1_000_000, 3)
-            if ok:
-                self._chamfer_dist = val
-                if self._chamfer_preview is not None:
-                    if self._chamfer_preview.scene() is self:
-                        self.removeItem(self._chamfer_preview)
-                    self._chamfer_preview = None
-                data = self._compute_chamfer(self._chamfer_item1, self._chamfer_item2,
-                                              self._chamfer_dist)
-                if data is not None:
-                    self._chamfer_preview = QGraphicsLineItem(
-                        data["cp1"].x(), data["cp1"].y(),
-                        data["cp2"].x(), data["cp2"].y())
-                    p = QPen(QColor("#00ff00"), 1, Qt.PenStyle.DashLine)
-                    p.setCosmetic(True)
-                    self._chamfer_preview.setPen(p)
-                    self.addItem(self._chamfer_preview)
-                self._show_status(
-                    f"Chamfer distance: {val:.1f}  Press Enter to commit", timeout=0)
+            self.numericInputRequested.emit(
+                "chamfer", "Chamfer Distance", "Distance:", self._chamfer_dist, 0.01, 1_000_000)
             return
 
         cursor = self._last_scene_pos   # may be None on startup
@@ -3827,6 +3782,121 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "window":                   "_press_window",
     }
 
+    # ------------------------------------------------------------------
+    # Dialog callbacks — called by main.py after showing the dialog
+    # ------------------------------------------------------------------
+
+    def complete_numeric_input(self, mode: str, value: float, accepted: bool):
+        """Handle result from a numeric input dialog shown by main.py."""
+        if not accepted:
+            return
+        if mode == "offset_side":
+            self._offset_dist = value
+            self._offset_manual = True
+            self._show_status(
+                f"Offset: {value:.1f} mm (fixed)  "
+                f"Click to pick side and commit.", timeout=0)
+        elif mode == "rotate":
+            if self._rotate_pivot is not None:
+                self._apply_rotate(self._rotate_pivot, value)
+                self.push_undo_state()
+                self._selected_items = []
+                self.set_mode(None)
+        elif mode == "scale":
+            if self._scale_base is not None:
+                self._apply_scale(self._scale_base, value)
+                self.push_undo_state()
+                self._selected_items = []
+                self.set_mode(None)
+        elif mode == "fillet":
+            self._fillet_radius = value
+            if self._fillet_preview is not None:
+                if self._fillet_preview.scene() is self:
+                    self.removeItem(self._fillet_preview)
+                self._fillet_preview = None
+            data = self._compute_fillet(self._fillet_item1, self._fillet_item2,
+                                        self._fillet_radius)
+            if data is not None:
+                pp = QPainterPath()
+                pp.addEllipse(data["center"], data["radius"], data["radius"])
+                self._fillet_preview = self.addPath(
+                    pp, QPen(QColor("#00ff00"), 1, Qt.PenStyle.DashLine))
+            self._show_status(
+                f"Fillet radius: {value:.1f}  Press Enter to commit", timeout=0)
+        elif mode == "chamfer":
+            self._chamfer_dist = value
+            if self._chamfer_preview is not None:
+                if self._chamfer_preview.scene() is self:
+                    self.removeItem(self._chamfer_preview)
+                self._chamfer_preview = None
+            data = self._compute_chamfer(self._chamfer_item1, self._chamfer_item2,
+                                          self._chamfer_dist)
+            if data is not None:
+                self._chamfer_preview = QGraphicsLineItem(
+                    data["cp1"].x(), data["cp1"].y(),
+                    data["cp2"].x(), data["cp2"].y())
+                p = QPen(QColor("#00ff00"), 1, Qt.PenStyle.DashLine)
+                p.setCosmetic(True)
+                self._chamfer_preview.setPen(p)
+                self.addItem(self._chamfer_preview)
+            self._show_status(
+                f"Chamfer distance: {value:.1f}  Press Enter to commit", timeout=0)
+
+    def complete_confirmation(self, action_id: str, accepted: bool):
+        """Handle result from a confirmation dialog shown by main.py."""
+        if action_id == "mirror_delete" and accepted:
+            for item in list(self._selected_items or self.selectedItems()):
+                self._delete_single_item(item)
+            self.push_undo_state()
+        elif action_id == "elev_mismatch_start":
+            self._pending_confirm_data = getattr(self, "_pending_confirm_data", {})
+            data = self._pending_confirm_data.pop("elev_start", None)
+            if data and accepted:
+                start_node = data["start_node"]
+                template = data["template"]
+                intermediate = self._make_intermediate_node(start_node, template)
+                vert = Pipe(start_node, intermediate)
+                vert.user_layer = self.active_user_layer
+                vert.level = self.active_level
+                vert._properties["Level"]["value"] = self.active_level
+                for key in ("Diameter", "Schedule", "C-Factor",
+                            "Material", "Colour", "Phase"):
+                    vert._properties[key]["value"] = template._properties[key]["value"]
+                self.sprinkler_system.add_pipe(vert)
+                self.addItem(vert)
+                vert.set_pipe_display()
+                self.node_start_pos = intermediate
+            elif data and not accepted:
+                # Update template to match node elevation
+                start_node = data["start_node"]
+                template = data["template"]
+                template.ceiling_level = start_node.ceiling_level
+                template.ceiling_offset = start_node.ceiling_offset
+                self.requestPropertyUpdate.emit(template)
+        elif action_id == "elev_mismatch_end":
+            self._pending_confirm_data = getattr(self, "_pending_confirm_data", {})
+            data = self._pending_confirm_data.pop("elev_end", None)
+            if data and accepted:
+                end_node = data["end_node"]
+                template = data["template"]
+                intermediate = self._make_intermediate_node(end_node, template)
+                vert = Pipe(intermediate, end_node)
+                vert.user_layer = self.active_user_layer
+                vert.level = self.active_level
+                vert._properties["Level"]["value"] = self.active_level
+                for key in ("Diameter", "Schedule", "C-Factor",
+                            "Material", "Colour", "Phase"):
+                    vert._properties[key]["value"] = template._properties[key]["value"]
+                self.sprinkler_system.add_pipe(vert)
+                self.addItem(vert)
+                vert.set_pipe_display()
+            elif data and not accepted:
+                end_node = data["end_node"]
+                template = data["template"]
+                template.ceiling_level = end_node.ceiling_level
+                template.ceiling_offset = end_node.ceiling_offset
+                self.requestPropertyUpdate.emit(template)
+
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
@@ -3945,45 +4015,19 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             if _check_elevation and template is not None:
                 template_z = self._compute_template_z_pos(template)
                 if template_z is not None and abs(start_node.z_pos - template_z) > 0.01:
-                    reply = QMessageBox.question(
-                        self.views()[0] if self.views() else None,
+                    if not hasattr(self, "_pending_confirm_data"):
+                        self._pending_confirm_data = {}
+                    self._pending_confirm_data["elev_start"] = {
+                        "start_node": start_node, "template": template}
+                    self.confirmRequested.emit(
+                        "elev_mismatch_start",
                         "Elevation Mismatch",
                         f"Start node is at elevation {start_node.z_pos:.1f} mm "
                         f"but the template targets {template_z:.1f} mm.\n\n"
-                        "Create a vertical connection (riser/drop)?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.Yes,
-                    )
-                    if reply == QMessageBox.StandardButton.Yes:
-                        # Create intermediate node at template elevation
-                        # and vertical pipe from existing → intermediate.
-                        # Use intermediate as the pipe start.
-                        intermediate = self._make_intermediate_node(
-                            start_node, template,
-                        )
-                        vert = Pipe(start_node, intermediate)
-                        vert.user_layer = self.active_user_layer
-                        vert.level = self.active_level
-                        vert._properties["Level"]["value"] = self.active_level
-                        for key in ("Diameter", "Schedule", "C-Factor",
-                                    "Material", "Colour", "Phase"):
-                            if key in template._properties:
-                                vert.set_property(
-                                    key, template._properties[key]["value"],
-                                )
-                        self.sprinkler_system.add_pipe(vert)
-                        self.addItem(vert)
-                        apply_category_defaults(vert)
-                        vert.update_label()
-                        start_node.fitting.update()
-                        intermediate.fitting.update()
-                        start_node = intermediate  # continue from intermediate
-                    else:
-                        # Adopt the existing node's elevation — update template
-                        template._properties["Ceiling Level"]["value"] = start_node.ceiling_level
-                        template._properties["Ceiling Offset"]["value"] = str(start_node.ceiling_offset)
-                        template.ceiling_offset = start_node.ceiling_offset
-                        self.requestPropertyUpdate.emit(template)
+                        "Create a vertical connection (riser/drop)?")
+                    # Result handled by complete_confirmation(); flow resumes
+                    # with start_node potentially replaced by intermediate
+                    return
 
             self.node_start_pos = start_node
             self.instructionChanged.emit("Pick end node")
@@ -4010,39 +4054,23 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             if _check_end_elev and template is not None:
                 template_z = self._compute_template_z_pos(template)
                 if template_z is not None and abs(end_node.z_pos - template_z) > 0.01:
-                    reply = QMessageBox.question(
-                        self.views()[0] if self.views() else None,
+                    if not hasattr(self, "_pending_confirm_data"):
+                        self._pending_confirm_data = {}
+                    self._pending_confirm_data["elev_end"] = {
+                        "end_node": end_node, "template": template}
+                    self.confirmRequested.emit(
+                        "elev_mismatch_end",
                         "Elevation Mismatch",
                         f"The target node is at elevation {end_node.z_pos:.1f} mm "
                         f"but the template targets {template_z:.1f} mm.\n\n"
-                        "Create a vertical connection (riser/drop)?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.Yes,
-                    )
-                    if reply == QMessageBox.StandardButton.Yes:
-                        self._create_vertical_connection(
-                            self.node_start_pos, end_node, template,
-                        )
-                        # Continue polyline from end node
-                        self.node_start_pos = end_node
-                        self.push_undo_state()
-                        self.instructionChanged.emit("Pick next node (Esc/double-click to finish)")
-                        return
-                    else:
-                        # Adopt the existing end node's elevation — update template
-                        template._properties["Ceiling Level"]["value"] = end_node.ceiling_level
-                        template._properties["Ceiling Offset"]["value"] = str(end_node.ceiling_offset)
-                        template.ceiling_offset = end_node.ceiling_offset
-                        self.requestPropertyUpdate.emit(template)
-                        # Fall through to normal add_pipe — template now matches end node
+                        "Create a vertical connection (riser/drop)?")
+                    return
 
             # ── Backtrack check ───────────────────────────────────────
             if self._would_backtrack(self.node_start_pos, end_node):
-                QMessageBox.warning(
-                    self.views()[0] if self.views() else None,
+                self.warningIssued.emit(
                     "Pipe Overlap",
-                    "Cannot place a pipe back over an existing pipe segment.",
-                )
+                    "Cannot place a pipe back over an existing pipe segment.")
                 # Remove end_node if it was newly created for this click
                 if len(end_node.pipes) == 0:
                     if end_node in self.sprinkler_system.nodes:
@@ -4853,13 +4881,10 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self.instructionChanged.emit("Pick second axis point")
         else:
             self._apply_mirror(self._mirror_p1, snapped)
-            reply = QMessageBox.question(
-                None, "Mirror", "Delete original objects?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                for item in list(self._selected_items or self.selectedItems()):
-                    self._delete_single_item(item)
+            self.confirmRequested.emit(
+                "mirror_delete", "Mirror", "Delete original objects?")
+            # If user accepts, complete_confirmation() deletes originals
+            # Push undo regardless — mirror already applied
             self.push_undo_state()
             self._selected_items = []
             self.set_mode(None)

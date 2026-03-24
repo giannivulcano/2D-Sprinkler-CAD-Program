@@ -10,8 +10,10 @@ Supports click-to-select with bidirectional sync to the 2D Model Space.
 
 from __future__ import annotations
 
-import math
+import math, logging
 import numpy as np
+
+log = logging.getLogger("FirePro3D.3D")
 
 import pyvista as pv
 from pyvistaqt import QtInteractor
@@ -1264,7 +1266,7 @@ class View3D(QWidget):
         ctrl_held = event.modifiers() & Qt.KeyboardModifier.ControlModifier
 
         hit = self._pick_at(screen_x, screen_y)
-        print(f"[3D] click at ({screen_x:.0f}, {screen_y:.0f}), hit={hit}")
+        log.debug("click at (%.0f, %.0f), hit=%s", screen_x, screen_y, hit)
 
         if hit is not None:
             if ctrl_held:
@@ -1338,12 +1340,12 @@ class View3D(QWidget):
         if actor is not None:
             if actor in self._actor_to_entity:
                 entity, etype = self._actor_to_entity[actor]
-                print(f"[3D] picked actor → {type(entity).__name__} ({etype})")
+                log.debug("picked actor → %s (%s)", type(entity).__name__, etype)
                 return entity
             else:
-                print(f"[3D] picked actor not in entity map (category unknown)")
+                log.debug("picked actor not in entity map (category unknown)")
         else:
-            print(f"[3D] cell picker found no actor")
+            log.debug("cell picker found no actor")
 
         # Fall back to any node/pipe within full tolerance
         return point_item
@@ -1528,7 +1530,8 @@ class View3D(QWidget):
         lm = self._lm
         for sel in selected_items:
             mesh_data = None
-            print(f"[3D] highlight: processing {type(sel).__name__}, has _roof_type={hasattr(sel, '_roof_type')}, has get_3d_mesh={hasattr(sel, 'get_3d_mesh')}")
+            log.debug("highlight: processing %s, has _roof_type=%s, has get_3d_mesh=%s",
+                      type(sel).__name__, hasattr(sel, '_roof_type'), hasattr(sel, 'get_3d_mesh'))
             if isinstance(sel, WallSegment):
                 mesh_data = sel.get_3d_mesh(level_manager=lm)
             elif isinstance(sel, FloorSlab):
@@ -1537,7 +1540,7 @@ class View3D(QWidget):
                 mesh_data = sel.get_3d_mesh(level_manager=lm)
 
             if mesh_data is None:
-                print(f"[3D] highlight: no mesh_data for {type(sel).__name__}")
+                log.debug("highlight: no mesh_data for %s", type(sel).__name__)
                 continue
 
             verts = np.array(mesh_data["vertices"], dtype=np.float32)
@@ -1567,7 +1570,8 @@ class View3D(QWidget):
         except RuntimeError:
             return
 
-        print(f"[3D] _on_2d_selection_changed: {len(selected)} items: {[type(s).__name__ for s in selected]}")
+        log.debug("_on_2d_selection_changed: %d items: %s",
+                  len(selected), [type(s).__name__ for s in selected])
 
         if not selected:
             self._highlight_mesh_selection(None)

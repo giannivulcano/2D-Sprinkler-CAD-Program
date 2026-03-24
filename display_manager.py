@@ -15,7 +15,7 @@ from __future__ import annotations
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
     QDialogButtonBox, QPushButton, QDoubleSpinBox, QSpinBox, QCheckBox,
-    QHeaderView, QColorDialog, QWidget, QLabel, QComboBox, QFormLayout,
+    QHeaderView, QColorDialog, QWidget, QLabel,
     QAbstractItemView,
 )
 from PyQt6.QtGui import QColor, QFont, QBrush, QPen, QPainter, QPixmap, QIcon
@@ -211,60 +211,6 @@ def _make_fill_icon(mode: str, hex_color: str, w: int = 40, h: int = 20) -> QPix
         p.fillRect(0, 0, w, h, col)
     p.end()
     return pix
-
-
-class FillPickerDialog(QDialog):
-    """Small modal that lets the user choose Solid or Hatch fill + colour."""
-
-    def __init__(self, parent=None, current_value: str = "#000000"):
-        super().__init__(parent)
-        self.setWindowTitle("Fill Style")
-        self.setFixedWidth(260)
-        mode, hex_col = _parse_fill_value(current_value)
-
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-
-        self._mode_combo = QComboBox()
-        self._mode_combo.addItems(["Solid", "Hatch"])
-        self._mode_combo.setCurrentIndex(1 if mode == "hatch" else 0)
-        form.addRow("Style:", self._mode_combo)
-
-        self._color_btn = QPushButton()
-        self._color_btn.setFixedSize(60, 24)
-        self._hex = hex_col
-        self._update_preview()
-        self._color_btn.clicked.connect(self._pick_color)
-        self._mode_combo.currentIndexChanged.connect(
-            lambda _: self._update_preview())
-        form.addRow("Colour:", self._color_btn)
-
-        layout.addLayout(form)
-
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def _pick_color(self):
-        color = QColorDialog.getColor(QColor(self._hex), self, "Fill colour")
-        if color.isValid():
-            self._hex = color.name()
-            self._update_preview()
-
-    def _update_preview(self):
-        mode = "hatch" if self._mode_combo.currentIndex() == 1 else "solid"
-        pix = _make_fill_icon(mode, self._hex, 60, 24)
-        self._color_btn.setIcon(QIcon(pix))
-        self._color_btn.setIconSize(pix.size())
-        self._color_btn.setStyleSheet(
-            "border: 1px solid #555; border-radius: 2px; background: transparent;")
-
-    def get_value(self) -> str:
-        mode = "hatch" if self._mode_combo.currentIndex() == 1 else "solid"
-        return _compose_fill_value(mode, self._hex)
 
 
 # ---------------------------------------------------------------------------

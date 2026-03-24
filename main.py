@@ -394,6 +394,9 @@ class MainWindow(QMainWindow):
             lambda text: self.mode_label.setText(text)
         )
         self.scene.openViewRequested.connect(self._on_open_view_requested)
+        self.scene.numericInputRequested.connect(self._on_numeric_input_requested)
+        self.scene.warningIssued.connect(self._on_warning_issued)
+        self.scene.confirmRequested.connect(self._on_confirm_requested)
 
         self._splash_progress(80, "Wiring up controls...")
         self.init_ribbon()
@@ -669,6 +672,26 @@ class MainWindow(QMainWindow):
             self._activate_elevation(direction)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Dialog signal handlers (dialogs moved out of Model_Space)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _on_numeric_input_requested(self, mode: str, title: str, label: str,
+                                     default: float, min_val: float, max_val: float):
+        val, ok = QInputDialog.getDouble(self, title, label, default, min_val, max_val, 3)
+        self.scene.complete_numeric_input(mode, val, ok)
+
+    def _on_warning_issued(self, title: str, message: str):
+        QMessageBox.warning(self, title, message)
+
+    def _on_confirm_requested(self, action_id: str, title: str, message: str):
+        reply = QMessageBox.question(
+            self, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        accepted = reply == QMessageBox.StandardButton.Yes
+        self.scene.complete_confirmation(action_id, accepted)
+
+    # ─────────────────────────────────────────────────────────────────────────
     # RIBBON INITIALISATION
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -701,33 +724,38 @@ class MainWindow(QMainWindow):
             self._mode_buttons[mode_name] = btn
             return btn
 
-        self._init_manage_tab(_I)
-        self._init_draw_tab(_I, _mode_btn)
-        self._init_build_tab(_I, _mode_btn)
-        self._init_modify_tab(_I, _mode_btn)
-        self._init_analyze_tab(_I)
-        self._init_draft_tab(_I)
+        def _btn(group, label, icon, callback, *, tip=None, large=True, checkable=False):
+            """Create a button with optional tooltip. Returns the button."""
+            if large:
+                b = group.add_large_button(label, icon, callback, checkable=checkable)
+            else:
+                b = group.add_small_button(label, icon, callback, checkable=checkable)
+            if tip:
+                b.setToolTip(tip)
+            return b
+
+        self._init_manage_tab(_I, _btn)
+        self._init_draw_tab(_I, _btn, _mode_btn)
+        self._init_build_tab(_I, _btn, _mode_btn)
+        self._init_modify_tab(_I, _btn, _mode_btn)
+        self._init_analyze_tab(_I, _btn)
+        self._init_draft_tab(_I, _btn)
 
         # Auto-switch to Modify tab when items are selected
         self.scene.selectionChanged.connect(self._on_selection_changed_modify)
 
     # ── Per-tab ribbon helpers ───────────────────────────────────────────────
 
-    def _init_manage_tab(self, _I):
+    def _init_manage_tab(self, _I, _btn):
         """Build Tab 1: Manage — file I/O, import, settings, grid, undo/redo, panels."""
-        # ── Tab 1: Manage ────────────────────────────────────────────────────
         manage_page = self.ribbon.add_page("Manage")
 
         # --- File ---
         g_file = manage_page.add_group("File")
-        _btn = g_file.add_large_button("New", _I("placeholder_icon.svg"), self.new_file)
-        _btn.setToolTip("Start a new project [Ctrl+N]")
-        _btn = g_file.add_large_button("Open", _I("load_icon.svg"), self.open_file)
-        _btn.setToolTip("Open a saved project [Ctrl+O]")
-        _btn = g_file.add_large_button("Save", _I("save_icon.svg"), self.save_file)
-        _btn.setToolTip("Save the current project [Ctrl+S]")
-        _btn = g_file.add_large_button("Save As", _I("saveas_icon.svg"), self.save_file_as)
-        _btn.setToolTip("Save as a new file")
+        _btn(g_file, "New",     _I("placeholder_icon.svg"), self.new_file, tip="Start a new project [Ctrl+N]")
+        _btn(g_file, "Open",    _I("load_icon.svg"),        self.open_file, tip="Open a saved project [Ctrl+O]")
+        _btn(g_file, "Save",    _I("save_icon.svg"),        self.save_file, tip="Save the current project [Ctrl+S]")
+        _btn(g_file, "Save As", _I("saveas_icon.svg"),      self.save_file_as, tip="Save as a new file")
         self._recent_menu = QMenu(self)
         _btn = g_file.add_small_menu_button("Recent", _I("load_icon.svg"), self._recent_menu)
         _btn.setToolTip("Recently opened files")
@@ -860,7 +888,7 @@ class MainWindow(QMainWindow):
             lambda on: self.radiation_dock.show() if on else self.radiation_dock.hide())
         self.radiation_dock.visibilityChanged.connect(rad_report_btn.setChecked)
 
-    def _init_draw_tab(self, _I, _mode_btn):
+    def _init_draw_tab(self, _I, _btn, _mode_btn):
         """Build Tab 2: Draw — geometry tools, style, snap, annotations."""
         # ── Tab 2: Draw ──────────────────────────────────────────────────────
         draw_page = self.ribbon.add_page("Draw")
@@ -918,7 +946,7 @@ class MainWindow(QMainWindow):
         _mode_btn(g_ann, "Hatch", _I("placeholder_icon.svg"), "hatch").setToolTip(
             "Add hatching to a closed object")
 
-    def _init_build_tab(self, _I, _mode_btn):
+    def _init_build_tab(self, _I, _btn, _mode_btn):
         """Build Tab 3: Build — pipe/sprinkler placement, system, library."""
         # ── Tab 3: Build ─────────────────────────────────────────────────────
         build_page = self.ribbon.add_page("Build")
@@ -1030,7 +1058,7 @@ class MainWindow(QMainWindow):
             self.open_sprinkler_manager)
         _btn.setToolTip("Open sprinkler database manager")
 
-    def _init_modify_tab(self, _I, _mode_btn):
+    def _init_modify_tab(self, _I, _btn, _mode_btn):
         """Build Tab 4: Modify — edit/transform/scale tools (auto-switches on selection)."""
         # ── Tab 4: Modify (always visible, auto-switches on selection) ────────
         modify_page = self.ribbon.add_page("Modify")
@@ -1198,7 +1226,7 @@ class MainWindow(QMainWindow):
             btn.setEnabled(False)
         self._btn_paste.setEnabled(False)
 
-    def _init_analyze_tab(self, _I):
+    def _init_analyze_tab(self, _I, _btn):
         """Build Tab 5: Analyze — hydraulics, export."""
         # ── Tab 5: Analyze ───────────────────────────────────────────────────
         analyze_page = self.ribbon.add_page("Analyze")
@@ -1239,7 +1267,7 @@ class MainWindow(QMainWindow):
             self.hydro_report._export_csv)
         _btn.setToolTip("Export hydraulic results to CSV")
 
-    def _init_draft_tab(self, _I):
+    def _init_draft_tab(self, _I, _btn):
         """Build Tab 6: Draft — workspace switching, page setup."""
         # ── Tab 6: Draft ─────────────────────────────────────────────────────
         draft_page = self.ribbon.add_page("Draft")

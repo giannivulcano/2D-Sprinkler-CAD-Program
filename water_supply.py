@@ -69,14 +69,10 @@ class WaterSupply(QGraphicsSvgItem):
     # SVG scaling / centering
 
     def _centre_on_origin(self):
-        """Centre the SVG on (0,0) at TARGET_MM scale (same pattern as Sprinkler)."""
-        bounds = self.boundingRect()
-        center = bounds.center()
-        svg_natural = max(bounds.width(), bounds.height())
-        s = self.TARGET_MM / svg_natural if svg_natural > 0 else self.SCALE
-        s *= self._display_scale  # apply display manager scale override
-        t = QTransform(s, 0, 0, s, -s * center.x(), -s * center.y())
-        self.setTransform(t)
+        """Centre the SVG on (0,0) at TARGET_MM scale."""
+        from displayable_item import centre_svg_on_origin
+        centre_svg_on_origin(self, self.TARGET_MM, self.SCALE,
+                              self._display_scale)
 
     def rescale(self, sm=None):
         """Called after scale calibration -- just re-centre."""

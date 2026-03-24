@@ -74,21 +74,10 @@ class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
         self._centre_on_node()
 
     def _centre_on_node(self):
-        """Centre the item on the parent node's origin (0, 0).
-
-        Uses a QTransform that scales then translates so the SVG centre
-        maps to local (0, 0).  The symbol is sized to TARGET_MM and
-        scales with zoom like all other scene geometry.
-        """
-        bounds = self.boundingRect()
-        center = bounds.center()
-        svg_natural = max(bounds.width(), bounds.height())
-        s = self.TARGET_MM / svg_natural if svg_natural > 0 else self.SCALE
-        s *= self._display_scale  # apply display manager scale override
-        # Build affine: scale about origin, then translate so centre → (0,0)
-        t = QTransform(s, 0, 0, s, -s * center.x(), -s * center.y())
-        self.setTransform(t)
-        self.setPos(0, 0)
+        """Centre the item on the parent node's origin (0, 0)."""
+        from displayable_item import centre_svg_on_origin
+        centre_svg_on_origin(self, self.TARGET_MM, self.SCALE,
+                              self._display_scale, reset_pos=True)
 
     def shape(self) -> QPainterPath:
         """Return full bounding rect as shape so clicking anywhere on the
