@@ -195,7 +195,8 @@ class SnapEngine:
                            search_rect: QRectF,
                            exclude: QGraphicsItem | None):
         """Phase 1: Check all scene items in the search rect for basic snaps."""
-        _anno_types = (DimensionAnnotation, NoteAnnotation)
+        from Annotations import HatchItem
+        _skip_types = (DimensionAnnotation, NoteAnnotation, HatchItem)
 
         for item in scene.items(search_rect):
             if exclude is not None and item is exclude:
@@ -204,7 +205,7 @@ class SnapEngine:
                 continue
             if item.zValue() > 150:
                 continue
-            if isinstance(item, _anno_types):
+            if isinstance(item, _skip_types):
                 continue
             if item.data(0) == "origin":
                 continue

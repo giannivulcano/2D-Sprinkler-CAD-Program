@@ -214,6 +214,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._floor_template: "FloorSlab | None" = None       # pre-placement property template
         self._roofs: list[RoofItem] = []
         self._rooms: list[Room] = []
+        self._room_manual_active: "Room | None" = None     # in-progress manual room boundary
         self._next_roof_num: int = 1
         self._roof_template: "RoofItem | None" = None         # pre-placement property template
         self._roof_active: "RoofItem | None" = None           # in-progress roof boundary
@@ -578,6 +579,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         if mode in ("sprinkler", "pipe", "set_scale"):
             self.current_template = template
             if template:
+                template._scene_ref = self  # so template can access level_manager
                 self.requestPropertyUpdate.emit(template)
         else:
             self.current_template = None
@@ -673,6 +675,16 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 if self._roof_rect_preview.scene() is self:
                     self.removeItem(self._roof_rect_preview)
                 self._roof_rect_preview = None
+
+        # Clean up manual room drawing state
+        if mode != "room_manual":
+            if self._room_manual_active is not None:
+                if len(self._room_manual_active._boundary) < 3:
+                    if self._room_manual_active.scene() is self:
+                        self.removeItem(self._room_manual_active)
+                    if self._room_manual_active in self._rooms:
+                        self._rooms.remove(self._room_manual_active)
+                self._room_manual_active = None
 
         # Clean up place_import ghost and params
         if mode != "place_import":
@@ -774,6 +786,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             "wall_rect":       "Pick first corner for rectangular wall",
             "floor":           "Pick first boundary point (click near first to close)",
             "floor_rect":      "Pick first corner for rectangular floor",
+            "room":            "Click inside a closed wall region",
+            "room_manual":     "Pick first room boundary point",
             "door":            "Click on a wall to place door",
             "window":          "Click on a wall to place window",
         }
@@ -3300,6 +3314,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "floor_rect":               "_move_floor_rect",
         "roof":                     "_move_roof",
         "roof_rect":                "_move_roof_rect",
+        "room_manual":              "_move_room_manual",
         "door":                     "_move_door_window",
         "window":                   "_move_door_window",
     }
@@ -3901,6 +3916,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "water_supply":             "_press_water_supply",
         "design_area":              "_press_design_area",
         "room":                     "_press_room",
+        "room_manual":              "_press_room_manual",
         "paste":                    "_press_paste_move",
         "move":                     "_press_paste_move",
         "place_import":             "_press_place_import",
@@ -4608,6 +4624,19 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     # ── Room boundary detection ────────────────────────────────────────
 
+    def _wall_spans_level(self, wall, level_name: str) -> bool:
+        """Return True if wall's Z-range includes the given level elevation."""
+        zr = wall.z_range_mm()
+        if zr is None:
+            return False
+        lm = self._level_manager
+        if lm is None:
+            return False
+        lvl = lm.get(level_name)
+        if lvl is None:
+            return False
+        return zr[0] <= lvl.elevation <= zr[1]
+
     def _detect_room_boundary(self, click_pt: QPointF) -> list[QPointF] | None:
         """Detect a closed wall boundary enclosing *click_pt*.
 
@@ -4620,7 +4649,13 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         TOL = 2.0
         level = self.active_level
-        walls = [w for w in self._walls if w.level == level]
+        # Include walls visible on this plan — not just walls whose base
+        # level matches, but also multi-level walls that span through it.
+        walls = [w for w in self._walls
+                 if w.isVisible() and (
+                     w.level == level
+                     or getattr(w, "_base_level", "") == level
+                     or self._wall_spans_level(w, level))]
         if not walls:
             return None
 
@@ -4977,6 +5012,80 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self.requestPropertyUpdate.emit(room)
         self.push_undo_state()
         self._show_status(f"Created {room.name}", 2000)
+
+    # ── Room manual (polygon click-to-place) ──────────────────────────
+
+    def _move_room_manual(self, event, snapped):
+        if self._room_manual_active is None:
+            self.update_preview_node(snapped)
+            self.preview_pipe.hide()
+        else:
+            self.preview_node.hide()
+            last_pt = self._room_manual_active._boundary[-1]
+            self.preview_pipe.setLine(
+                last_pt.x(), last_pt.y(), snapped.x(), snapped.y())
+            pen = QPen(QColor(self._room_manual_active._color), 1, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            self.preview_pipe.setPen(pen)
+            self.preview_pipe.show()
+
+    def _press_room_manual(self, event, pos, snapped, item_under, node_under, pipe_under):
+        """Manual room mode: click to place boundary points, close near first."""
+        if self._room_manual_active is None:
+            room = Room(boundary=[snapped])
+            room.level = self.active_level
+            room.user_layer = self.active_user_layer
+            if self._level_manager:
+                levels = self._level_manager.levels
+                active_idx = next(
+                    (i for i, lv in enumerate(levels) if lv.name == self.active_level), -1)
+                if active_idx >= 0 and active_idx + 1 < len(levels):
+                    room._ceiling_level = levels[active_idx + 1].name
+            room.name = f"Room {len(self._rooms) + 1}"
+            room._tag = room.name
+            self.addItem(room)
+            self._rooms.append(room)
+            self._room_manual_active = room
+            self.update_preview_node(snapped)
+            self.instructionChanged.emit("Pick next point (click near first or Enter to close)")
+        else:
+            pts = self._room_manual_active._boundary
+            # Close polygon: click near first point with ≥3 points
+            if len(pts) >= 3:
+                scale = self.views()[0].transform().m11() if self.views() else 1.0
+                tol = 8.0 / max(scale, 1e-6)
+                d0 = math.hypot(snapped.x() - pts[0].x(), snapped.y() - pts[0].y())
+                if d0 <= tol:
+                    self._room_manual_active._rebuild()
+                    self._room_manual_active._update_label()
+                    apply_category_defaults(self._room_manual_active)
+                    self.clearSelection()
+                    self._room_manual_active.setSelected(True)
+                    self.requestPropertyUpdate.emit(self._room_manual_active)
+                    self._show_status(f"Created {self._room_manual_active.name}", 2000)
+                    self._room_manual_active = None
+                    self.preview_pipe.hide()
+                    for v in self.views(): v.viewport().update()
+                    self.push_undo_state()
+                    if self.single_place_mode:
+                        self.set_mode("select")
+                    else:
+                        self.instructionChanged.emit("Pick first room boundary point")
+                    return
+            # Click-to-delete vertex
+            if len(pts) >= 2:
+                scale = self.views()[0].transform().m11() if self.views() else 1.0
+                tol = 8.0 / max(scale, 1e-6)
+                for vi in range(len(pts)):
+                    dv = math.hypot(snapped.x() - pts[vi].x(), snapped.y() - pts[vi].y())
+                    if dv <= tol:
+                        pts.pop(vi)
+                        self._room_manual_active._rebuild()
+                        for v in self.views(): v.viewport().update()
+                        return
+            # Add new point
+            pts.append(snapped)
+            self._room_manual_active._rebuild()
 
     def _press_paste_move(self, event, pos, snapped, item_under, node_under, pipe_under):
         if self.node_start_pos is None:
@@ -5412,6 +5521,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self._wall_alignment = _tmpl._alignment
             self.addItem(wall)
             self._walls.append(wall)
+            apply_category_defaults(wall)
             # Auto-join: snap endpoints to nearby walls
             self._auto_join_wall(wall)
             wall.setSelected(True)
@@ -5481,6 +5591,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 self._wall_alignment = _tmpl._alignment
                 self.addItem(wall)
                 self._walls.append(wall)
+                apply_category_defaults(wall)
                 walls_created.append(wall)
             # Auto-join all walls
             for wall in walls_created:
@@ -5528,6 +5639,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 d0 = math.hypot(snapped.x() - pts[0].x(), snapped.y() - pts[0].y())
                 if d0 <= tol:
                     self._floor_active.close_polygon()
+                    apply_category_defaults(self._floor_active)
                     self._floor_active.setSelected(True)
                     self._floor_active = None
                     self.preview_pipe.hide()
@@ -5586,6 +5698,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             slab.user_layer = self.active_user_layer
             self.addItem(slab)
             self._floor_slabs.append(slab)
+            apply_category_defaults(slab)
             slab.setSelected(True)
             for v in self.views(): v.viewport().update()
             # Clean up preview
@@ -5663,6 +5776,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                             roof.level = p["eave_level"]
                         roof._rebuild_path()
                         roof.update()
+                        apply_category_defaults(roof)
                     else:
                         # User cancelled — remove the roof
                         self.removeItem(roof)
@@ -5758,6 +5872,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     roof.level = p["eave_level"]
                 roof._rebuild_path()
                 roof.update()
+                apply_category_defaults(roof)
             else:
                 # User cancelled — remove the roof
                 self.removeItem(roof)
@@ -5903,6 +6018,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 pts.pop()
             if len(pts) >= 3:
                 self._floor_active.close_polygon()
+                apply_category_defaults(self._floor_active)
                 self._floor_active.setSelected(True)
                 self._floor_active = None
                 for v in self.views(): v.viewport().update()
@@ -6376,6 +6492,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             elif self.mode == "floor" and self._floor_active is not None:
                 if len(self._floor_active._points) >= 3:
                     self._floor_active.close_polygon()
+                    apply_category_defaults(self._floor_active)
                     self._floor_active.setSelected(True)
                     self._floor_active = None
                     for v in self.views(): v.viewport().update()
@@ -6434,6 +6551,24 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                         self.set_mode("select")
                     else:
                         self.instructionChanged.emit("Pick first boundary point (click near first to close)")
+            # Close an in-progress manual room polygon
+            elif self.mode == "room_manual" and self._room_manual_active is not None:
+                if len(self._room_manual_active._boundary) >= 3:
+                    self._room_manual_active._rebuild()
+                    self._room_manual_active._update_label()
+                    apply_category_defaults(self._room_manual_active)
+                    self.clearSelection()
+                    self._room_manual_active.setSelected(True)
+                    self.requestPropertyUpdate.emit(self._room_manual_active)
+                    self._show_status(f"Created {self._room_manual_active.name}", 2000)
+                    self._room_manual_active = None
+                    self.preview_pipe.hide()
+                    for v in self.views(): v.viewport().update()
+                    self.push_undo_state()
+                    if self.single_place_mode:
+                        self.set_mode("select")
+                    else:
+                        self.instructionChanged.emit("Pick first room boundary point")
             # Commit fillet
             elif self.mode == "fillet" and self._fillet_item1 is not None and self._fillet_item2 is not None:
                 data = self._compute_fillet(self._fillet_item1, self._fillet_item2,

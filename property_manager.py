@@ -21,7 +21,7 @@ Property types recognised from ``get_properties()`` dict:
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QColorDialog, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtGui import QDoubleValidator, QColor, QFont
@@ -285,7 +285,19 @@ class PropertyManager(QWidget):
                     widget.insertItem(0, "< mixed >")
                     widget.setCurrentIndex(0)
 
-            self._form.addRow(QLabel(key), widget)
+            suffix = meta.get("suffix")
+            if suffix and widget is not None:
+                row_layout = QHBoxLayout()
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.addWidget(widget, 1)
+                suffix_lbl = QLabel(suffix)
+                suffix_lbl.setStyleSheet("color: grey; font-style: italic;")
+                row_layout.addWidget(suffix_lbl)
+                container = QWidget()
+                container.setLayout(row_layout)
+                self._form.addRow(QLabel(key), container)
+            else:
+                self._form.addRow(QLabel(key), widget)
 
         # ── Legacy Level assignment (nodes, pipes, sprinklers) ────────────
         # Only show if the item doesn't already expose level_ref properties

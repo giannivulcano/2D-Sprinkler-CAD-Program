@@ -712,8 +712,12 @@ class MainWindow(QMainWindow):
     def _create_elevation_markers(self):
         """Create N/S/E/W elevation markers in the 2D plan view."""
         from view_marker import ViewMarkerManager
+        from display_manager import apply_category_defaults
         self._view_marker_mgr = ViewMarkerManager(self.scene)
         self._view_marker_mgr.create_elevation_markers()
+        # Apply user's saved display defaults to the new markers
+        for marker in self._view_marker_mgr._markers.values():
+            apply_category_defaults(marker)
 
     def _on_open_view_requested(self, view_type: str, direction: str):
         """Handle double-click on a view marker — open the corresponding view."""
@@ -1004,42 +1008,42 @@ class MainWindow(QMainWindow):
         g_3d = build_page.add_group("3D Modeling")
         _wall_btn = g_3d.add_large_button(
             "Wall", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("wall"),
+            lambda: self.scene.set_mode("wall_rect"),
             checkable=True)
         _wall_btn.setToolTip("Draw a wall segment")
         _wall_menu = QMenu(_wall_btn)
-        _wall_poly_act = _wall_menu.addAction("Wall (Polyline)")
         _wall_rect_act = _wall_menu.addAction("Wall (Rectangle)")
-        _wall_poly_act.triggered.connect(lambda: self.scene.set_mode("wall"))
+        _wall_poly_act = _wall_menu.addAction("Wall (Polyline)")
         _wall_rect_act.triggered.connect(lambda: self.scene.set_mode("wall_rect"))
+        _wall_poly_act.triggered.connect(lambda: self.scene.set_mode("wall"))
         _wall_btn.setMenu(_wall_menu)
         _wall_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["wall"] = _wall_btn
         self._mode_buttons["wall_rect"] = _wall_btn
         _floor_btn = g_3d.add_large_button(
             "Floor", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("floor"),
+            lambda: self.scene.set_mode("floor_rect"),
             checkable=True)
         _floor_btn.setToolTip("Draw a floor slab boundary")
         _floor_menu = QMenu(_floor_btn)
-        _floor_poly_act = _floor_menu.addAction("Floor (Polygon)")
         _floor_rect_act = _floor_menu.addAction("Floor (Rectangle)")
-        _floor_poly_act.triggered.connect(lambda: self.scene.set_mode("floor"))
+        _floor_poly_act = _floor_menu.addAction("Floor (Polygon)")
         _floor_rect_act.triggered.connect(lambda: self.scene.set_mode("floor_rect"))
+        _floor_poly_act.triggered.connect(lambda: self.scene.set_mode("floor"))
         _floor_btn.setMenu(_floor_menu)
         _floor_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["floor"] = _floor_btn
-        self._mode_buttons["floor_rect"] = _floor_btn  # same button shows checked for both
+        self._mode_buttons["floor_rect"] = _floor_btn
         _roof_btn = g_3d.add_large_button(
             "Roof", _I("placeholder_icon.svg"),
-            lambda: self.scene.set_mode("roof"),
+            lambda: self.scene.set_mode("roof_rect"),
             checkable=True)
         _roof_btn.setToolTip("Draw a roof boundary")
         _roof_menu = QMenu(_roof_btn)
-        _roof_poly_act = _roof_menu.addAction("Roof (Polygon)")
         _roof_rect_act = _roof_menu.addAction("Roof (Rectangle)")
-        _roof_poly_act.triggered.connect(lambda: self.scene.set_mode("roof"))
+        _roof_poly_act = _roof_menu.addAction("Roof (Polygon)")
         _roof_rect_act.triggered.connect(lambda: self.scene.set_mode("roof_rect"))
+        _roof_poly_act.triggered.connect(lambda: self.scene.set_mode("roof"))
         _roof_btn.setMenu(_roof_menu)
         _roof_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["roof"] = _roof_btn
@@ -1048,8 +1052,16 @@ class MainWindow(QMainWindow):
             "Room", _I("placeholder_icon.svg"),
             lambda: self.scene.set_mode("room"),
             checkable=True)
-        _room_btn.setToolTip("Click inside a closed wall region to define a room")
+        _room_btn.setToolTip("Define a room boundary")
+        _room_menu = QMenu(_room_btn)
+        _room_auto_act = _room_menu.addAction("Room (Auto-detect)")
+        _room_manual_act = _room_menu.addAction("Room (Manual)")
+        _room_auto_act.triggered.connect(lambda: self.scene.set_mode("room"))
+        _room_manual_act.triggered.connect(lambda: self.scene.set_mode("room_manual"))
+        _room_btn.setMenu(_room_menu)
+        _room_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self._mode_buttons["room"] = _room_btn
+        self._mode_buttons["room_manual"] = _room_btn
         _door_btn = g_3d.add_small_button(
             "Door", _I("placeholder_icon.svg"),
             lambda: self.scene.set_mode("door"),
@@ -1821,7 +1833,8 @@ class MainWindow(QMainWindow):
                     "draw_circle", "draw_arc",
                     "polyline", "dimension", "text", "pipe", "sprinkler",
                     "water_supply", "design_area", "set_scale", "offset",
-                    "offset_side", "wall", "floor", "floor_rect", "door", "window"}
+                    "offset_side", "wall", "wall_rect", "floor", "floor_rect",
+                    "roof", "roof_rect", "room", "room_manual", "door", "window"}
 
     def _on_selection_changed_modify(self):
         """Auto-switch to Modify tab when items are selected (unless drawing)."""
@@ -2111,6 +2124,12 @@ class MainWindow(QMainWindow):
         else:
             from display_manager import apply_saved_display_settings
             apply_saved_display_settings(self.scene)
+        # Rebuild elevation markers (cleared during scene load)
+        self._create_elevation_markers()
+        # Re-apply level visibility so all items show/hide correctly
+        active = getattr(self.scene, "active_level", None)
+        if active:
+            self._apply_plan_level(active)
         # Override display unit and precision with user's persistent preference
         self._apply_persistent_unit_prefs()
 
@@ -2259,6 +2278,11 @@ class MainWindow(QMainWindow):
         """Escape: cancel current chain in pipe mode, else reset mode."""
         # Pipe mode mid-chain: cancel the chain but stay in pipe mode
         if self.scene.mode == "pipe" and self.scene.node_start_pos is not None:
+            # Remove the orphan start node if it was newly created and has no pipes
+            if (self.scene._pipe_node_was_new
+                    and self.scene.node_start_pos is not None
+                    and not self.scene.node_start_pos.pipes):
+                self.scene.remove_node(self.scene.node_start_pos)
             self.scene.node_start_pos = None
             self.scene._pipe_node_was_new = False
             self.scene.preview_pipe.hide()

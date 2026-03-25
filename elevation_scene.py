@@ -121,7 +121,7 @@ class ElevGridlineItem(QGraphicsLineItem):
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setZValue(-95)
+        self.setZValue(50)   # in front of walls/floors/roofs
         self.setOpacity(opacity)
         self.setData(_ROLE_ELEV_ANNOTATION, True)
 
@@ -225,7 +225,7 @@ class ElevDatumItem(QGraphicsLineItem):
         self.setPen(QPen(Qt.PenStyle.NoPen))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setZValue(-100)
+        self.setZValue(50)   # in front of walls/floors/roofs
         self.setOpacity(opacity)
         self.setData(_ROLE_ELEV_ANNOTATION, True)
 
@@ -245,7 +245,7 @@ class ElevDatumItem(QGraphicsLineItem):
         circle = QGraphicsEllipseItem(bx - r, by - r, r * 2, r * 2, self)
         circle.setPen(circle_pen)
         circle.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-        circle.setZValue(-95)
+        circle.setZValue(51)
 
         QGraphicsLineItem(bx - r, by, bx + r, by, self).setPen(circle_pen)
         QGraphicsLineItem(bx, by - r, bx, by + r, self).setPen(circle_pen)
@@ -258,7 +258,7 @@ class ElevDatumItem(QGraphicsLineItem):
         lq_item = QGraphicsPathItem(lq, self)
         lq_item.setPen(QPen(Qt.PenStyle.NoPen))
         lq_item.setBrush(QBrush(datum_color))
-        lq_item.setZValue(-97)
+        lq_item.setZValue(52)
 
         fq = QPainterPath()
         fq.moveTo(bx, by); fq.arcTo(arc_rect, 90, 90); fq.closeSubpath()
@@ -266,7 +266,7 @@ class ElevDatumItem(QGraphicsLineItem):
         fq_item = QGraphicsPathItem(fq, self)
         fq_item.setPen(QPen(Qt.PenStyle.NoPen))
         fq_item.setBrush(QBrush(fill_color))
-        fq_item.setZValue(-96)
+        fq_item.setZValue(52)
 
     def _build_labels(self):
         """Create or recreate label items using the stored fonts."""
@@ -278,13 +278,13 @@ class ElevDatumItem(QGraphicsLineItem):
         self._name_text.setBrush(QBrush(self._datum_color))
         name_br = self._name_text.boundingRect()
         self._name_text.setPos(tag_x, self._v - name_br.height() - 20)
-        self._name_text.setZValue(-99)
+        self._name_text.setZValue(53)
 
         self._elev_text = QGraphicsSimpleTextItem(self._elev_str, self)
         self._elev_text.setFont(self._elev_font)
         self._elev_text.setBrush(QBrush(self._datum_color.lighter(130)))
         self._elev_text.setPos(tag_x, self._v + 20)
-        self._elev_text.setZValue(-99)
+        self._elev_text.setZValue(53)
 
     # ── Drawing ──────────────────────────────────────────────────────────
 
@@ -760,7 +760,7 @@ class ElevationScene(QGraphicsScene):
             rect.setOpacity(dm_opacity)
             rect.setData(_ROLE_SOURCE, slab)
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-            rect.setZValue(-80)
+            rect.setZValue(-30)   # in front of walls (-50) so floor edges visible
             self.addItem(rect)
 
     # ── Roofs ────────────────────────────────────────────────────────────

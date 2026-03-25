@@ -647,20 +647,34 @@ def apply_category_defaults(item):
     if key in _SVG_CATEGORIES and not settings.contains(f"display/{key}/color"):
         return
 
-    color = settings.value(f"display/{key}/color", cat_def["color"])
-    scale = float(settings.value(f"display/{key}/scale", cat_def["scale"]))
-    opacity = int(float(settings.value(
-        f"display/{key}/opacity", cat_def["opacity"])))
-    visible = settings.value(f"display/{key}/visible", cat_def["visible"])
+    # Prefer default_* keys (from "Set as Default"), fall back to current,
+    # then factory defaults.  This ensures newly created items match the
+    # user's preferred display settings.
+    def _v(prop, factory):
+        return (settings.value(f"display/{key}/default_{prop}")
+                or settings.value(f"display/{key}/{prop}")
+                or factory)
+
+    color = _v("color", cat_def["color"])
+    scale = float(_v("scale", cat_def["scale"]))
+    opacity = int(float(_v("opacity", cat_def["opacity"])))
+    visible = _v("visible", cat_def["visible"])
     if isinstance(visible, str):
         visible = visible.lower() not in ("false", "0")
-    fill = settings.value(f"display/{key}/fill", cat_def.get("fill"))
+    fill = _v("fill", cat_def.get("fill"))
     font = cat_def.get("font")
     if font is not None:
-        font = int(float(settings.value(f"display/{key}/font", font)))
+        font = int(float(_v("font", font)))
+    section = _v("section", cat_def.get("section"))
+    section_pattern = _v("section_pattern", cat_def.get("section_pattern"))
+    section_scale_raw = _v("section_scale", None)
+    section_scale = float(section_scale_raw) if section_scale_raw else None
 
     apply_display_to_item(item, color, scale, opacity, visible,
-                          fill_color=fill, font_size=font)
+                          fill_color=fill, font_size=font,
+                          section_color=section,
+                          section_pattern=section_pattern,
+                          section_scale=section_scale)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1076,9 +1090,13 @@ class DisplayManager(QDialog):
             fill = fill_c.name() if isinstance(fill_c, QColor) else cat_def.get("fill")
             font = getattr(item, "_display_font_size", cat_def.get("font"))
         else:
-            # Node or unknown
-            color = cat_def["color"]
-            fill = cat_def.get("fill")
+            # Generic items (FloorSlab, RoofItem, Room, Node, etc.)
+            color = (getattr(item, "_display_color", None)
+                     or getattr(item, "_color", cat_def["color"]))
+            if isinstance(color, QColor):
+                color = color.name()
+            fill = (getattr(item, "_display_fill_color", None)
+                    or cat_def.get("fill"))
             font = cat_def.get("font")
 
         # Section colour + pattern — read from item or fall back to category default
@@ -1895,12 +1913,26 @@ class DisplayManager(QDialog):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def apply_saved_display_settings(scene):
-    """Read QSettings + per-item overrides and apply to all scene items."""
+    """Read QSettings + per-item overrides and apply to all scene items.
+
+    User defaults (``default_*`` keys) take priority over stale current keys,
+    so the user's "Set as Default" preferences are always honoured.
+    """
     settings = QSettings("GV", "FirePro3D")
     for cat_def in _CATEGORIES:
         key = cat_def["key"]
-        vals = _read_category_from_settings(key, settings)
+        # Build overrides from default_* keys so they win over current keys
+        default_ov: dict = {}
+        for prop in ("color", "fill", "section", "section_pattern",
+                      "section_scale", "scale", "opacity", "visible", "font"):
+            dv = settings.value(f"display/{key}/default_{prop}")
+            if dv is not None:
+                default_ov[prop] = dv
+        vals = _read_category_from_settings(key, settings, overrides=default_ov)
+        # Write back so Display Manager shows these values
+        _write_category_to_settings(key, vals, settings)
         _apply_to_scene_items(scene, key, vals, respect_overrides=True)
+    settings.sync()
 
 
 def apply_default_display_settings(scene):
@@ -1946,7 +1978,8 @@ def apply_project_display_settings(scene, display_dict: dict):
     """Apply display settings loaded from a project file to all items.
 
     *display_dict* maps category key → {color, scale, opacity, visible, fill, font}.
-    Per-instance overrides stored on items take precedence.
+    User defaults (``default_*`` keys) take priority over project values,
+    so the user's "Set as Default" preferences are always honoured.
     Falls back to QSettings for any category not present in *display_dict*.
     """
     settings = QSettings("GV", "FirePro3D")
@@ -1954,9 +1987,18 @@ def apply_project_display_settings(scene, display_dict: dict):
     for cat_def in _CATEGORIES:
         key = cat_def["key"]
         proj = display_dict.get(key, {})
-        vals = _read_category_from_settings(key, settings, overrides=proj)
 
-        # Also update QSettings so Display Manager shows these values
+        # User defaults win over project-embedded values
+        merged = dict(proj)
+        for prop in ("color", "fill", "section", "section_pattern",
+                      "section_scale", "scale", "opacity", "visible", "font"):
+            user_default = settings.value(f"display/{key}/default_{prop}")
+            if user_default is not None:
+                merged[prop] = user_default
+
+        vals = _read_category_from_settings(key, settings, overrides=merged)
+
+        # Update QSettings so Display Manager shows these values
         _write_category_to_settings(key, vals, settings)
 
         _apply_to_scene_items(scene, key, vals, respect_overrides=True)

@@ -438,6 +438,10 @@ class LevelManager:
         for item in getattr(scene, "_roofs", []):
             _set_level_vis(item)
 
+        # ── Rooms ───────────────────────────────────────────────────────
+        for item in getattr(scene, "_rooms", []):
+            _set_level_vis(item)
+
         # ── Hatches ───────────────────────────────────────────────────────
         for item in getattr(scene, "_hatch_items", []):
             _set_level_vis(item)

@@ -118,6 +118,30 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         if self._boundary:
             self._rebuild()
 
+    # ── Z-range for view-depth filtering ────────────────────────────────
+
+    def z_range_mm(self) -> tuple[float, float] | None:
+        """Room spans from floor level to underside of ceiling slab."""
+        sc = self.scene()
+        lm = getattr(sc, "_level_manager", None) if sc else None
+        if lm is None:
+            return None
+        floor_lvl = lm.get(getattr(self, "level", None))
+        if floor_lvl is None:
+            return None
+        bot_z = floor_lvl.elevation
+        ceil_lvl = lm.get(getattr(self, "_ceiling_level", None))
+        if ceil_lvl is None:
+            top_z = bot_z + 3048.0  # 10ft default
+        else:
+            # Subtract ceiling slab thickness
+            slab_thickness = 0.0
+            for slab in getattr(sc, "_floor_slabs", []):
+                if getattr(slab, "level", None) == self._ceiling_level:
+                    slab_thickness = max(slab_thickness, slab._thickness_mm)
+            top_z = ceil_lvl.elevation - slab_thickness
+        return (bot_z, top_z)
+
     # ── Grip protocol (drawn by Model_View like all other geometry) ────
 
     def grip_points(self) -> list[QPointF]:
@@ -245,7 +269,8 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         return total
 
     def _ceiling_height_mm(self) -> float:
-        """Compute ceiling height from level elevations."""
+        """Compute ceiling height from level elevations, accounting for
+        the floor slab thickness at the ceiling level."""
         sc = self.scene()
         lm = getattr(sc, "_level_manager", None) if sc else None
         if lm is None:
@@ -254,7 +279,12 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         ceil_lvl = lm.get(self._ceiling_level)
         if floor_lvl is None or ceil_lvl is None:
             return 0.0
-        return ceil_lvl.elevation - floor_lvl.elevation
+        # Find the thickest floor slab on the ceiling level
+        slab_thickness = 0.0
+        for slab in getattr(sc, "_floor_slabs", []):
+            if getattr(slab, "level", None) == self._ceiling_level:
+                slab_thickness = max(slab_thickness, slab._thickness_mm)
+        return ceil_lvl.elevation - floor_lvl.elevation - slab_thickness
 
     # ── Sprinkler detection ──────────────────────────────────────────────
 

@@ -287,11 +287,40 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
             return sm.display_unit in (DisplayUnit.METRIC_MM, DisplayUnit.METRIC_M)
         return True  # default to metric when no scale manager
 
+    def _get_scene(self):
+        """Return the scene, checking fallbacks for template pipes."""
+        sc = self.scene() if callable(getattr(self, "scene", None)) else None
+        if sc is not None:
+            return sc
+        return getattr(self, "_scene_ref", None)
+
+    def _ceiling_elevation_str(self) -> str:
+        """Return the effective ceiling elevation (level minus slab thickness)."""
+        sc = self._get_scene()
+        lm = getattr(sc, "_level_manager", None) if sc else None
+        if lm is None:
+            return ""
+        lvl = lm.get(self.ceiling_level)
+        if lvl is None:
+            return ""
+        # Find thickest floor slab on the ceiling level
+        slab_thickness = 0.0
+        for slab in getattr(sc, "_floor_slabs", []):
+            if getattr(slab, "level", None) == self.ceiling_level:
+                slab_thickness = max(slab_thickness, slab._thickness_mm)
+        elev = lvl.elevation - slab_thickness
+        return f"({self._fmt(elev)})"
+
     def get_properties(self):
         props = self._properties.copy()
         # Format ceiling offset for display using project units
         props["Ceiling Offset"] = dict(props["Ceiling Offset"])
         props["Ceiling Offset"]["value"] = self._fmt(self.ceiling_offset)
+        # Annotate Ceiling Level with effective elevation
+        props["Ceiling Level"] = dict(props["Ceiling Level"])
+        ceil_str = self._ceiling_elevation_str()
+        if ceil_str:
+            props["Ceiling Level"]["suffix"] = ceil_str
         # Show diameter with Ø prefix; metric nominal sizes when metric display
         props["Diameter"] = dict(props["Diameter"])
         int_val = props["Diameter"]["value"]
@@ -359,14 +388,20 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
             self.set_property(key, meta["value"])
 
     def z_range_mm(self) -> tuple[float, float] | None:
-        """Return (z_bottom, z_top) spanning both endpoint elevations."""
-        z1 = getattr(self.node1, "z_pos", None) if self.node1 else None
-        z2 = getattr(self.node2, "z_pos", None) if self.node2 else None
-        if z1 is None and z2 is None:
+        """Return (z_bottom, z_top) spanning the full storey range of both nodes.
+
+        Uses the nodes' floor-to-ceiling range so the pipe is visible in
+        plan views even though the hanging z_pos is near the ceiling.
+        """
+        r1 = self.node1.z_range_mm() if self.node1 else None
+        r2 = self.node2.z_range_mm() if self.node2 else None
+        if r1 is None and r2 is None:
             return None
-        z1 = z1 if z1 is not None else z2
-        z2 = z2 if z2 is not None else z1
-        return (min(z1, z2), max(z1, z2))
+        if r1 is None:
+            return r2
+        if r2 is None:
+            return r1
+        return (min(r1[0], r2[0]), max(r1[1], r2[1]))
 
     def display_width_mm(self) -> float:
         """Return display line width in mm based on Line Type (Main/Branch)."""
