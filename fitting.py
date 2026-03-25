@@ -180,7 +180,8 @@ class Fitting():
                 return "wye"
         elif count == 4:
             # Cross is only valid when all 4 pipes form two perpendicular
-            # collinear pairs.  Use pipe_vectors (from junction outward).
+            # collinear pairs.  Vectors must point OUTWARD from the junction.
+            pipe_vectors = CAD_Math.get_outward_vectors(node, pipes)
             if len(pipe_vectors) == 4:
                 pairs_ok = False
                 for i in range(4):

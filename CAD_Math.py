@@ -65,6 +65,16 @@ class CAD_Math:
 
         return angle
     
+    @staticmethod
+    def get_outward_vectors(node, pipes):
+        """Return unit vectors pointing outward from *node* for each pipe."""
+        pos = node.scenePos()
+        vecs = []
+        for p in pipes:
+            other = p.node2.scenePos() if p.node1 is node else p.node1.scenePos()
+            vecs.append(CAD_Math.get_unit_vector(pos, other))
+        return vecs
+
     # ---------------------------------------------------------|
     # ----------- POINT TRANSFORMS (Sprint) -------------------|
     # ---------------------------------------------------------|
