@@ -1511,22 +1511,22 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
     # ── Auto-populate room with sprinklers ─────────────────────────────────
 
     def auto_populate_room(self, room, positions, sprinkler_record,
-                           level, ceiling_level, ceiling_offset,
+                           level, ceiling_level, sprinkler_offset,
                            design_density="0.10"):
         """Place sprinkler nodes at computed positions inside a room.
 
         Parameters
         ----------
         room : Room
-            The target room (used only for status message).
+            The target room.
         positions : list[QPointF]
             Scene-unit positions for each sprinkler.
         sprinkler_record : SprinklerRecord
             Database record to apply as template properties.
         level, ceiling_level : str
             Level names for the nodes.
-        ceiling_offset : float
-            Offset from ceiling in mm (negative = below).
+        sprinkler_offset : float
+            Offset from ceiling surface in mm (negative = below).
         design_density : str
             Design density string (gpm/ft²).
         """
@@ -1534,6 +1534,22 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             return
 
         self.push_undo_state()
+
+        # Compute the node ceiling_offset so the sprinkler ends up at
+        # the correct absolute Z:
+        #   ceiling_offset = sprinkler_offset - (ceil_level_elev - room_ceiling_elev)
+        # This accounts for dropped ceilings where the room ceiling is
+        # lower than the ceiling level.
+        ceiling_offset = sprinkler_offset
+        lm = self._level_manager
+        if lm is not None:
+            ceil_lvl = lm.get(ceiling_level)
+            if ceil_lvl is not None:
+                ceil_level_elev = ceil_lvl.elevation
+                zr = room.z_range_mm()
+                if zr is not None:
+                    room_ceiling_elev = max(zr)
+                    ceiling_offset = sprinkler_offset - (ceil_level_elev - room_ceiling_elev)
 
         # Build a temporary Sprinkler as template for set_properties
         from sprinkler import Sprinkler

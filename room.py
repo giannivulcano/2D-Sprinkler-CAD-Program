@@ -291,7 +291,12 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
 
     def _detect_sprinklers(self) -> list:
         """Return sprinklers whose nodes are inside the boundary polygon
-        AND within this room's Z range (floor to ceiling)."""
+        AND closest to this room's ceiling elevation.
+
+        When rooms are stacked (overlapping XY footprint), each sprinkler
+        is assigned to the room whose ceiling is nearest to the sprinkler's
+        Z position, preventing double-counting.
+        """
         sc = self.scene()
         if sc is None or not hasattr(sc, "sprinkler_system"):
             return []
@@ -303,6 +308,17 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         path.closeSubpath()
 
         zr = self.z_range_mm()
+        my_ceil = max(zr) if zr else None
+
+        # Collect all rooms that overlap this one's XY footprint
+        # to determine which room "owns" each sprinkler
+        other_rooms = []
+        for r in getattr(sc, "_rooms", []):
+            if r is self:
+                continue
+            r_zr = r.z_range_mm()
+            if r_zr is not None:
+                other_rooms.append(max(r_zr))
 
         result = []
         for node in sc.sprinkler_system.nodes:
@@ -310,14 +326,16 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
                 continue
             if not path.contains(node.scenePos()):
                 continue
-            # Check Z range — sprinkler must be within this room's
-            # floor-to-ceiling elevation range
-            if zr is not None:
-                z = getattr(node, "z_pos", None)
-                if z is not None:
-                    z_bot, z_top = min(zr), max(zr)
-                    if z < z_bot or z > z_top:
-                        continue
+            z = getattr(node, "z_pos", None)
+            if z is not None and my_ceil is not None:
+                # Check if another room's ceiling is closer to this sprinkler
+                my_dist = abs(z - my_ceil)
+                closer_exists = any(
+                    abs(z - other_ceil) < my_dist
+                    for other_ceil in other_rooms
+                )
+                if closer_exists:
+                    continue
             result.append(node.sprinkler)
         return result
 
