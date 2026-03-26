@@ -526,7 +526,12 @@ class LevelManager:
             z_mm = 0.0
             zr = item.z_range_mm() if hasattr(item, "z_range_mm") else None
             if zr is not None:
-                z_mm = zr[1]  # use top of Z-range
+                # Rooms use floor elevation (bottom) so they render below
+                # their ceiling slab.  All other items use top of Z-range.
+                if type(item).__name__ == "Room":
+                    z_mm = zr[0]
+                else:
+                    z_mm = zr[1]
             elif hasattr(item, "z_pos"):
                 z_mm = item.z_pos
             item.setZValue(z_mm * _Z_SCALE + cat_offset)
