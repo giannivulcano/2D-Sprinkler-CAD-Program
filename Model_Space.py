@@ -1568,8 +1568,14 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         count = 0
         for pt in positions:
-            node = self.add_node(pt.x(), pt.y())
-            # Override level and ceiling settings
+            # Always create a NEW node — don't reuse existing nodes at
+            # the same XY.  Stacked rooms need separate nodes at
+            # different Z positions for the same XY location.
+            node = Node(pt.x(), pt.y())
+            self.addItem(node)
+            self.sprinkler_system.add_node(node)
+            node.user_layer = self.active_user_layer
+            # Set level and ceiling settings
             node.level = level
             node.ceiling_level = ceiling_level
             node._properties["Ceiling Level"]["value"] = ceiling_level
