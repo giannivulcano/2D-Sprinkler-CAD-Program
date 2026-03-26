@@ -57,6 +57,7 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         self._points: list[QPointF] = [QPointF(p) for p in (points or [])]
         self._color = QColor(color) if isinstance(color, str) else QColor(color)
         self._thickness_mm: float = DEFAULT_THICKNESS_MM
+        self._level_offset_mm: float = 0.0  # vertical offset from level elevation
 
         self.init_displayable()
         self.name: str = ""
@@ -76,7 +77,7 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         lvl = lm.get(getattr(self, "level", None))
         if lvl is None:
             return None
-        top_z = lvl.elevation
+        top_z = lvl.elevation + self._level_offset_mm
         bot_z = top_z - self._thickness_mm
         return (bot_z, top_z)
 
@@ -117,6 +118,22 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         line_col = QColor(self._display_color) if self._display_color else self._color
         pen = QPen(line_col, 1)
         pen.setCosmetic(True)
+
+        # When this slab is within the plan view range, draw an opaque
+        # background fill first so it masks items below (walls on lower floors).
+        if getattr(self, "_is_occluding", False) and len(self._points) >= 3:
+            # Get scene background colour for the mask
+            sc = self.scene()
+            bg = QColor("#ffffff")  # fallback
+            if sc:
+                views = sc.views()
+                if views:
+                    vp_palette = views[0].viewport().palette()
+                    bg = vp_palette.color(vp_palette.ColorRole.Base)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(bg))
+            painter.drawPolygon(QPolygonF(self._points))
+
         painter.setPen(pen)
 
         if self._display_fill_color:
@@ -220,13 +237,15 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
 
     def get_properties(self) -> dict:
         return {
-            "Type":       {"type": "label",     "value": "Floor Slab"},
-            "Name":       {"type": "string",    "value": self.name},
-            "Level":      {"type": "level_ref", "value": self.level},
-            "Colour":     {"type": "color",     "value": self._color.name()},
-            "Thickness":  {"type": "dimension", "value": self._fmt(self._thickness_mm),
-                           "value_mm": self._thickness_mm},
-            "Points":     {"type": "label",     "value": str(len(self._points))},
+            "Type":          {"type": "label",     "value": "Floor Slab"},
+            "Name":          {"type": "string",    "value": self.name},
+            "Level":         {"type": "level_ref", "value": self.level},
+            "Level Offset":  {"type": "dimension", "value": self._fmt(self._level_offset_mm),
+                              "value_mm": self._level_offset_mm},
+            "Colour":        {"type": "color",     "value": self._color.name()},
+            "Thickness":     {"type": "dimension", "value": self._fmt(self._thickness_mm),
+                              "value_mm": self._thickness_mm},
+            "Points":        {"type": "label",     "value": str(len(self._points))},
         }
 
     def _parse_dim(self, value) -> float | None:
@@ -255,6 +274,10 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
             self.name = str(value)
         elif key == "Level":
             self.level = str(value)
+        elif key == "Level Offset":
+            parsed = self._parse_dim(value)
+            if parsed is not None:
+                self._level_offset_mm = parsed
         elif key == "Colour":
             self._color = QColor(value)
             self.update()
@@ -266,15 +289,18 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
     # ── Serialisation ────────────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
-        return {
-            "type":          "floor_slab",
-            "points":        [[p.x(), p.y()] for p in self._points],
-            "color":         self._color.name(),
-            "thickness_mm":  self._thickness_mm,
-            "level":         self.level,
-            "user_layer":    self.user_layer,
-            "name":          self.name,
+        d = {
+            "type":              "floor_slab",
+            "points":            [[p.x(), p.y()] for p in self._points],
+            "color":             self._color.name(),
+            "thickness_mm":      self._thickness_mm,
+            "level":             self.level,
+            "user_layer":        self.user_layer,
+            "name":              self.name,
         }
+        if self._level_offset_mm != 0.0:
+            d["level_offset_mm"] = self._level_offset_mm
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "FloorSlab":
@@ -288,6 +314,7 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         slab.level = data.get("level", DEFAULT_LEVEL)
         slab.user_layer = data.get("user_layer", DEFAULT_USER_LAYER)
         slab.name = data.get("name", "")
+        slab._level_offset_mm = data.get("level_offset_mm", 0.0)
         return slab
 
     # ── 3D mesh generation ───────────────────────────────────────────────────
@@ -301,12 +328,12 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         if len(self._points) < 3:
             return None
 
-        # Level elevation (mm)
+        # Level elevation (mm) + offset
         top_z = 0.0
         if level_manager is not None:
             lvl = level_manager.get(self.level)
             if lvl:
-                top_z = lvl.elevation
+                top_z = lvl.elevation + self._level_offset_mm
         bot_z = top_z - self._thickness_mm
 
         sc = self.scene()

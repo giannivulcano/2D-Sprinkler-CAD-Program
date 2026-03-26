@@ -560,6 +560,7 @@ class ElevationScene(QGraphicsScene):
     def rebuild(self):
         """Clear and re-project all entities from the model."""
         self.clear()
+        self._depth_items: list[tuple[float, list]] = []  # (depth, [items])
         self._project_level_datums()
         self._project_walls()
         self._project_pipes()
@@ -568,6 +569,25 @@ class ElevationScene(QGraphicsScene):
         self._project_roofs()
         self._project_gridlines()
         self._project_construction_geometry()
+        self._assign_depth_z_values()
+
+    def _register_depth_item(self, depth: float, *items):
+        """Register scene items at a given depth for unified Z assignment."""
+        self._depth_items.append((depth, list(items)))
+
+    def _assign_depth_z_values(self):
+        """Sort all depth-registered items farthest-first and assign Z-values.
+
+        Items at the same depth are drawn in registration order.
+        Farther items get lower Z (drawn first / behind).
+        """
+        self._depth_items.sort(key=lambda x: x[0])
+        z = -50.0
+        for depth, items in self._depth_items:
+            for item in items:
+                item.setZValue(z)
+                z += 0.01
+        self._depth_items = []
 
     # ── Walls ────────────────────────────────────────────────────────────
 
@@ -661,16 +681,17 @@ class ElevationScene(QGraphicsScene):
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
             wall_rects.append((depth, rect))
 
-        # Sort by depth: farthest first (lowest Z), closest last (highest Z)
-        wall_rects.sort(key=lambda x: x[0])
-        for i, (depth, rect) in enumerate(wall_rects):
-            rect.setZValue(-50 + i)  # closer walls get higher Z → drawn on top
+        for depth, rect in wall_rects:
             self.addItem(rect)
+            self._register_depth_item(depth, rect)
 
     # ── Pipes ────────────────────────────────────────────────────────────
 
     def _project_pipes(self):
         from constants import PIPE_COLORS as _PIPE_COLORS
+        d = self._direction
+        pipe_items: list[tuple[float, QGraphicsLineItem]] = []
+
         for pipe in self._ms.sprinkler_system.pipes:
             n1, n2 = pipe.node1, pipe.node2
             if n1 is None or n2 is None:
@@ -693,12 +714,32 @@ class ElevationScene(QGraphicsScene):
             line.setPen(pen)
             line.setData(_ROLE_SOURCE, pipe)
             line.setFlag(QGraphicsLineItem.GraphicsItemFlag.ItemIsSelectable, True)
-            line.setZValue(5)
+
+            # Depth for sorting
+            cx = (wx1 + wx2) / 2
+            cy = (wy1 + wy2) / 2
+            if d == "north":
+                depth = cy
+            elif d == "south":
+                depth = -cy
+            elif d == "east":
+                depth = cx
+            elif d == "west":
+                depth = -cx
+            else:
+                depth = cy
+            pipe_items.append((depth, line))
+
+        for depth, line in pipe_items:
             self.addItem(line)
+            self._register_depth_item(depth, line)
 
     # ── Sprinklers ───────────────────────────────────────────────────────
 
     def _project_sprinklers(self):
+        d = self._direction
+        spr_items: list[tuple[float, QGraphicsEllipseItem]] = []
+
         for node in self._ms.sprinkler_system.nodes:
             if not node.has_sprinkler():
                 continue
@@ -723,8 +764,22 @@ class ElevationScene(QGraphicsScene):
             ellipse.setBrush(QBrush())
             ellipse.setData(_ROLE_SOURCE, node)
             ellipse.setFlag(QGraphicsEllipseItem.GraphicsItemFlag.ItemIsSelectable, True)
-            ellipse.setZValue(10)
+
+            if d == "north":
+                depth = wy
+            elif d == "south":
+                depth = -wy
+            elif d == "east":
+                depth = wx
+            elif d == "west":
+                depth = -wx
+            else:
+                depth = wy
+            spr_items.append((depth, ellipse))
+
+        for depth, ellipse in spr_items:
             self.addItem(ellipse)
+            self._register_depth_item(depth, ellipse)
 
     # ── Floor slabs ──────────────────────────────────────────────────────
 
@@ -736,23 +791,57 @@ class ElevationScene(QGraphicsScene):
         dm_fill = QColor(props["fill"])
         dm_opacity = props["opacity"] / 100.0
 
+        d = self._direction
+        # Each entry: (depth, mask_rect, visible_rect)
+        slab_rects: list[tuple[float, QGraphicsRectItem, QGraphicsRectItem]] = []
+
+        # Background color for opaque mask
+        _t = th.detect()
+        bg = QColor(_t.canvas_bg)
+
         for slab in getattr(self._ms, "_floor_slabs", []):
-            z = self._level_z(getattr(slab, "level", DEFAULT_LEVEL))
+            z = self._level_z(getattr(slab, "level", DEFAULT_LEVEL)) + getattr(slab, "_level_offset_mm", 0.0)
             thickness = getattr(slab, "_thickness_mm", 150.0)
 
             pts = getattr(slab, "_points", [])
             if not pts:
                 continue
             h_vals = []
+            world_pts = []
             for pt in pts:
                 wx, wy = self._scene_to_world(pt.x(), pt.y())
+                world_pts.append((wx, wy))
                 h, _ = self._world_to_elev(wx, wy, 0)
                 h_vals.append(h)
             h_min, h_max = min(h_vals), max(h_vals)
 
+            # Compute depth (same convention as walls)
+            cx = sum(w[0] for w in world_pts) / len(world_pts)
+            cy = sum(w[1] for w in world_pts) / len(world_pts)
+            if d == "north":
+                depth = cy
+            elif d == "south":
+                depth = -cy
+            elif d == "east":
+                depth = cx
+            elif d == "west":
+                depth = -cx
+            else:
+                depth = cy
+
             v_top = -(z)
             v_bottom = -(z - thickness)
-            rect = QGraphicsRectItem(h_min, v_top, h_max - h_min, v_bottom - v_top)
+            width = h_max - h_min
+            height = v_bottom - v_top
+
+            # Opaque mask rect — hides items behind the slab
+            mask = QGraphicsRectItem(h_min, v_top, width, height)
+            mask.setPen(QPen(Qt.PenStyle.NoPen))
+            mask.setBrush(QBrush(bg))
+            mask.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+            # Visible slab rect with styled fill
+            rect = QGraphicsRectItem(h_min, v_top, width, height)
             pen = QPen(dm_color, 1)
             pen.setCosmetic(True)
             rect.setPen(pen)
@@ -760,8 +849,15 @@ class ElevationScene(QGraphicsScene):
             rect.setOpacity(dm_opacity)
             rect.setData(_ROLE_SOURCE, slab)
             rect.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-            rect.setZValue(-30)   # in front of walls (-50) so floor edges visible
+            slab_rects.append((depth, mask, rect))
+
+        for depth, mask, rect in slab_rects:
+            self.addItem(mask)
             self.addItem(rect)
+            # Register mask + visible rect at the same depth as walls;
+            # the unified sorter places them at the correct Z relative
+            # to walls at the same depth (mask first, then visible rect).
+            self._register_depth_item(depth, mask, rect)
 
     # ── Roofs ────────────────────────────────────────────────────────────
 

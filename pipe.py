@@ -90,6 +90,13 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
         self.ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
         self._display_scale: float = 1.0
 
+        # Per-node elevation for template placement
+        self.node1_ceiling_level: str = DEFAULT_LEVEL
+        self.node1_ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
+        self.node2_ceiling_level: str = DEFAULT_LEVEL
+        self.node2_ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
+        self._placement_phase: int = 0  # 0=before 1st click, 1=before 2nd click
+
         self.label = QGraphicsTextItem("", self)  # Child of pipe
 
         self.set_pipe_display()
@@ -236,8 +243,8 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
         snapped_end = self.snap_point_45_if_close(start, end)
         self.setLine(start.x(), start.y(), snapped_end.x(), snapped_end.y())
 
-        # Store the length
-        self.length = CAD_Math.get_vector_length(self.node1.scenePos(),self.node2.scenePos())
+        # Store the 2D scene-pixel length (used by label, get_length_ft, etc.)
+        self.length = CAD_Math.get_vector_length(self.node1.scenePos(), self.node2.scenePos())
 
         self.update_label()  # <- move here
 
@@ -330,12 +337,80 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
         else:
             props["Diameter"]["options"] = list(self._IMPERIAL_DIAMETERS)
             props["Diameter"]["value"] = self._INT_TO_IMPERIAL.get(int_val, int_val)
+        # Read-only 3D length in display units
+        z1 = self.node1.z_pos if self.node1 else 0.0
+        z2 = self.node2.z_pos if self.node2 else 0.0
+        dz = abs(z2 - z1)
+        sc = self._get_scene()
+        sm = getattr(sc, "scale_manager", None) if sc else None
+        if sm:
+            # Convert 2D scene-pixel length to real-world mm
+            if sm.is_calibrated:
+                horiz_mm = self.length / sm.pixels_per_mm
+            else:
+                horiz_mm = self.length  # uncalibrated: 1 scene unit ≈ 1 mm
+            length_mm = math.sqrt(horiz_mm ** 2 + dz ** 2)
+            length_str = sm.format_length(length_mm)
+        else:
+            length_mm = math.sqrt(self.length ** 2 + dz ** 2)
+            length_str = f"{length_mm:.1f} mm"
+        props["Length"] = {"type": "label", "value": length_str}
+
+        # Template node elevation sections (node1/node2 are None for templates)
+        if self.node1 is None and self.node2 is None:
+            # Remove pipe-level ceiling props — they're replaced by per-node ones
+            props.pop("Ceiling Level", None)
+            props.pop("Ceiling Offset", None)
+
+            phase = getattr(self, "_placement_phase", 0)
+            n1_ro = phase != 0
+            n2_ro = phase != 1
+
+            props["── Node 1 ──"] = {"type": "label", "value": ""}
+            props["N1 Ceiling Level"] = {
+                "type": "level_ref", "value": self.node1_ceiling_level,
+                "readonly": n1_ro,
+            }
+            props["N1 Ceiling Offset"] = {
+                "type": "string", "value": self._fmt(self.node1_ceiling_offset),
+                "readonly": n1_ro,
+            }
+            props["── Node 2 ──"] = {"type": "label", "value": ""}
+            props["N2 Ceiling Level"] = {
+                "type": "level_ref", "value": self.node2_ceiling_level,
+                "readonly": n2_ro,
+            }
+            props["N2 Ceiling Offset"] = {
+                "type": "string", "value": self._fmt(self.node2_ceiling_offset),
+                "readonly": n2_ro,
+            }
+
         return props
 
     def set_property(self, key, value):
         # Accept legacy names from old save files
-        if key in ("Elevation 1", "Elevation 2", "Line Weight"):
-            return  # discard old/removed properties
+        if key in ("Elevation 1", "Elevation 2", "Line Weight", "Length"):
+            return  # discard old/removed or read-only properties
+        # Per-node template ceiling properties
+        if key in ("N1 Ceiling Level", "N2 Ceiling Level"):
+            attr = "node1_ceiling_level" if key.startswith("N1") else "node2_ceiling_level"
+            setattr(self, attr, str(value))
+            return
+        if key in ("N1 Ceiling Offset", "N2 Ceiling Offset"):
+            attr = "node1_ceiling_offset" if key.startswith("N1") else "node2_ceiling_offset"
+            sm = self._get_scale_manager()
+            if isinstance(value, (int, float)):
+                setattr(self, attr, float(value))
+            elif sm:
+                parsed = sm.parse_dimension(str(value), sm.bare_number_unit())
+                if parsed is not None:
+                    setattr(self, attr, parsed)
+            else:
+                try:
+                    setattr(self, attr, float(value))
+                except (ValueError, TypeError):
+                    pass
+            return
         if key in ("Elevation", "Elevation Offset", "Ceiling Offset (in)"):
             key = "Ceiling Offset"
         if key == "Ceiling Offset":
@@ -386,6 +461,13 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
                 self._properties["Ceiling Offset"]["value"] = str(template.ceiling_offset)
                 continue
             self.set_property(key, meta["value"])
+        # Ensure pipe-level ceiling properties are copied even when
+        # get_properties() omits them (template mode replaces with N1/N2)
+        self.ceiling_level = template.ceiling_level
+        self._properties["Ceiling Level"]["value"] = template.ceiling_level
+        if self.ceiling_offset == DEFAULT_CEILING_OFFSET_MM:
+            self.ceiling_offset = template.ceiling_offset
+            self._properties["Ceiling Offset"]["value"] = str(template.ceiling_offset)
 
     def z_range_mm(self) -> tuple[float, float] | None:
         """Return (z_bottom, z_top) spanning the full storey range of both nodes.

@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, QSizePolicy,
-    QAbstractItemView,
+    QAbstractItemView, QMenu,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor, QBrush
 
 import theme as th
 from wall import WallSegment
@@ -74,6 +74,8 @@ class ModelBrowser(QWidget):
         )
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._tree)
 
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -155,6 +157,7 @@ class ModelBrowser(QWidget):
             item = QTreeWidgetItem(walls_root, [label])
             item.setData(0, _ROLE_ENTITY, id(wall))
             item.setToolTip(0, f"Level: {wall.level}  Layer: {wall.user_layer}")
+            self._style_hidden(item, wall)
 
         # -- Floors --
         slabs = getattr(self._scene, "_floor_slabs", [])
@@ -167,6 +170,7 @@ class ModelBrowser(QWidget):
             item.setData(0, _ROLE_ENTITY, id(slab))
             pts = len(slab.points) if hasattr(slab, "points") else 0
             item.setToolTip(0, f"Level: {slab.level}  Points: {pts}")
+            self._style_hidden(item, slab)
 
         # -- Roofs --
         roofs = getattr(self._scene, "_roofs", [])
@@ -179,6 +183,7 @@ class ModelBrowser(QWidget):
             item.setData(0, _ROLE_ENTITY, id(roof))
             pts = len(roof.points) if hasattr(roof, "points") else 0
             item.setToolTip(0, f"Level: {roof.level}  Type: {getattr(roof, '_roof_type', 'flat')}  Points: {pts}")
+            self._style_hidden(item, roof)
 
         # -- Doors --
         doors: list = []
@@ -191,6 +196,7 @@ class ModelBrowser(QWidget):
         for i, door in enumerate(doors, 1):
             item = QTreeWidgetItem(doors_root, [f"Door {i}"])
             item.setData(0, _ROLE_ENTITY, id(door))
+            self._style_hidden(item, door)
 
         # -- Windows --
         windows: list = []
@@ -203,6 +209,7 @@ class ModelBrowser(QWidget):
         for i, win in enumerate(windows, 1):
             item = QTreeWidgetItem(windows_root, [f"Window {i}"])
             item.setData(0, _ROLE_ENTITY, id(win))
+            self._style_hidden(item, win)
 
         # -- Pipes --
         pipes = list(getattr(self._scene, "sprinkler_system", None).pipes) \
@@ -216,6 +223,7 @@ class ModelBrowser(QWidget):
             item = QTreeWidgetItem(pipes_root, [label])
             item.setData(0, _ROLE_ENTITY, id(pipe))
             item.setToolTip(0, f"Level: {pipe.level}  Layer: {pipe.user_layer}")
+            self._style_hidden(item, pipe)
 
         # -- Sprinklers --
         sprinkler_nodes = [n for n in
@@ -234,6 +242,7 @@ class ModelBrowser(QWidget):
             item = QTreeWidgetItem(sprinklers_root, [label])
             item.setData(0, _ROLE_ENTITY, id(node))
             item.setToolTip(0, f"Level: {node.level}  Layer: {node.user_layer}")
+            self._style_hidden(item, node)
 
         # -- Gridlines --
         gridlines = getattr(self._scene, "_gridlines", [])
@@ -244,6 +253,7 @@ class ModelBrowser(QWidget):
                 lbl = getattr(gl, "_label_text", "?")
                 item = QTreeWidgetItem(gl_root, [f"Grid {lbl}"])
                 item.setData(0, _ROLE_ENTITY, id(gl))
+                self._style_hidden(item, gl)
 
         # -- Design Areas --
         design_areas = getattr(self._scene, "design_areas", [])
@@ -254,6 +264,7 @@ class ModelBrowser(QWidget):
                 name = da._properties.get("System Name", {}).get("value", f"Area {i}")
                 item = QTreeWidgetItem(da_root, [name])
                 item.setData(0, _ROLE_ENTITY, id(da))
+                self._style_hidden(item, da)
 
         # -- Water Supply --
         ws = getattr(self._scene, "water_supply_node", None)
@@ -262,6 +273,17 @@ class ModelBrowser(QWidget):
             ws_root.setFont(0, f_bold)
             item = QTreeWidgetItem(ws_root, ["Water Supply"])
             item.setData(0, _ROLE_ENTITY, id(ws))
+            self._style_hidden(item, ws)
+
+    # ── Helpers ─────────────────────────────────────────────────────────
+
+    _GREY = QBrush(QColor("#888888"))
+
+    @staticmethod
+    def _style_hidden(tree_item: QTreeWidgetItem, entity):
+        """Grey out the tree item if the entity is manually hidden."""
+        if getattr(entity, "_display_overrides", {}).get("visible") is False:
+            tree_item.setForeground(0, ModelBrowser._GREY)
 
     # ── Entity lookup ─────────────────────────────────────────────────────
 
@@ -342,3 +364,47 @@ class ModelBrowser(QWidget):
                         entity.mapToScene(br).boundingRect().adjusted(-50, -50, 50, 50),
                         Qt.AspectRatioMode.KeepAspectRatio,
                     )
+
+    def _on_context_menu(self, pos):
+        """Right-click context menu on tree items."""
+        if self._scene is None:
+            return
+        # Gather entities from selected tree items
+        entities = []
+        for tree_item in self._tree.selectedItems():
+            eid = tree_item.data(0, _ROLE_ENTITY)
+            if eid is not None:
+                entity = self._find_entity_by_id(eid)
+                if entity is not None:
+                    entities.append(entity)
+        if not entities:
+            return
+
+        menu = QMenu(self)
+
+        # Check if any selected entities are currently hidden
+        any_hidden = any(
+            getattr(e, "_display_overrides", {}).get("visible") is False
+            for e in entities
+        )
+        any_visible = any(
+            getattr(e, "_display_overrides", {}).get("visible") is not False
+            for e in entities
+        )
+
+        if any_visible:
+            act_hide = menu.addAction("Hide")
+            act_hide.triggered.connect(
+                lambda: (self._scene._hide_items(entities), self.refresh()))
+
+        if any_hidden:
+            act_show = menu.addAction("Show")
+            act_show.triggered.connect(
+                lambda: (self._scene._show_items(entities), self.refresh()))
+
+        menu.addSeparator()
+        act_show_all = menu.addAction("Show All Hidden")
+        act_show_all.triggered.connect(
+            lambda: (self._scene._show_all_hidden(), self.refresh()))
+
+        menu.exec(self._tree.viewport().mapToGlobal(pos))

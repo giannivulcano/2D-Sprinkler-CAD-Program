@@ -33,6 +33,14 @@ class CAD_Math:
         dx = p2.x() - p1.x()
         dy = p2.y() - p1.y()
         return math.hypot(dx, dy)
+
+    @staticmethod
+    def get_vector_length_3d(p1: QPointF, p2: QPointF, z1: float, z2: float):
+        """Return the 3D distance between two points with separate z values."""
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        dz = z2 - z1
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
     
     @staticmethod
     def get_angle_between_vectors(v1: QPointF, v2: QPointF, signed: bool = True) -> float:

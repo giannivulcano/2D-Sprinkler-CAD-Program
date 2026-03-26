@@ -662,6 +662,14 @@ class Model_View(QGraphicsView):
         if scene is None:
             return
 
+        # Let the scene handle entity-specific context menus first
+        scene_pos = self.mapToScene(event.pos())
+        target = scene._find_entity_at(scene_pos) if hasattr(scene, "_find_entity_at") else None
+        if target is not None:
+            # Delegate to scene's contextMenuEvent
+            super().contextMenuEvent(event)
+            return
+
         menu = QMenu(self)
         selected = scene.selectedItems()
         mode = getattr(scene, "mode", None)
@@ -681,6 +689,11 @@ class Model_View(QGraphicsView):
 
         # Selection-dependent actions
         if selected:
+            hide_act = menu.addAction("Hide")
+            hide_act.triggered.connect(lambda: scene._hide_items(list(selected)))
+            show_all_act = menu.addAction("Show All Hidden")
+            show_all_act.triggered.connect(scene._show_all_hidden)
+            menu.addSeparator()
             delete_act = menu.addAction("Delete")
             delete_act.triggered.connect(scene.delete_selected_items)
             copy_act = menu.addAction("Copy")
@@ -691,6 +704,9 @@ class Model_View(QGraphicsView):
             desel_act = menu.addAction("Deselect All")
             desel_act.triggered.connect(scene.clearSelection)
         else:
+            show_all_act = menu.addAction("Show All Hidden")
+            show_all_act.triggered.connect(scene._show_all_hidden)
+            menu.addSeparator()
             sel_all = menu.addAction("Select All")
             sel_all.triggered.connect(self._select_all_items)
 

@@ -1458,7 +1458,17 @@ class View3D(QWidget):
     def _show_context_menu(self, global_pos):
         """Show right-click context menu in the 3D view."""
         menu = QMenu(self)
-        has_sel = bool(self._3d_selected) or bool(self._scene.selectedItems())
+        selected = list(self._scene.selectedItems())
+        # Include 3D-only selections
+        for item in self._3d_selected:
+            if item not in selected:
+                selected.append(item)
+        has_sel = bool(selected)
+
+        hide_action = menu.addAction("Hide")
+        hide_action.setEnabled(has_sel)
+        show_all_action = menu.addAction("Show All Hidden")
+        menu.addSeparator()
         delete_action = menu.addAction("Delete")
         delete_action.setEnabled(has_sel)
         deselect_action = menu.addAction("Deselect All")
@@ -1468,7 +1478,13 @@ class View3D(QWidget):
         refresh_action = menu.addAction("Refresh")
 
         action = menu.exec(global_pos)
-        if action == delete_action:
+        if action == hide_action:
+            self._scene._hide_items(selected)
+            self.rebuild()
+        elif action == show_all_action:
+            self._scene._show_all_hidden()
+            self.rebuild()
+        elif action == delete_action:
             self.delete_selected()
         elif action == deselect_action:
             self._on_escape()
@@ -1574,38 +1590,71 @@ class View3D(QWidget):
         except RuntimeError:
             return
 
-        log.debug("_on_2d_selection_changed: %d items: %s",
-                  len(selected), [type(s).__name__ for s in selected])
-
         if not selected:
             self._highlight_mesh_selection(None)
+            self._plotter.render()
             return
 
-        positions = []
+        node_positions = []
+        pipe_cyls = []
         mesh_selected = []
         for item in selected:
             if isinstance(item, Node):
-                positions.append(self._node_to_3d(item))
+                node_positions.append(self._node_to_3d(item))
             elif isinstance(item, Pipe):
                 if item.node1 is not None and item.node2 is not None:
-                    mid = (self._node_to_3d(item.node1) + self._node_to_3d(item.node2)) / 2
-                    positions.append(mid)
+                    p1 = self._node_to_3d(item.node1)
+                    p2 = self._node_to_3d(item.node2)
+                    nom = item._properties.get("Diameter", {}).get("value", '2"Ø')
+                    od_in = _NOMINAL_OD_IN.get(nom, 2.375)
+                    radius = od_in * 25.4 / 2.0 * 1.15
+                    pipe_cyls.append((p1, p2, radius))
             elif isinstance(item, (WallSegment, FloorSlab)):
                 mesh_selected.append(item)
             elif hasattr(item, '_roof_type'):
                 mesh_selected.append(item)
+        hl_idx = 0
 
-        if positions:
-            pts = pv.PolyData(np.array(positions, dtype=np.float32))
+        if node_positions:
+            pts = pv.PolyData(np.array(node_positions, dtype=np.float32))
             sphere = pv.Sphere(radius=50.0, theta_resolution=8, phi_resolution=8)
             glyphs = pts.glyph(geom=sphere, scale=False, orient=False)
             actor = self._plotter.add_mesh(
                 glyphs, color=COL_HIGHLIGHT, opacity=0.85,
-                name="highlight",
+                name=f"_hl_{hl_idx}",
             )
             self._add_actor("highlight", actor)
+            hl_idx += 1
 
+        if pipe_cyls:
+            cyls = []
+            for p1, p2, radius in pipe_cyls:
+                length = float(np.linalg.norm(p2 - p1))
+                if length < 1e-6:
+                    continue
+                direction = (p2 - p1) / length
+                center = (p1 + p2) / 2.0
+                cyl = pv.Cylinder(
+                    center=center, direction=direction,
+                    radius=radius, height=length, resolution=16,
+                    capping=True,
+                )
+                cyls.append(cyl)
+            if cyls:
+                merged = cyls[0] if len(cyls) == 1 else pv.merge(cyls)
+                # Solid overlay + edge wireframe (same pattern as wall highlight)
+                actor = self._plotter.add_mesh(
+                    merged, color=COL_SEL_MESH, opacity=1.0,
+                    smooth_shading=True, name=f"_hl_{hl_idx}",
+                )
+                self._add_actor("highlight", actor)
+                hl_idx += 1
+                self._add_edge_actor(
+                    merged, "highlight",
+                    color=COL_SEL_EDGE, line_width=1.5,
+                )
         self._highlight_mesh_selection(mesh_selected)
+        self._plotter.render()
 
     # ------------------------------------------------------------------
     # Thermal radiation heatmap overlay

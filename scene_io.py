@@ -309,9 +309,15 @@ class SceneIOMixin:
             self._plan_view_manager.from_list(pv_data)
 
         # --- Nodes ---
+        # Create each node unconditionally — bypass find_nearby_node so that
+        # vertical pipes (same XY, different Z) keep distinct node objects.
         id_to_node: dict[int, Node] = {}
         for entry in payload.get("nodes", []):
-            node = self.add_node(entry["x"], entry["y"])
+            node = Node(entry["x"], entry["y"])
+            node.user_layer = self.active_user_layer
+            node.level = self.active_level
+            self.addItem(node)
+            self.sprinkler_system.add_node(node)
             id_to_node[entry["id"]] = node
             node.z_offset = entry.get("z_offset", entry.get("elevation", 0))
             node.user_layer = entry.get("user_layer", "0")
@@ -321,7 +327,6 @@ class SceneIOMixin:
                 node.ceiling_offset = entry["ceiling_offset_mm"]
             else:
                 node.ceiling_offset = entry.get("ceiling_offset", -2.0) * 25.4
-            node._properties["Level"]["value"] = node.level
             node._properties["Ceiling Level"]["value"] = node.ceiling_level
             node._properties["Ceiling Offset"]["value"] = str(node.ceiling_offset)
             if self._level_manager:

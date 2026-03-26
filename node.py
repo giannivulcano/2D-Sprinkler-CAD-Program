@@ -44,7 +44,6 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
 
         # Property panel support — shown for plain (non-sprinkler) nodes
         self._properties: dict = {
-            "Level":          {"type": "level_ref", "value": DEFAULT_LEVEL},
             "Ceiling Level":  {"type": "level_ref", "value": DEFAULT_LEVEL},
             "Ceiling Offset": {"type": "string", "value": str(DEFAULT_CEILING_OFFSET_MM)},
         }
@@ -66,8 +65,7 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
         if key in ("Elevation", "Elevation Offset", "Ceiling Offset"):
             key = "Ceiling Offset"
         if key == "Level":
-            self._properties[key]["value"] = str(value)
-            self.level = str(value)
+            self.level = str(value)  # attribute only, not in _properties
         elif key == "Ceiling Level":
             self._properties[key]["value"] = str(value)
             self.ceiling_level = str(value)
@@ -109,22 +107,9 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
         self.z_pos = lvl.elevation + self.ceiling_offset  # both mm
 
     def z_range_mm(self) -> tuple[float, float] | None:
-        """Node spans from its floor level to its ceiling level elevation.
-
-        This ensures pipes/nodes on a floor are visible in that floor's
-        plan view even though their z_pos (hanging point) may be near
-        the ceiling.
-        """
-        scene = self.scene()
-        lm = getattr(scene, "_level_manager", None) if scene else None
-        if lm is None:
-            z = getattr(self, "z_pos", None)
-            return (z, z) if z is not None else None
-        floor_lvl = lm.get(self.level)
-        ceil_lvl = lm.get(self.ceiling_level)
-        bot = floor_lvl.elevation if floor_lvl else 0.0
-        top = ceil_lvl.elevation if ceil_lvl else bot + 3048.0
-        return (bot, top)
+        """Node occupies a single elevation point at its z_pos."""
+        z = getattr(self, "z_pos", None)
+        return (z, z) if z is not None else None
 
     # -------------------------------------------------------------------------
     # Sprinkler helpers

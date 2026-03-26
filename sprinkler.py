@@ -128,7 +128,6 @@ class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
                 self._load_graphic(svg_path)
         elif key == "Level" and self.node is not None:
             self.node.level = str(value)
-            self.node._properties["Level"]["value"] = str(value)
         elif key == "Ceiling Level" and self.node is not None:
             self.node.ceiling_level = str(value)
             self.node._properties["Ceiling Level"]["value"] = str(value)

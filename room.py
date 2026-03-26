@@ -343,6 +343,18 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
             return f"{cum:.1f} m³"
         return f"{mm3:.0f} mm³"
 
+    # ── Hit-test (only the label tag is clickable) ─────────────────────
+
+    def shape(self) -> QPainterPath:
+        """Only the room tag label area is selectable, not the full polygon."""
+        path = QPainterPath()
+        if self._label_bg is not None and self._label_bg.isVisible():
+            path.addRect(self._label_bg.rect())
+        elif self._label.isVisible():
+            path.addRect(self._label.mapRectToParent(
+                self._label.boundingRect()))
+        return path
+
     # ── Paint ────────────────────────────────────────────────────────────
 
     def paint(self, painter, option, widget=None):

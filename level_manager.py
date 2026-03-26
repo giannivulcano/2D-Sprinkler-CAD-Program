@@ -32,7 +32,8 @@ CROSS_LEVEL_OPACITY = 0.50  # opacity for items from other levels shown via Z-ra
 
 def _apply_z_filter(item, view_height, view_depth):
     """Hide *item* if its Z-range is entirely outside the view range,
-    and flag it as section-cut if it straddles *view_height*."""
+    and flag it as section-cut if it straddles *view_height*.
+    """
     fn = getattr(item, "z_range_mm", None)
     if fn is None:
         return  # no Z data — keep current visibility
@@ -323,6 +324,23 @@ class LevelManager:
         active = active_level or getattr(scene, "active_level", DEFAULT_LEVEL)
         lvl_map = {l.name: l for l in self._levels}
         has_view_range = (view_height is not None and view_depth is not None)
+
+        # Flag floor slabs that act as occluding masks within the view range.
+        # These slabs are raised above walls/pipes so their opaque fill
+        # visually masks items below them (like looking down through a floor).
+        for slab in getattr(scene, "_floor_slabs", []):
+            slab._is_occluding = False
+            slab.setZValue(-80)  # default: behind everything
+        if has_view_range:
+            for slab in getattr(scene, "_floor_slabs", []):
+                zr = slab.z_range_mm() if hasattr(slab, "z_range_mm") else None
+                if zr is None:
+                    continue
+                slab_top = zr[1]
+                if view_depth < slab_top <= view_height:
+                    slab._is_occluding = True
+                    # Raise above walls(-50)/pipes(5) but below nodes(10)
+                    slab.setZValue(0)
 
         def _set_level_vis(item):
             # Reset section-cut flag

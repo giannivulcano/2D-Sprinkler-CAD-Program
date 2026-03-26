@@ -580,6 +580,13 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self.current_template = template
             if template:
                 template._scene_ref = self  # so template can access level_manager
+                if mode == "pipe":
+                    template._placement_phase = 0
+                    # Sync per-node defaults from pipe's ceiling properties
+                    template.node1_ceiling_level = template.ceiling_level
+                    template.node1_ceiling_offset = template.ceiling_offset
+                    template.node2_ceiling_level = template.ceiling_level
+                    template.node2_ceiling_offset = template.ceiling_offset
                 self.requestPropertyUpdate.emit(template)
         else:
             self.current_template = None
@@ -861,7 +868,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             node.user_layer = self.active_user_layer
             node.level = self.active_level
             node.ceiling_level = self.active_level
-            node._properties["Level"]["value"] = self.active_level
+
             node._properties["Ceiling Level"]["value"] = self.active_level
             # Compute z_pos from ceiling level elevation + offset
             if self._level_manager:
@@ -943,7 +950,30 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         # Propagate the pipe's ceiling properties to both endpoint nodes
         # so their 3D elevation matches what the user set on the template.
         # Skip during load — nodes already have authoritative ceiling data.
-        if _propagate_ceiling:
+        if _propagate_ceiling and template is not None:
+            # Use per-node ceiling values if available (template placement)
+            for node, lvl_attr, off_attr in (
+                (n1, "node1_ceiling_level", "node1_ceiling_offset"),
+                (n2, "node2_ceiling_level", "node2_ceiling_offset"),
+            ):
+                if node is None:
+                    continue
+                c_lvl = getattr(template, lvl_attr, None)
+                c_off = getattr(template, off_attr, None)
+                if c_lvl is None:
+                    c_lvl = pipe._properties["Ceiling Level"]["value"]
+                if c_off is None:
+                    try:
+                        c_off = float(pipe._properties["Ceiling Offset"]["value"])
+                    except (ValueError, TypeError):
+                        c_off = -2.0
+                node.ceiling_level = c_lvl
+                node._properties["Ceiling Level"]["value"] = c_lvl
+                node.ceiling_offset = c_off
+                node._properties["Ceiling Offset"]["value"] = str(c_off)
+                node._recompute_z_pos()
+        elif _propagate_ceiling:
+            # No template — fallback to pipe's single ceiling values
             ceiling_lvl = pipe._properties["Ceiling Level"]["value"]
             try:
                 ceiling_off = float(pipe._properties["Ceiling Offset"]["value"])
@@ -1200,22 +1230,34 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     # ── Vertical pipe helpers ─────────────────────────────────────────────
 
-    def _compute_template_z_pos(self, template) -> float | None:
-        """Compute the z_pos (mm) that a template pipe would impose."""
-        ceiling_lvl_name = template._properties.get(
-            "Ceiling Level", {}
-        ).get("value")
+    def _compute_template_z_pos(self, template, node_idx: int = 1) -> float | None:
+        """Compute the z_pos (mm) that a template pipe would impose.
+
+        *node_idx* selects which endpoint: 1 for start node, 2 for end node.
+        Uses per-node ceiling attributes when available, falling back to the
+        pipe-level Ceiling Level / Ceiling Offset properties.
+        """
+        if node_idx == 1:
+            ceiling_lvl_name = getattr(template, "node1_ceiling_level", None)
+            offset = getattr(template, "node1_ceiling_offset", None)
+        else:
+            ceiling_lvl_name = getattr(template, "node2_ceiling_level", None)
+            offset = getattr(template, "node2_ceiling_offset", None)
+        # Fallback to pipe-level properties
+        if not ceiling_lvl_name:
+            ceiling_lvl_name = template._properties.get(
+                "Ceiling Level", {}).get("value")
+        if offset is None:
+            try:
+                offset = float(template._properties.get(
+                    "Ceiling Offset", {}).get("value", DEFAULT_CEILING_OFFSET_MM))
+            except (ValueError, TypeError):
+                offset = DEFAULT_CEILING_OFFSET_MM
         if not ceiling_lvl_name or not self._level_manager:
             return None
         lvl = self._level_manager.get(ceiling_lvl_name)
         if lvl is None:
             return None
-        try:
-            offset = float(
-                template._properties.get("Ceiling Offset", {}).get("value", DEFAULT_CEILING_OFFSET_MM)
-            )
-        except (ValueError, TypeError):
-            offset = DEFAULT_CEILING_OFFSET_MM
         return lvl.elevation + offset
 
     def _make_intermediate_node(self, existing_node, template):
@@ -1230,7 +1272,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         intermediate = Node(ex, ey)
         intermediate.user_layer = self.active_user_layer
         intermediate.level = self.active_level
-        intermediate._properties["Level"]["value"] = self.active_level
 
         ceiling_lvl = template._properties["Ceiling Level"]["value"]
         try:
@@ -1249,6 +1290,36 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self.addItem(intermediate)
         self.sprinkler_system.add_node(intermediate)
         return intermediate
+
+    def _make_intermediate_node_for_n2(self, existing_node, template):
+        """Create a node at *existing_node*'s XY using template's Node 2 ceiling.
+
+        Same as ``_make_intermediate_node`` but reads from the per-node
+        ``node2_ceiling_level`` / ``node2_ceiling_offset`` attributes.
+        """
+        ex = existing_node.scenePos().x()
+        ey = existing_node.scenePos().y()
+
+        node = Node(ex, ey)
+        node.user_layer = self.active_user_layer
+        node.level = self.active_level
+
+        ceiling_lvl = getattr(template, "node2_ceiling_level",
+                              template._properties["Ceiling Level"]["value"])
+        ceiling_off = getattr(template, "node2_ceiling_offset",
+                              template.ceiling_offset)
+        node.ceiling_level = ceiling_lvl
+        node._properties["Ceiling Level"]["value"] = ceiling_lvl
+        node.ceiling_offset = ceiling_off
+        node._properties["Ceiling Offset"]["value"] = str(ceiling_off)
+        if self._level_manager:
+            lvl = self._level_manager.get(ceiling_lvl)
+            if lvl:
+                node.z_pos = lvl.elevation + ceiling_off
+
+        self.addItem(node)
+        self.sprinkler_system.add_node(node)
+        return node
 
     def _create_vertical_connection(self, start_node, existing_end_node, template):
         """Insert an intermediate node + vertical pipe + horizontal pipe.
@@ -1281,6 +1352,88 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         start_node.fitting.update()
         existing_end_node.fitting.update()
         intermediate.fitting.update()
+
+    def _find_or_split_vertical_at_z(self, xy_pos: QPointF,
+                                      target_z: float,
+                                      template) -> "Node | None":
+        """Find an existing node or split a vertical pipe at *target_z* near *xy_pos*.
+
+        Search order:
+        1. Existing node at this XY whose z_pos matches *target_z*.
+        2. Vertical pipe at this XY whose Z range spans *target_z* — split it.
+
+        Returns the node at *target_z*, or ``None`` if nothing suitable exists.
+        """
+        if target_z is None:
+            return None
+        snap_r = self.SNAP_RADIUS
+        # 1. Existing node at matching XY and Z
+        for node in self.sprinkler_system.nodes:
+            if node.distance_to(xy_pos.x(), xy_pos.y()) <= snap_r:
+                if abs(node.z_pos - target_z) < 0.5:
+                    return node
+        # 2. Vertical pipe spanning target_z
+        for pipe in self.sprinkler_system.pipes:
+            if not pipe.node1 or not pipe.node2:
+                continue
+            if not pipe._is_vertical():
+                continue
+            pipe_xy = pipe.node1.scenePos()
+            dx = pipe_xy.x() - xy_pos.x()
+            dy = pipe_xy.y() - xy_pos.y()
+            if (dx * dx + dy * dy) > snap_r * snap_r:
+                continue
+            z_lo = min(pipe.node1.z_pos, pipe.node2.z_pos)
+            z_hi = max(pipe.node1.z_pos, pipe.node2.z_pos)
+            if z_lo + 0.5 < target_z < z_hi - 0.5:
+                return self._split_vertical_pipe(pipe, target_z, template)
+        return None
+
+    def _split_vertical_pipe(self, pipe, target_z: float, template) -> "Node":
+        """Split a vertical pipe at *target_z*, returning the new mid-node.
+
+        Creates a new node at the pipe's XY with the template's ceiling
+        properties (so z_pos == target_z), then replaces the original pipe
+        with two shorter vertical pipes.
+        """
+        xy = pipe.node1.scenePos()
+        mid = Node(xy.x(), xy.y())
+        mid.user_layer = self.active_user_layer
+        mid.level = self.active_level
+
+        ceiling_lvl = template._properties["Ceiling Level"]["value"]
+        mid.ceiling_level = ceiling_lvl
+        mid._properties["Ceiling Level"]["value"] = ceiling_lvl
+        mid.ceiling_offset = template.ceiling_offset
+        mid._properties["Ceiling Offset"]["value"] = str(template.ceiling_offset)
+        mid.z_pos = target_z
+
+        self.addItem(mid)
+        self.sprinkler_system.add_node(mid)
+
+        # Create two replacement vertical pipes preserving the original's properties
+        node_a = pipe.node1
+        node_b = pipe.node2
+        for (na, nb) in ((node_a, mid), (mid, node_b)):
+            seg = Pipe(na, nb)
+            seg.user_layer = pipe.user_layer
+            seg.level = pipe.level
+            for key in ("Diameter", "Schedule", "C-Factor",
+                        "Material", "Colour", "Phase", "Line Type"):
+                seg._properties[key]["value"] = pipe._properties[key]["value"]
+            seg.ceiling_level = pipe.ceiling_level
+            seg.ceiling_offset = pipe.ceiling_offset
+            seg._properties["Ceiling Level"]["value"] = pipe.ceiling_level
+            seg._properties["Ceiling Offset"]["value"] = str(pipe.ceiling_offset)
+            self.sprinkler_system.add_pipe(seg)
+            self.addItem(seg)
+            seg.set_pipe_display()
+
+        self.delete_pipe(pipe)
+        mid.fitting.update()
+        node_a.fitting.update()
+        node_b.fitting.update()
+        return mid
 
     # ── End vertical pipe helpers ─────────────────────────────────────────
 
@@ -1390,7 +1543,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             node = self.add_node(pt.x(), pt.y())
             # Override level and ceiling settings
             node.level = level
-            node._properties["Level"]["value"] = level
             node.ceiling_level = ceiling_level
             node._properties["Ceiling Level"]["value"] = ceiling_level
             node.ceiling_offset = ceiling_offset
@@ -2150,7 +2302,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     node.ceiling_offset = entry["ceiling_offset_mm"]
                 else:
                     node.ceiling_offset = entry.get("ceiling_offset", -2.0) * 25.4  # old inches → mm
-                node._properties["Level"]["value"] = node.level
                 node._properties["Ceiling Level"]["value"] = node.ceiling_level
                 node._properties["Ceiling Offset"]["value"] = str(node.ceiling_offset)
                 if self._level_manager:
@@ -4013,60 +4164,159 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self._show_status(
                 f"Chamfer distance: {value:.1f}  Press Enter to commit", timeout=0)
 
-    def complete_confirmation(self, action_id: str, accepted: bool):
-        """Handle result from a confirmation dialog shown by main.py."""
-        if action_id == "mirror_delete" and accepted:
+    def complete_confirmation(self, action_id: str, result: str):
+        """Handle result from a confirmation dialog shown by main.py.
+
+        *result* is ``"accepted"``/``"rejected"`` for legacy Yes/No dialogs,
+        or ``"riser"``/``"match"``/``"template"`` for elevation-mismatch dialogs.
+        """
+        if action_id == "mirror_delete" and result == "accepted":
             for item in list(self._selected_items or self.selectedItems()):
                 self._delete_single_item(item)
             self.push_undo_state()
+
         elif action_id == "elev_mismatch_start":
             self._pending_confirm_data = getattr(self, "_pending_confirm_data", {})
             data = self._pending_confirm_data.pop("elev_start", None)
-            if data and accepted:
-                start_node = data["start_node"]
-                template = data["template"]
-                intermediate = self._make_intermediate_node(start_node, template)
-                vert = Pipe(start_node, intermediate)
-                vert.user_layer = self.active_user_layer
-                vert.level = self.active_level
-                for key in ("Diameter", "Schedule", "C-Factor",
-                            "Material", "Colour", "Phase"):
-                    vert._properties[key]["value"] = template._properties[key]["value"]
-                self.sprinkler_system.add_pipe(vert)
-                self.addItem(vert)
-                vert.set_pipe_display()
-                self.node_start_pos = intermediate
-            elif data and not accepted:
-                # Update template to match node elevation
-                start_node = data["start_node"]
-                template = data["template"]
-                template.ceiling_level = start_node.ceiling_level
-                template.ceiling_offset = start_node.ceiling_offset
+            if not data:
+                return
+            start_node = data["start_node"]
+            template = data["template"]
+
+            if result == "riser":
+                # Create vertical riser, checking for overlap first
+                xy = start_node.scenePos()
+                template_z = self._compute_template_z_pos(template, node_idx=1)
+                split_node = self._find_or_split_vertical_at_z(
+                    xy, template_z, template) if template_z is not None else None
+                if split_node is not None:
+                    # Reuse existing / split node — no new vertical pipe needed
+                    self.node_start_pos = split_node
+                else:
+                    intermediate = self._make_intermediate_node(start_node, template)
+                    vert = Pipe(start_node, intermediate)
+                    vert.user_layer = self.active_user_layer
+                    vert.level = self.active_level
+                    for key in ("Diameter", "Schedule", "C-Factor",
+                                "Material", "Colour", "Phase"):
+                        vert._properties[key]["value"] = template._properties[key]["value"]
+                    self.sprinkler_system.add_pipe(vert)
+                    self.addItem(vert)
+                    vert.set_pipe_display()
+                    self.node_start_pos = intermediate
+                self.instructionChanged.emit("Pick end node")
+
+            elif result == "match":
+                # Place pipe at existing node's elevation
+                template.set_property("Ceiling Level", start_node.ceiling_level)
+                template.set_property("Ceiling Offset", start_node.ceiling_offset)
                 self.requestPropertyUpdate.emit(template)
+                self.node_start_pos = start_node
+                self.instructionChanged.emit("Pick end node")
+
+            elif result == "template":
+                # Keep template elevation; find/split existing geometry at that Z
+                xy = start_node.scenePos()
+                template_z = self._compute_template_z_pos(template, node_idx=1)
+                target = self._find_or_split_vertical_at_z(
+                    xy, template_z, template) if template_z is not None else None
+                if target is not None:
+                    self.node_start_pos = target
+                else:
+                    # No existing geometry — create standalone node at template Z
+                    self.node_start_pos = self._make_intermediate_node(
+                        start_node, template)
+                self.instructionChanged.emit("Pick end node")
+
         elif action_id == "elev_mismatch_end":
             self._pending_confirm_data = getattr(self, "_pending_confirm_data", {})
             data = self._pending_confirm_data.pop("elev_end", None)
-            if data and accepted:
-                end_node = data["end_node"]
-                template = data["template"]
-                intermediate = self._make_intermediate_node(end_node, template)
-                vert = Pipe(intermediate, end_node)
-                vert.user_layer = self.active_user_layer
-                vert.level = self.active_level
-                for key in ("Diameter", "Schedule", "C-Factor",
-                            "Material", "Colour", "Phase"):
-                    vert._properties[key]["value"] = template._properties[key]["value"]
-                self.sprinkler_system.add_pipe(vert)
-                self.addItem(vert)
-                vert.set_pipe_display()
-            elif data and not accepted:
-                end_node = data["end_node"]
-                template = data["template"]
-                template.ceiling_level = end_node.ceiling_level
-                template.ceiling_offset = end_node.ceiling_offset
+            if not data:
+                return
+            start_node = data["start_node"]
+            end_node = data["end_node"]
+            template = data["template"]
+
+            if result == "riser":
+                # Create vertical riser, checking for overlap first
+                xy = end_node.scenePos()
+                template_z = self._compute_template_z_pos(template, node_idx=2)
+                split_node = self._find_or_split_vertical_at_z(
+                    xy, template_z, template) if template_z is not None else None
+                if split_node is not None:
+                    # Reuse existing / split node — connect horizontal pipe to it
+                    intermediate = split_node
+                else:
+                    intermediate = self._make_intermediate_node(end_node, template)
+                    vert = Pipe(intermediate, end_node)
+                    vert.user_layer = self.active_user_layer
+                    vert.level = self.active_level
+                    for key in ("Diameter", "Schedule", "C-Factor",
+                                "Material", "Colour", "Phase"):
+                        vert._properties[key]["value"] = template._properties[key]["value"]
+                    self.sprinkler_system.add_pipe(vert)
+                    self.addItem(vert)
+                    vert.set_pipe_display()
+                # Place the horizontal pipe to the intermediate node
+                extended = self._try_extend_collinear(
+                    start_node, intermediate, template)
+                if not extended:
+                    self.add_pipe(start_node, intermediate, template)
+                    start_node.fitting.update()
+                    intermediate.fitting.update()
+                    self._convert_45_elbow_to_wye(start_node, template)
+                self.node_start_pos = intermediate
+                self._pipe_node_was_new = False
+                self.push_undo_state()
+                self.instructionChanged.emit(
+                    "Pick next node (Esc/double-click to finish)")
+
+            elif result == "match":
+                # Place pipe at existing node's elevation
+                template.set_property("Ceiling Level", end_node.ceiling_level)
+                template.set_property("Ceiling Offset", end_node.ceiling_offset)
                 self.requestPropertyUpdate.emit(template)
+                extended = self._try_extend_collinear(
+                    start_node, end_node, template)
+                if not extended:
+                    self.add_pipe(start_node, end_node, template)
+                    start_node.fitting.update()
+                    end_node.fitting.update()
+                    self._convert_45_elbow_to_wye(start_node, template)
+                self.node_start_pos = end_node
+                self._pipe_node_was_new = False
+                self.push_undo_state()
+                self.instructionChanged.emit(
+                    "Pick next node (Esc/double-click to finish)")
+
+            elif result == "template":
+                # Keep template elevation; find/split existing geometry at that Z
+                xy = end_node.scenePos()
+                template_z = self._compute_template_z_pos(template, node_idx=2)
+                target = self._find_or_split_vertical_at_z(
+                    xy, template_z, template) if template_z is not None else None
+                if target is None:
+                    target = self._make_intermediate_node(end_node, template)
+                # Place horizontal pipe to the target node
+                extended = self._try_extend_collinear(
+                    start_node, target, template)
+                if not extended:
+                    self.add_pipe(start_node, target, template)
+                    start_node.fitting.update()
+                    target.fitting.update()
+                    self._convert_45_elbow_to_wye(start_node, template)
+                self.node_start_pos = target
+                self._pipe_node_was_new = False
+                self.push_undo_state()
+                self.instructionChanged.emit(
+                    "Pick next node (Esc/double-click to finish)")
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.RightButton:
+            # Don't pass right-click to base — it deselects items.
+            # contextMenuEvent handles right-click menus separately.
+            event.accept()
+            return
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
@@ -4192,7 +4442,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
             # Check elevation mismatch on pre-existing or pipe-split nodes
             if _check_elevation and template is not None:
-                template_z = self._compute_template_z_pos(template)
+                template_z = self._compute_template_z_pos(template, node_idx=1)
                 if template_z is not None and abs(start_node.z_pos - template_z) > 0.01:
                     if not hasattr(self, "_pending_confirm_data"):
                         self._pending_confirm_data = {}
@@ -4202,13 +4452,22 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                         "elev_mismatch_start",
                         "Elevation Mismatch",
                         f"Start node is at elevation {start_node.z_pos:.1f} mm "
-                        f"but the template targets {template_z:.1f} mm.\n\n"
-                        "Create a vertical connection (riser/drop)?")
+                        f"but the template targets {template_z:.1f} mm.")
                     # Result handled by complete_confirmation(); flow resumes
                     # with start_node potentially replaced by intermediate
                     return
 
             self.node_start_pos = start_node
+            # Transition to phase 1: lock Node 1, allow Node 2 editing
+            if template is not None:
+                # Adopt start node's elevation for Node 1
+                template.node1_ceiling_level = start_node.ceiling_level
+                template.node1_ceiling_offset = start_node.ceiling_offset
+                # Default Node 2 to match Node 1 (horizontal pipe default)
+                template.node2_ceiling_level = start_node.ceiling_level
+                template.node2_ceiling_offset = start_node.ceiling_offset
+                template._placement_phase = 1
+                self.requestPropertyUpdate.emit(template)
             self.instructionChanged.emit("Pick end node")
         else:
             start_pos   = self.node_start_pos.scenePos()
@@ -4261,24 +4520,35 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 end_node = self.find_or_create_node(snapped_end.x(), snapped_end.y())
                 _check_end_elev = (existing_end is not None)
 
-            # Block zero-length same-node pipe
+            # Block zero-length same-node pipe — unless template specifies
+            # a different elevation for Node 2 (vertical pipe placement)
             if end_node is self.node_start_pos:
-                return  # wait for valid second click
+                if template is not None:
+                    z1 = self._compute_template_z_pos(template, node_idx=1)
+                    z2 = self._compute_template_z_pos(template, node_idx=2)
+                    if z1 is not None and z2 is not None and abs(z1 - z2) > 0.5:
+                        # Create a new node at same XY with Node 2's elevation
+                        end_node = self._make_intermediate_node_for_n2(
+                            self.node_start_pos, template)
+                    else:
+                        return  # truly same position — wait for valid click
+                else:
+                    return
 
             # Detect elevation mismatch on an existing or pipe-split end node
             if _check_end_elev and template is not None:
-                template_z = self._compute_template_z_pos(template)
+                template_z = self._compute_template_z_pos(template, node_idx=2)
                 if template_z is not None and abs(end_node.z_pos - template_z) > 0.01:
                     if not hasattr(self, "_pending_confirm_data"):
                         self._pending_confirm_data = {}
                     self._pending_confirm_data["elev_end"] = {
+                        "start_node": self.node_start_pos,
                         "end_node": end_node, "template": template}
                     self.confirmRequested.emit(
                         "elev_mismatch_end",
                         "Elevation Mismatch",
                         f"The target node is at elevation {end_node.z_pos:.1f} mm "
-                        f"but the template targets {template_z:.1f} mm.\n\n"
-                        "Create a vertical connection (riser/drop)?")
+                        f"but the template targets {template_z:.1f} mm.")
                     return
 
             # ── Collinear extension check ─────────────────────────────
@@ -4298,6 +4568,15 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self.node_start_pos = end_node
             self._pipe_node_was_new = False
             self.push_undo_state()
+            # Update template: Node 1 adopts end node's elevation for next segment
+            if template is not None:
+                template.node1_ceiling_level = end_node.ceiling_level
+                template.node1_ceiling_offset = end_node.ceiling_offset
+                # Default Node 2 to match for horizontal continuation
+                template.node2_ceiling_level = end_node.ceiling_level
+                template.node2_ceiling_offset = end_node.ceiling_offset
+                template._placement_phase = 1
+                self.requestPropertyUpdate.emit(template)
             self.instructionChanged.emit("Pick next node (Esc/double-click to finish)")
 
     def _press_set_scale(self, event, pos, snapped, item_under, node_under, pipe_under):
@@ -6095,40 +6374,11 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         menu = QMenu()
         selected = self.selectedItems()
 
-        # ── Move to Level submenu ──
-        if self._level_manager:
-            move_menu = menu.addMenu("Move to Level")
-            for lvl in self._level_manager.levels:
-                act = move_menu.addAction(lvl.name)
-                act.triggered.connect(
-                    lambda checked, ln=lvl.name: self._move_selection_to_level(ln)
-                )
-
-            # ── Copy to Level submenu ──
-            copy_menu = menu.addMenu("Copy to Level")
-            for lvl in self._level_manager.levels:
-                act = copy_menu.addAction(lvl.name)
-                act.triggered.connect(
-                    lambda checked, ln=lvl.name: self.copy_items_to_level(
-                        list(self.selectedItems()), ln
-                    )
-                )
-
-        # ── Select Same Level ──
-        target_level = getattr(target, "level", None)
-        if target_level:
-            act = menu.addAction("Select Same Level")
-            act.triggered.connect(
-                lambda: self._select_same_level(target_level)
-            )
-
-        menu.addSeparator()
-
         # ── Standard actions ──
         act_copy = menu.addAction("Copy")
         act_copy.triggered.connect(self.copy_selected_items)
 
-        # ── Hide actions ──
+        # ── Hide / Show actions ──
         act_hide = menu.addAction("Hide")
         act_hide.triggered.connect(
             lambda: self._hide_items([target] + [i for i in selected if i is not target])
@@ -6139,6 +6389,9 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         act_hide_all.triggered.connect(
             lambda t=type(target): self._hide_all_of_type(t)
         )
+
+        act_show_all = menu.addAction("Show All Hidden")
+        act_show_all.triggered.connect(self._show_all_hidden)
 
         # ── Room-specific: Auto-Populate Sprinklers ──
         if isinstance(target, Room):
@@ -6183,14 +6436,35 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             )
 
     def _hide_items(self, items):
-        """Hide the given items (set them invisible)."""
+        """Hide the given items via display overrides (persists through refresh)."""
         for item in items:
+            if hasattr(item, "_display_overrides"):
+                item._display_overrides["visible"] = False
             item.setVisible(False)
+
+    def _show_items(self, items):
+        """Show the given items via display overrides."""
+        for item in items:
+            if hasattr(item, "_display_overrides"):
+                item._display_overrides.pop("visible", None)
+            item.setVisible(True)
+
+    def _show_all_hidden(self):
+        """Restore visibility for all manually hidden items."""
+        from floor_slab import FloorSlab
+        from room import Room
+        for item in self.items():
+            if hasattr(item, "_display_overrides"):
+                if item._display_overrides.get("visible") is False:
+                    item._display_overrides.pop("visible", None)
+                    item.setVisible(True)
 
     def _hide_all_of_type(self, item_type):
         """Hide all scene items that are instances of *item_type*."""
         for item in self.items():
             if type(item) is item_type:
+                if hasattr(item, "_display_overrides"):
+                    item._display_overrides["visible"] = False
                 item.setVisible(False)
 
     def _move_selection_to_level(self, target_level: str):

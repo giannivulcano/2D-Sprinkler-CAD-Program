@@ -276,6 +276,17 @@ class PropertyManager(QWidget):
                         k, field.text())
                 )
 
+            # Enforce readonly flag from meta (e.g. template node sections)
+            if meta.get("readonly") and widget is not None:
+                if isinstance(widget, QComboBox):
+                    widget.setEnabled(False)
+                elif isinstance(widget, QLineEdit):
+                    widget.setReadOnly(True)
+                    widget.setStyleSheet(
+                        f"background: {_t.bg_sunken}; "
+                        f"color: {_t.text_secondary};"
+                    )
+
             # Show mixed-value indicator for multi-select with differing values
             if is_mixed and widget is not None:
                 if isinstance(widget, QLineEdit):
@@ -313,6 +324,81 @@ class PropertyManager(QWidget):
             )
             self._form.addRow(QLabel("Level"), combo)
 
+        # ── Node properties for pipes ──────────────────────────────────────
+        if isinstance(primary, Pipe):
+            for idx, node_attr in enumerate(("node1", "node2"), 1):
+                node = getattr(primary, node_attr, None)
+                if node is None:
+                    continue
+                # Section header
+                hdr_lbl = QLabel(f"── Node {idx} ──")
+                hdr_lbl.setStyleSheet(
+                    f"color: {_t.text_secondary}; font-weight: bold;"
+                )
+                self._form.addRow(hdr_lbl, QLabel(""))
+
+                node_props = node.get_properties()
+                for nkey, nmeta in node_props.items():
+                    ntype = nmeta.get("type", "string")
+                    nwidget = None
+
+                    if ntype == "level_ref":
+                        nwidget = QComboBox()
+                        if self._level_manager is not None:
+                            for lv in self._level_manager.levels:
+                                nwidget.addItem(lv.name)
+                        nwidget.setCurrentText(str(nmeta["value"]))
+                        nwidget.currentTextChanged.connect(
+                            lambda val, k=nkey, n=node: self._apply_node_property(n, k, val)
+                        )
+                    elif ntype == "label":
+                        nwidget = QLabel(str(nmeta["value"]))
+                        nwidget.setStyleSheet(
+                            f"background: {_t.bg_sunken}; "
+                            f"padding: 4px; border-radius: 2px; "
+                            f"color: {_t.text_secondary};"
+                        )
+                    else:
+                        nwidget = QLineEdit(str(nmeta["value"]))
+                        try:
+                            float(nmeta["value"])
+                            validator = QDoubleValidator()
+                            validator.setBottom(-1e9)
+                            validator.setNotation(
+                                QDoubleValidator.Notation.StandardNotation)
+                            nwidget.setValidator(validator)
+                        except (ValueError, TypeError):
+                            pass
+                        nwidget.editingFinished.connect(
+                            lambda k=nkey, field=nwidget, n=node: self._apply_node_property(n, k, field.text())
+                        )
+
+                    nsuffix = nmeta.get("suffix")
+                    if nsuffix and nwidget is not None:
+                        row_layout = QHBoxLayout()
+                        row_layout.setContentsMargins(0, 0, 0, 0)
+                        row_layout.addWidget(nwidget, 1)
+                        suffix_lbl = QLabel(nsuffix)
+                        suffix_lbl.setStyleSheet("color: grey; font-style: italic;")
+                        row_layout.addWidget(suffix_lbl)
+                        container = QWidget()
+                        container.setLayout(row_layout)
+                        self._form.addRow(QLabel(nkey), container)
+                    else:
+                        self._form.addRow(QLabel(nkey), nwidget)
+
+                # Read-only absolute elevation
+                sc = node.scene()
+                sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else None
+                elev_text = sm.format_length(node.z_pos) if sm else f"{node.z_pos:.1f} mm"
+                abs_field = QLineEdit(elev_text)
+                abs_field.setReadOnly(True)
+                abs_field.setStyleSheet(
+                    f"background: {_t.bg_sunken}; "
+                    f"color: {_t.text_secondary};"
+                )
+                self._form.addRow(QLabel("Absolute Elev."), abs_field)
+
         # ── Read-only absolute elevation for nodes ────────────────────────
         node = None
         if isinstance(primary, Node):
@@ -340,6 +426,17 @@ class PropertyManager(QWidget):
         except Exception:
             pass
         # Refresh properties to reflect any changes
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _apply_node_property(self, node: Node, key: str, value):
+        """Apply a property change to a specific node, then refresh."""
+        if self._refreshing:
+            return
+        node.set_property(key, value)
+        scene = node.scene() if callable(getattr(node, "scene", None)) else None
+        if scene is not None and hasattr(scene, "sceneModified"):
+            scene.sceneModified.emit()
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()
 

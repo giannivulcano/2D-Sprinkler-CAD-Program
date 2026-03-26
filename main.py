@@ -737,12 +737,33 @@ class MainWindow(QMainWindow):
         QMessageBox.warning(self, title, message)
 
     def _on_confirm_requested(self, action_id: str, title: str, message: str):
-        reply = QMessageBox.question(
-            self, title, message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes)
-        accepted = reply == QMessageBox.StandardButton.Yes
-        self.scene.complete_confirmation(action_id, accepted)
+        if action_id.startswith("elev_mismatch"):
+            box = QMessageBox(self)
+            box.setWindowTitle(title)
+            box.setText(message)
+            btn_riser = box.addButton(
+                "Create Riser", QMessageBox.ButtonRole.YesRole)
+            btn_match = box.addButton(
+                "Match Elevation", QMessageBox.ButtonRole.NoRole)
+            btn_template = box.addButton(
+                "Use Template Elevation", QMessageBox.ButtonRole.AcceptRole)
+            box.setDefaultButton(btn_riser)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is btn_riser:
+                result = "riser"
+            elif clicked is btn_template:
+                result = "template"
+            else:
+                result = "match"
+            self.scene.complete_confirmation(action_id, result)
+        else:
+            reply = QMessageBox.question(
+                self, title, message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            result = "accepted" if reply == QMessageBox.StandardButton.Yes else "rejected"
+            self.scene.complete_confirmation(action_id, result)
 
     # ─────────────────────────────────────────────────────────────────────────
     # RIBBON INITIALISATION
@@ -2126,10 +2147,11 @@ class MainWindow(QMainWindow):
             apply_saved_display_settings(self.scene)
         # Rebuild elevation markers (cleared during scene load)
         self._create_elevation_markers()
-        # Re-apply level visibility so all items show/hide correctly
+        # Re-apply level visibility — activate the saved level's plan tab
+        # so view_height/view_depth are applied from the loaded PlanView data.
         active = getattr(self.scene, "active_level", None)
         if active:
-            self._apply_plan_level(active)
+            self._activate_plan_view(active)
         # Override display unit and precision with user's persistent preference
         self._apply_persistent_unit_prefs()
 
