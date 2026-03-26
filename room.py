@@ -320,6 +320,7 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
                     continue
             result.append(node.sprinkler)
         return result
+        return result
 
     def _nfpa_max_coverage_sqft(self) -> float:
         """Max coverage per sprinkler (sq ft) for the current hazard class."""
