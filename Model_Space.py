@@ -4478,12 +4478,17 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self.node_start_pos = start_node
             # Transition to phase 1: lock Node 1, allow Node 2 editing
             if template is not None:
-                # Adopt start node's elevation for Node 1
-                template.node1_ceiling_level = start_node.ceiling_level
-                template.node1_ceiling_offset = start_node.ceiling_offset
+                if self._pipe_node_was_new:
+                    # New node — apply template elevation TO the node
+                    start_node.ceiling_level = template.node1_ceiling_level
+                    start_node.ceiling_offset = template.node1_ceiling_offset
+                else:
+                    # Existing node — adopt its elevation for Node 1
+                    template.node1_ceiling_level = start_node.ceiling_level
+                    template.node1_ceiling_offset = start_node.ceiling_offset
                 # Default Node 2 to match Node 1 (horizontal pipe default)
-                template.node2_ceiling_level = start_node.ceiling_level
-                template.node2_ceiling_offset = start_node.ceiling_offset
+                template.node2_ceiling_level = template.node1_ceiling_level
+                template.node2_ceiling_offset = template.node1_ceiling_offset
                 template._placement_phase = 1
                 self.requestPropertyUpdate.emit(template)
             self.instructionChanged.emit("Pick end node")

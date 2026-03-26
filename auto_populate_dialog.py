@@ -892,7 +892,7 @@ class AutoPopulateDialog(QDialog):
         if ceil_offset:
             offset_str = self._sm.format_length(ceil_offset) if self._sm else f"{ceil_offset:.1f} mm"
             fl.addRow("Ceiling Offset:", QLabel(offset_str))
-        ceil_h = self._room._compute_ceiling_height()
+        ceil_h = self._room._ceiling_height_mm()
         self._ceiling_height_mm = ceil_h
         ceil_h_str = self._sm.format_length(ceil_h) if self._sm else f"{ceil_h:.1f} mm"
         fl.addRow("Ceiling Height:", QLabel(ceil_h_str))

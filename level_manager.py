@@ -378,8 +378,9 @@ class LevelManager:
                 slab_top = zr[1]
                 if view_depth < slab_top <= view_height:
                     slab._is_occluding = True
-                    # Raise above walls(-50)/pipes(5) but below nodes(10)
-                    slab.setZValue(0)
+                    # Raise above walls(-50)/pipes(5)/nodes(10)/sprinklers
+                    # so the opaque slab fill masks everything below it
+                    slab.setZValue(15)
 
         def _set_level_vis(item):
             # Reset section-cut flag

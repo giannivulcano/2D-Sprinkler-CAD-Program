@@ -835,7 +835,7 @@ class MainWindow(QMainWindow):
             btn_match = box.addButton(
                 "Place at Existing Elevation", QMessageBox.ButtonRole.NoRole)
             btn_template = box.addButton(
-                "Place at Template Elevation", QMessageBox.ButtonRole.AcceptRole)
+                "Place at Specified Elevation", QMessageBox.ButtonRole.AcceptRole)
             box.setDefaultButton(btn_riser)
             box.exec()
             clicked = box.clickedButton()
