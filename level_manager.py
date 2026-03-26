@@ -365,11 +365,8 @@ class LevelManager:
         has_view_range = (view_height is not None and view_depth is not None)
 
         # Flag floor slabs that act as occluding masks within the view range.
-        # These slabs are raised above walls/pipes so their opaque fill
-        # visually masks items below them (like looking down through a floor).
         for slab in getattr(scene, "_floor_slabs", []):
             slab._is_occluding = False
-            slab.setZValue(-80)  # default: behind everything
         if has_view_range:
             for slab in getattr(scene, "_floor_slabs", []):
                 zr = slab.z_range_mm() if hasattr(slab, "z_range_mm") else None
@@ -378,9 +375,6 @@ class LevelManager:
                 slab_top = zr[1]
                 if view_depth < slab_top <= view_height:
                     slab._is_occluding = True
-                    # Raise above walls(-50)/pipes(5)/nodes(10)/sprinklers
-                    # so the opaque slab fill masks everything below it
-                    slab.setZValue(15)
 
         def _set_level_vis(item):
             # Reset section-cut flag
@@ -508,6 +502,49 @@ class LevelManager:
         ws = getattr(scene, "water_supply_node", None)
         if ws is not None:
             _set_level_vis(ws)
+
+        # ── Elevation-based Z-ordering ────────────────────────────────────
+        # Assign Qt Z-values based on actual elevation so that higher items
+        # render on top of lower items.  Small category offsets preserve
+        # draw order within the same elevation (slab < room < wall < pipe < node).
+        _Z_CATEGORY = {
+            "FloorSlab": 0.0,
+            "RoofItem":  0.1,
+            "Room":      0.2,
+            "WallSegment": 0.3,
+            "DoorOpening": 0.35,
+            "WindowOpening": 0.35,
+            "Pipe":      0.4,
+            "Node":      0.5,
+        }
+        _Z_SCALE = 1.0 / 100.0  # mm → Z units (keeps values manageable)
+
+        def _apply_elev_z(item):
+            cat_offset = _Z_CATEGORY.get(type(item).__name__)
+            if cat_offset is None:
+                return  # not a model item — keep its current Z
+            z_mm = 0.0
+            zr = item.z_range_mm() if hasattr(item, "z_range_mm") else None
+            if zr is not None:
+                z_mm = zr[1]  # use top of Z-range
+            elif hasattr(item, "z_pos"):
+                z_mm = item.z_pos
+            item.setZValue(z_mm * _Z_SCALE + cat_offset)
+
+        for node in scene.sprinkler_system.nodes:
+            _apply_elev_z(node)
+        for pipe in scene.sprinkler_system.pipes:
+            _apply_elev_z(pipe)
+        for item in getattr(scene, "_walls", []):
+            _apply_elev_z(item)
+            for op in getattr(item, "openings", []):
+                _apply_elev_z(op)
+        for item in getattr(scene, "_floor_slabs", []):
+            _apply_elev_z(item)
+        for item in getattr(scene, "_roofs", []):
+            _apply_elev_z(item)
+        for item in getattr(scene, "_rooms", []):
+            _apply_elev_z(item)
 
         # ── Re-apply user-layer visibility on top ─────────────────────────
         ulm = getattr(scene, "_user_layer_manager", None)
