@@ -112,6 +112,11 @@ class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
             except (ValueError, TypeError):
                 raw_mm = -50.8
             props["Ceiling Offset"]["value"] = self._fmt(raw_mm)
+        # Show room assignment from parent node
+        room_name = getattr(self.node, "_room_name", "") if self.node else ""
+        if room_name:
+            props["Room"] = {"type": "string", "value": room_name,
+                             "readonly": True}
         return props
 
     def set_property(self, key: str, value):
