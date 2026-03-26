@@ -544,6 +544,14 @@ class View3D(QWidget):
             return
         self.rebuild()
 
+    @staticmethod
+    def _is_visible(item) -> bool:
+        """Check if an item is visible (not hidden via display overrides)."""
+        overrides = getattr(item, "_display_overrides", None)
+        if overrides and overrides.get("visible") is False:
+            return False
+        return True
+
     def rebuild(self):
         """Rebuild all 3D visuals from Model_Space data."""
         self._dirty = False
@@ -594,7 +602,8 @@ class View3D(QWidget):
 
     def _extract_nodes(self):
         self._clear_actors("nodes")
-        nodes = list(self._scene.sprinkler_system.nodes)
+        nodes = [n for n in self._scene.sprinkler_system.nodes
+                 if self._is_visible(n)]
         self._node_refs = nodes
         if not nodes:
             self._node_positions_3d = None
@@ -610,7 +619,7 @@ class View3D(QWidget):
     def _extract_sprinklers(self):
         self._clear_actors("sprinklers")
         nodes_with_spr = [n for n in self._scene.sprinkler_system.nodes
-                          if n.has_sprinkler()]
+                          if n.has_sprinkler() and self._is_visible(n)]
         if not nodes_with_spr:
             return
 
@@ -642,7 +651,8 @@ class View3D(QWidget):
 
     def _extract_pipes(self):
         self._clear_actors("pipes")
-        pipes = list(self._scene.sprinkler_system.pipes)
+        pipes = [p for p in self._scene.sprinkler_system.pipes
+                 if self._is_visible(p)]
         self._pipe_refs = pipes
         if not pipes:
             self._pipe_midpoints_3d = None
@@ -730,7 +740,7 @@ class View3D(QWidget):
     def _extract_water_supply(self):
         self._clear_actors("water_supply")
         ws = getattr(self._scene, "water_supply_node", None)
-        if ws is None:
+        if ws is None or not self._is_visible(ws):
             return
         pos = self._scene_to_3d(ws.scenePos().x(), ws.scenePos().y(), 0)
         sphere = pv.Sphere(radius=60.0, center=pos.tolist(),
@@ -913,6 +923,8 @@ class View3D(QWidget):
         lm = self._lm
         centroids = []
         for wall in getattr(scene_obj, "_walls", []):
+            if not self._is_visible(wall):
+                continue
             mesh_data = wall.get_3d_mesh(level_manager=lm)
             if mesh_data is None:
                 continue
@@ -953,6 +965,8 @@ class View3D(QWidget):
         lm = self._lm
         centroids = []
         for slab in getattr(scene_obj, "_floor_slabs", []):
+            if not self._is_visible(slab):
+                continue
             mesh_data = slab.get_3d_mesh(level_manager=lm)
             if mesh_data is None:
                 continue
@@ -994,6 +1008,8 @@ class View3D(QWidget):
         lm = self._lm
         centroids = []
         for roof in getattr(scene_obj, "_roofs", []):
+            if not self._is_visible(roof):
+                continue
             mesh_data = roof.get_3d_mesh(level_manager=lm)
             if mesh_data is None:
                 continue

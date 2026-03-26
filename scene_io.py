@@ -225,6 +225,8 @@ class SceneIOMixin:
             "rooms":               rooms_data,
             "hatches":             hatch_data,
             "constraints":         constraints_data,
+            "detail_views":        (self._detail_manager.to_list()
+                                    if getattr(self, "_detail_manager", None) else []),
         }
         bak_path = filename + ".bak"
         if os.path.exists(filename):
@@ -307,6 +309,11 @@ class SceneIOMixin:
         pv_data = payload.get("plan_views", [])
         if pv_data and self._plan_view_manager:
             self._plan_view_manager.from_list(pv_data)
+
+        # --- Detail views ---
+        detail_data = payload.get("detail_views", [])
+        if detail_data and getattr(self, "_detail_manager", None):
+            self._detail_manager.from_list(detail_data)
 
         # --- Nodes ---
         # Create each node unconditionally — bypass find_nearby_node so that

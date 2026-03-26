@@ -9,6 +9,8 @@ from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon, QFont
 import theme as th
 from snap_engine import SNAP_COLORS, SNAP_MARKERS
 
+_DETAIL_BORDER_COLOR = "#4488cc"
+
 class Model_View(QGraphicsView):
     # Emitted when a PDF/DXF file is dropped onto the canvas
     drop_import_requested = pyqtSignal(str)
@@ -26,6 +28,10 @@ class Model_View(QGraphicsView):
         self._panning = False
         self._pan_start = QPoint()
         self._zoom_factor = 1.15  # Zoom speed multiplier
+
+        # Detail view clip rect (None = no clipping, full plan view)
+        self._clip_rect: QRectF | None = None
+        self._detail_name: str | None = None
 
         # Grid overlay
         self._grid_visible = False
@@ -150,6 +156,39 @@ class Model_View(QGraphicsView):
         scene = self.scene()
         if scene is None:
             return
+
+        # ── Detail view clip mask ─────────────────────────────────────────
+        if self._clip_rect is not None:
+            # Draw a semi-opaque mask outside the crop boundary
+            mask_color = QColor(scene.backgroundBrush().color())
+            mask_color.setAlpha(210)
+            painter.setBrush(QBrush(mask_color))
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            cr = self._clip_rect
+            # Top strip
+            if rect.top() < cr.top():
+                painter.drawRect(QRectF(rect.left(), rect.top(),
+                                        rect.width(), cr.top() - rect.top()))
+            # Bottom strip
+            if rect.bottom() > cr.bottom():
+                painter.drawRect(QRectF(rect.left(), cr.bottom(),
+                                        rect.width(), rect.bottom() - cr.bottom()))
+            # Left strip (between top and bottom of crop)
+            if rect.left() < cr.left():
+                painter.drawRect(QRectF(rect.left(), cr.top(),
+                                        cr.left() - rect.left(), cr.height()))
+            # Right strip
+            if rect.right() > cr.right():
+                painter.drawRect(QRectF(cr.right(), cr.top(),
+                                        rect.right() - cr.right(), cr.height()))
+
+            # Draw crop boundary outline
+            crop_pen = QPen(QColor(_DETAIL_BORDER_COLOR), 2, Qt.PenStyle.DashLine)
+            crop_pen.setCosmetic(True)
+            painter.setPen(crop_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(cr)
 
         snap_result = getattr(scene, "_snap_result", None)
 
@@ -600,9 +639,16 @@ class Model_View(QGraphicsView):
     # ── Fit to screen ─────────────────────────────────────────────────────
 
     def fit_to_screen(self):
-        """Zoom to fit all scene content within the viewport."""
+        """Zoom to fit all scene content (or clip rect) within the viewport."""
         sc = self.scene()
         if sc is None:
+            return
+        # Detail views: fit to the crop rect instead of full scene
+        if self._clip_rect is not None:
+            rect = QRectF(self._clip_rect)
+            margin = max(rect.width(), rect.height()) * 0.05
+            rect.adjust(-margin, -margin, margin, margin)
+            self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
             return
         rect = sc.itemsBoundingRect()
         if rect.isNull() or rect.isEmpty():

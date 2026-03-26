@@ -293,6 +293,8 @@ class MainWindow(QMainWindow):
         )
         self.project_browser.activateElevation.connect(self._activate_elevation)
         self.project_browser.activatePlanView.connect(self._activate_plan_view)
+        self.project_browser.activateDetailView.connect(self._activate_detail_view)
+        self.project_browser.deleteDetailView.connect(self._delete_detail_view)
         self.level_widget.levelsChanged.connect(self.project_browser.refresh_levels)
 
         # Elevation Manager — QGraphicsScene-based elevation views
@@ -305,6 +307,15 @@ class MainWindow(QMainWindow):
         # Expose on the scene so the Display Manager can trigger rebuilds
         self.scene._elevation_manager = self.elevation_manager
         self.level_widget.levelsChanged.connect(self.elevation_manager.rebuild_all)
+
+        # Detail View Manager
+        from detail_view import DetailViewManager
+        self.detail_manager = DetailViewManager(
+            self.scene, self.level_mgr, self.scene.scale_manager,
+            self.central_tabs,
+        )
+        self.scene._detail_manager = self.detail_manager
+        self.scene._on_detail_created = self._refresh_detail_browser
 
         self.model_browser = ModelBrowser()
         self.model_browser.set_scene(self.scene)
@@ -719,10 +730,25 @@ class MainWindow(QMainWindow):
         for marker in self._view_marker_mgr._markers.values():
             apply_category_defaults(marker)
 
-    def _on_open_view_requested(self, view_type: str, direction: str):
+    def _on_open_view_requested(self, view_type: str, name: str):
         """Handle double-click on a view marker — open the corresponding view."""
         if view_type == "elevation":
-            self._activate_elevation(direction)
+            self._activate_elevation(name)
+        elif view_type == "detail":
+            self._activate_detail_view(name)
+
+    def _activate_detail_view(self, name: str):
+        """Open or switch to a detail view tab."""
+        self.detail_manager.open_detail(name)
+
+    def _delete_detail_view(self, name: str):
+        """Delete a detail view (marker + tab)."""
+        self.detail_manager.delete_detail(name)
+        self._refresh_detail_browser()
+
+    def _refresh_detail_browser(self):
+        """Update the project browser's Details section."""
+        self.project_browser.refresh_details(self.detail_manager.detail_names)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Dialog signal handlers (dialogs moved out of Model_Space)
@@ -1094,6 +1120,12 @@ class MainWindow(QMainWindow):
             lambda: self.scene.set_mode("window"),
             checkable=True)
         _window_btn.setToolTip("Place a window opening in a wall")
+        _detail_btn = g_3d.add_small_button(
+            "Detail", _I("placeholder_icon.svg"),
+            lambda: self.scene.set_mode("detail"),
+            checkable=True)
+        _detail_btn.setToolTip("Draw a detail view crop boundary")
+        self._mode_buttons["detail"] = _detail_btn
         self._mode_buttons["window"] = _window_btn
 
         # --- Fire Suppression Systems ---
@@ -2147,6 +2179,8 @@ class MainWindow(QMainWindow):
             apply_saved_display_settings(self.scene)
         # Rebuild elevation markers (cleared during scene load)
         self._create_elevation_markers()
+        # Refresh detail views in project browser
+        self._refresh_detail_browser()
         # Re-apply level visibility — activate the saved level's plan tab
         # so view_height/view_depth are applied from the loaded PlanView data.
         active = getattr(self.scene, "active_level", None)

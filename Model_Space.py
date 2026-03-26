@@ -231,6 +231,11 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._floor_rect_anchor: "QPointF | None" = None   # first click for rect floor
         self._floor_rect_preview: "QGraphicsRectItem | None" = None
         self._geometry_template = None                      # pre-placement template for geometry tools
+        # Detail view placement
+        self._detail_rect_anchor: "QPointF | None" = None
+        self._detail_rect_preview: "QGraphicsRectItem | None" = None
+        self._detail_markers: list = []
+        self._detail_manager = None  # set by main.py
         # Undo/redo
         self._undo_stack: list[dict] = []
         self._undo_pos: int = -1
@@ -743,6 +748,12 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self._stretch_full_items = []
             self._stretch_base = None
             _remove_preview("_stretch_preview_line")
+        if mode != "detail":
+            self._detail_rect_anchor = None
+            if self._detail_rect_preview is not None:
+                if self._detail_rect_preview.scene() is self:
+                    self.removeItem(self._detail_rect_preview)
+                self._detail_rect_preview = None
 
         # Capture current selection when entering move/rotate/scale mode from ribbon
         if mode in ("move", "rotate", "scale") and not self._selected_items:
@@ -797,6 +808,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             "room_manual":     "Pick first room boundary point",
             "door":            "Click on a wall to place door",
             "window":          "Click on a wall to place window",
+            "detail":          "Pick first corner for detail view boundary",
         }
         instr = _initial_steps.get(mode, "")
         if mode == "wall":
@@ -3468,6 +3480,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "room_manual":              "_move_room_manual",
         "door":                     "_move_door_window",
         "window":                   "_move_door_window",
+        "detail":                   "_move_detail",
     }
 
     # ── Per-mode move handlers ──────────────────────────────────────────
@@ -4102,6 +4115,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "roof_rect":                "_press_roof_rect",
         "door":                     "_press_door",
         "window":                   "_press_window",
+        "detail":                   "_press_detail",
     }
 
     # ------------------------------------------------------------------
@@ -4353,7 +4367,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         _skip_grip_modes = ("wall", "wall_rect", "floor", "floor_rect", "pipe", "sprinkler",
                             "draw_line", "construction_line", "draw_rectangle",
                             "draw_circle", "draw_arc", "polyline", "gridline",
-                            "dimension", "text", "door", "window", "set_scale")
+                            "dimension", "text", "door", "window", "set_scale",
+                            "detail")
         if (self.mode not in _skip_grip_modes
                 and not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier)):
             grip_hit = self._find_grip_hit(snapped)
@@ -5990,6 +6005,58 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 self.set_mode("select")
             else:
                 self.instructionChanged.emit("Pick first corner for rectangular floor")
+
+    # ── Detail view placement ──────────────────────────────────────────
+
+    def _press_detail(self, event, pos, snapped, item_under, node_under, pipe_under):
+        if self._detail_rect_anchor is None:
+            self._detail_rect_anchor = snapped
+            self.instructionChanged.emit("Pick opposite corner for detail view boundary")
+            preview = QGraphicsRectItem(QRectF(snapped, snapped))
+            pen = QPen(QColor("#4488cc"), 2, Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            preview.setPen(pen)
+            fill = QColor("#4488cc")
+            fill.setAlpha(20)
+            preview.setBrush(QBrush(fill))
+            preview.setZValue(200)
+            self.addItem(preview)
+            self._detail_rect_preview = preview
+        else:
+            rect = QRectF(self._detail_rect_anchor, snapped).normalized()
+            # Clean up preview
+            if self._detail_rect_preview is not None:
+                self.removeItem(self._detail_rect_preview)
+                self._detail_rect_preview = None
+            self._detail_rect_anchor = None
+
+            # Create detail via manager
+            if self._detail_manager is not None:
+                name = self._detail_manager.next_name()
+                self._detail_manager.create_detail(
+                    name, rect, self.active_level)
+                self._detail_manager.open_detail(name)
+                # Notify project browser
+                if hasattr(self, "_on_detail_created"):
+                    self._on_detail_created()
+
+            self.push_undo_state()
+            self.set_mode("select")
+
+    def _move_detail(self, event, snapped):
+        sm = self.scale_manager
+        if self._detail_rect_anchor is None:
+            self.update_preview_node(snapped)
+        else:
+            self.preview_node.hide()
+        self.preview_pipe.hide()
+        if self._detail_rect_anchor is not None and self._detail_rect_preview is not None:
+            rect = QRectF(self._detail_rect_anchor, snapped).normalized()
+            self._detail_rect_preview.setRect(rect)
+            self._draw_dim_hint = (
+                f"W: {sm.scene_to_display(rect.width())}  "
+                f"H: {sm.scene_to_display(rect.height())}"
+            )
 
     # ── Roof placement ────────────────────────────────────────────────
 

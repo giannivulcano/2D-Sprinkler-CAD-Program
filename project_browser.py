@@ -60,10 +60,12 @@ class ProjectBrowser(QWidget):
     activatePaperSheet = pyqtSignal(str)   # sheet name
     activateElevation = pyqtSignal(str)    # direction name (North/South/East/West)
     activatePlanView = pyqtSignal(str)     # level name (Level 1, Level 2, etc.)
+    activateDetailView = pyqtSignal(str)   # detail view name
+    deleteDetailView = pyqtSignal(str)     # detail view name to delete
     createPaperSheet = pyqtSignal(str)     # new sheet name
 
     # Stub categories under 2D Model (Plans and Elevations are live)
-    _MS_STUBS = ["Schematics", "Details", "Schedules"]
+    _MS_STUBS = ["Schematics", "Schedules"]
 
     # Pre-defined elevation view names
     _ELEVATIONS = ["North", "South", "East", "West"]
@@ -155,6 +157,18 @@ class ProjectBrowser(QWidget):
                 item.setToolTip(0, f"Plan view — {lvl.name}  (elev {self._fmt_elev(lvl.elevation)})")
         self._plans_root.setExpanded(True)
 
+    def refresh_details(self, detail_names: list[str]):
+        """Rebuild the Details sub-tree from a list of detail view names."""
+        if self._details_root is None:
+            return
+        self._details_root.takeChildren()
+        for name in detail_names:
+            item = QTreeWidgetItem(self._details_root, [name])
+            item.setData(0, _ROLE_TYPE, "detail")
+            item.setData(0, _ROLE_NAME, name)
+            item.setToolTip(0, f"Detail view — {name}")
+        self._details_root.setExpanded(True)
+
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _build_tree(self):
@@ -190,6 +204,13 @@ class ProjectBrowser(QWidget):
             item.setToolTip(0, f"Elevation view — {elev_name}")
         self._elev_root = elev_root
 
+        # ── Details (populated dynamically) ───────────────────────────────
+        details_root = QTreeWidgetItem(ms_root, ["Details"])
+        details_root.setData(0, _ROLE_TYPE, "ms_stub")
+        details_root.setData(0, _ROLE_NAME, "Details")
+        details_root.setFont(0, f_bold)
+        self._details_root = details_root
+
         # ── Future stubs ─────────────────────────────────────────────────────
         for stub_name in self._MS_STUBS:
             stub = QTreeWidgetItem(ms_root, [stub_name])
@@ -216,6 +237,9 @@ class ProjectBrowser(QWidget):
         elif role == "plan":
             name = item.data(0, _ROLE_NAME)
             self.activatePlanView.emit(name)
+        elif role == "detail":
+            name = item.data(0, _ROLE_NAME)
+            self.activateDetailView.emit(name)
         elif role in ("model_root", "ms_stub"):
             self.activateModelSpace.emit()
         elif role == "sheet":
@@ -234,6 +258,12 @@ class ProjectBrowser(QWidget):
         elif role == "sheet":
             act = menu.addAction("New Drawing")
             act.triggered.connect(self._create_new_sheet)
+        elif role == "detail":
+            name = item.data(0, _ROLE_NAME)
+            act_open = menu.addAction("Open")
+            act_open.triggered.connect(lambda: self.activateDetailView.emit(name))
+            act_del = menu.addAction("Delete")
+            act_del.triggered.connect(lambda: self.deleteDetailView.emit(name))
         else:
             return
         menu.exec(self._tree.viewport().mapToGlobal(pos))
