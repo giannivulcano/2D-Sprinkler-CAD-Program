@@ -1542,7 +1542,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             if node is not None:
                 # Remove the sprinkler from the node
                 if node.sprinkler is spr:
-                    node.remove_sprinkler()
+                    node.delete_sprinkler()
                 # If the node has no pipes, remove it entirely
                 if not node.pipes:
                     self.sprinkler_system.remove_node(node)
