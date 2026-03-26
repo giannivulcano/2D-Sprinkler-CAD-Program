@@ -2584,16 +2584,18 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         if self._undo_pos > 0:
             self._undo_pos -= 1
             self._restore_network(self._undo_stack[self._undo_pos])
-            # Refresh property panel — old references are now invalid
+            # Refresh property panel and model browser — old references invalid
             self.requestPropertyUpdate.emit(None)
+            self.sceneModified.emit()
 
     def redo(self):
         """Restore the next network state."""
         if self._undo_pos < len(self._undo_stack) - 1:
             self._undo_pos += 1
             self._restore_network(self._undo_stack[self._undo_pos])
-            # Refresh property panel — old references are now invalid
+            # Refresh property panel and model browser — old references invalid
             self.requestPropertyUpdate.emit(None)
+            self.sceneModified.emit()
 
     # -------------------------------------------------------------------------
     # SCALE REFRESH
