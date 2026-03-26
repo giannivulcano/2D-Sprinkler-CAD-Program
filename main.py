@@ -321,6 +321,7 @@ class MainWindow(QMainWindow):
         self.model_browser.set_scene(self.scene)
         self.model_browser.entitySelected.connect(self.prop_manager.show_properties)
         self.scene.selectionChanged.connect(self.model_browser.sync_from_scene)
+        self.scene.sceneModified.connect(self.model_browser.refresh)
 
         self._left_tabs = QTabWidget()
         self._left_tabs.setTabPosition(QTabWidget.TabPosition.West)
