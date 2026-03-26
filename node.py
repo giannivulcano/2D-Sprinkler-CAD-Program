@@ -40,6 +40,7 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
         # Node-specific
         self.ceiling_level: str = DEFAULT_LEVEL
         self.ceiling_offset: float = DEFAULT_CEILING_OFFSET_MM
+        self._room_name: str = ""   # set by auto-populate to link to a room
         self._hydraulic_badge = None
 
         # Property panel support — shown for plain (non-sprinkler) nodes

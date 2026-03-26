@@ -1589,8 +1589,9 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self.addItem(node)
             self.sprinkler_system.add_node(node)
             node.user_layer = self.active_user_layer
-            # Set level and ceiling settings
+            # Set level, ceiling, and room assignment
             node.level = level
+            node._room_name = room.name
             node.ceiling_level = ceiling_level
             node._properties["Ceiling Level"]["value"] = ceiling_level
             node.ceiling_offset = ceiling_offset
@@ -2185,6 +2186,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 "level":          getattr(node, "level", DEFAULT_LEVEL),
                 "ceiling_level":  getattr(node, "ceiling_level", DEFAULT_LEVEL),
                 "ceiling_offset_mm": getattr(node, "ceiling_offset", DEFAULT_CEILING_OFFSET_MM),
+                "room_name":     getattr(node, "_room_name", ""),
             }
             node_ovr = getattr(node, "_display_overrides", {})
             if node_ovr:
@@ -2345,6 +2347,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     "fitting_display_overrides", {})
                 node.user_layer = entry.get("user_layer", "0")
                 node.level = entry.get("level", DEFAULT_LEVEL)
+                node._room_name = entry.get("room_name", "")
                 node.ceiling_level = entry.get("ceiling_level", node.level)
                 if "ceiling_offset_mm" in entry:
                     node.ceiling_offset = entry["ceiling_offset_mm"]

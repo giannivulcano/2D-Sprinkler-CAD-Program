@@ -51,6 +51,7 @@ class SceneIOMixin:
                 "level":          getattr(node, "level", DEFAULT_LEVEL),
                 "ceiling_level":  getattr(node, "ceiling_level", DEFAULT_LEVEL),
                 "ceiling_offset_mm": getattr(node, "ceiling_offset", DEFAULT_CEILING_OFFSET_MM),
+                "room_name":     getattr(node, "_room_name", ""),
                 "sprinkler":      node.sprinkler.get_properties() if node.has_sprinkler() else None,
             }
             node_ovr = getattr(node, "_display_overrides", {})
@@ -329,6 +330,7 @@ class SceneIOMixin:
             node.z_offset = entry.get("z_offset", entry.get("elevation", 0))
             node.user_layer = entry.get("user_layer", "0")
             node.level = entry.get("level", DEFAULT_LEVEL)
+            node._room_name = entry.get("room_name", "")
             node.ceiling_level = entry.get("ceiling_level", node.level)
             if "ceiling_offset_mm" in entry:
                 node.ceiling_offset = entry["ceiling_offset_mm"]

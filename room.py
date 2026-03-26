@@ -290,35 +290,51 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
     # ── Sprinkler detection ──────────────────────────────────────────────
 
     def _detect_sprinklers(self) -> list:
-        """Return sprinklers whose nodes are inside the boundary polygon
-        AND within this room's absolute Z range (floor to ceiling)."""
+        """Return sprinklers assigned to this room.
+
+        First checks for nodes explicitly tagged with this room's name
+        (set by auto-populate).  Falls back to XY + Z-range detection
+        for manually placed sprinklers.
+        """
         sc = self.scene()
         if sc is None or not hasattr(sc, "sprinkler_system"):
             return []
-        if len(self._boundary) < 3:
-            return []
 
-        path = QPainterPath()
-        path.addPolygon(QPolygonF(self._boundary))
-        path.closeSubpath()
+        my_name = self.name
+        tagged = []
+        untagged_nodes = []
 
-        zr = self.z_range_mm()
-        if zr is not None:
-            z_bot, z_top = min(zr), max(zr)
-        else:
-            z_bot, z_top = None, None
-
-        result = []
         for node in sc.sprinkler_system.nodes:
             if not node.has_sprinkler():
                 continue
-            if not path.contains(node.scenePos()):
-                continue
-            if z_bot is not None:
-                z = getattr(node, "z_pos", None)
-                if z is not None and (z < z_bot or z > z_top):
+            room_tag = getattr(node, "_room_name", "")
+            if room_tag and room_tag == my_name:
+                tagged.append(node.sprinkler)
+            elif not room_tag:
+                untagged_nodes.append(node)
+
+        # For untagged nodes, fall back to XY polygon + Z range check
+        if untagged_nodes and len(self._boundary) >= 3:
+            path = QPainterPath()
+            path.addPolygon(QPolygonF(self._boundary))
+            path.closeSubpath()
+
+            zr = self.z_range_mm()
+            if zr is not None:
+                z_bot, z_top = min(zr), max(zr)
+            else:
+                z_bot, z_top = None, None
+
+            for node in untagged_nodes:
+                if not path.contains(node.scenePos()):
                     continue
-            result.append(node.sprinkler)
+                if z_bot is not None:
+                    z = getattr(node, "z_pos", None)
+                    if z is not None and (z < z_bot or z > z_top):
+                        continue
+                tagged.append(node.sprinkler)
+
+        return tagged
         return result
         return result
 
