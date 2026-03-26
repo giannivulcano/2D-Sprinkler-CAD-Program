@@ -1535,6 +1535,20 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         self.push_undo_state()
 
+        # Remove existing sprinklers in this room before placing new ones
+        existing = room._detect_sprinklers()
+        for spr in existing:
+            node = spr.node
+            if node is not None:
+                # Remove the sprinkler from the node
+                if node.sprinkler is spr:
+                    node.remove_sprinkler()
+                # If the node has no pipes, remove it entirely
+                if not node.pipes:
+                    self.sprinkler_system.remove_node(node)
+                    if node.scene() is self:
+                        self.removeItem(node)
+
         # Compute the node ceiling_offset so the sprinkler ends up at
         # the correct absolute Z:
         #   ceiling_offset = sprinkler_offset - (ceil_level_elev - room_ceiling_elev)
