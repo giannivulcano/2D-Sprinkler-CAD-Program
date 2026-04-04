@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QStyle
 from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QTransform, QPainterPath
 from PyQt6.QtSvgWidgets import QGraphicsSvgItem
-from constants import DEFAULT_LEVEL
+from .constants import DEFAULT_LEVEL
 from PyQt6.QtSvg import QSvgRenderer
 
 
@@ -70,7 +70,7 @@ class WaterSupply(QGraphicsSvgItem):
 
     def _centre_on_origin(self):
         """Centre the SVG on (0,0) at TARGET_MM scale."""
-        from displayable_item import centre_svg_on_origin
+        from .displayable_item import centre_svg_on_origin
         centre_svg_on_origin(self, self.TARGET_MM, self.SCALE,
                               self._display_scale)
 

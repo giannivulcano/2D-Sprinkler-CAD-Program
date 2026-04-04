@@ -21,7 +21,7 @@ import shutil
 
 from PyQt6.QtCore import QPointF
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
 
 
 class SceneIOMixin:
@@ -33,7 +33,7 @@ class SceneIOMixin:
 
     def save_to_file(self, filename: str):
         """Serialise the full scene to JSON."""
-        from display_manager import get_display_settings_for_save
+        from .display_manager import get_display_settings_for_save
 
         # --- Nodes (assign temp IDs) ---
         node_list = list(self.sprinkler_system.nodes)
@@ -252,25 +252,25 @@ class SceneIOMixin:
 
     def load_from_file(self, filename: str):
         """Clear the scene and restore from JSON."""
-        from node import Node
-        from pipe import Pipe
-        from sprinkler import Sprinkler
-        from Annotations import DimensionAnnotation, NoteAnnotation, HatchItem
-        from underlay import Underlay
-        from scale_manager import ScaleManager
-        from water_supply import WaterSupply
-        from design_area import DesignArea
-        from construction_geometry import (
+        from .node import Node
+        from .pipe import Pipe
+        from .sprinkler import Sprinkler
+        from .annotations import DimensionAnnotation, NoteAnnotation, HatchItem
+        from .underlay import Underlay
+        from .scale_manager import ScaleManager
+        from .water_supply import WaterSupply
+        from .design_area import DesignArea
+        from .construction_geometry import (
             ConstructionLine, PolylineItem, LineItem, RectangleItem,
             CircleItem, ArcItem,
         )
-        from gridline import GridlineItem
-        from wall import WallSegment
-        from floor_slab import FloorSlab
-        from roof import RoofItem
-        from room import Room
-        from wall_opening import WallOpening
-        from constraints import Constraint as ConstraintBase
+        from .gridline import GridlineItem
+        from .wall import WallSegment
+        from .floor_slab import FloorSlab
+        from .roof import RoofItem
+        from .room import Room
+        from .wall_opening import WallOpening
+        from .constraints import Constraint as ConstraintBase
         from PyQt6.QtGui import QColor
 
         try:
@@ -572,10 +572,10 @@ class SceneIOMixin:
 
     def _clear_scene(self):
         """Remove all user content, keeping preview items and origin markers."""
-        from sprinkler_system import SprinklerSystem
-        from Annotations import Annotation
-        from scale_manager import ScaleManager
-        from gridline import reset_grid_counters
+        from .sprinkler_system import SprinklerSystem
+        from .annotations import Annotation
+        from .scale_manager import ScaleManager
+        from .gridline import reset_grid_counters
 
         self.sprinkler_system = SprinklerSystem()
         self.annotations = Annotation()

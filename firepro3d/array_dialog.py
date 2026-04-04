@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPen, QColor, QBrush, QTransform
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer
 
-from dimension_edit import DimensionEdit
+from .dimension_edit import DimensionEdit
 
 
 _PREVIEW_COLOR = QColor(0, 180, 255, 100)

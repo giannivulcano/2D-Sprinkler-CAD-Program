@@ -2,10 +2,10 @@ import math
 from PyQt6.QtWidgets import QGraphicsLineItem, QGraphicsItem, QGraphicsTextItem, QStyle
 from PyQt6.QtGui import QPen, QColor, QBrush, QPainterPath, QPainterPathStroker
 from PyQt6.QtCore import Qt, QPointF
-from CAD_Math import CAD_Math
+from .cad_math import CAD_Math
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
-from displayable_item import DisplayableItemMixin
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from .displayable_item import DisplayableItemMixin
 
 class Pipe(DisplayableItemMixin, QGraphicsLineItem):
     SNAP_TOLERANCE_DEG = 7.5  # snap if within this angle
@@ -290,7 +290,7 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
         """True when the current display unit is metric (mm or m)."""
         sm = self._get_scale_manager()
         if sm is not None:
-            from scale_manager import DisplayUnit
+            from .scale_manager import DisplayUnit
             return sm.display_unit in (DisplayUnit.METRIC_MM, DisplayUnit.METRIC_M)
         return True  # default to metric when no scale manager
 
@@ -561,7 +561,7 @@ class Pipe(DisplayableItemMixin, QGraphicsLineItem):
             if on_calc_path:
                 v = scene.hydraulic_result.pipe_velocity.get(self, -1)
                 if v >= 0:
-                    from constants import (VELOCITY_HIGH_FPS, VELOCITY_WARN_FPS,
+                    from .constants import (VELOCITY_HIGH_FPS, VELOCITY_WARN_FPS,
                                            VELOCITY_COLOR_HIGH, VELOCITY_COLOR_WARN,
                                            VELOCITY_COLOR_OK)
                     if v > VELOCITY_HIGH_FPS:

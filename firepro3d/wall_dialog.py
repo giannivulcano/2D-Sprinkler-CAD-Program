@@ -13,12 +13,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from wall import (
+from .wall import (
     THICKNESS_PRESETS_IN, DEFAULT_THICKNESS_MM,
     FILL_NONE, FILL_SOLID, FILL_HATCH, FILL_SECTION,
     ALIGN_CENTER, ALIGN_INTERIOR, ALIGN_EXTERIOR,
 )
-from dimension_edit import DimensionEdit
+from .dimension_edit import DimensionEdit
 
 
 
@@ -217,7 +217,7 @@ class WallDialog(QDialog):
             # Freeform text — try to parse with ScaleManager
             text = self._thickness_combo.currentText().strip()
             if self._sm:
-                from scale_manager import ScaleManager
+                from .scale_manager import ScaleManager
                 parsed = ScaleManager.parse_dimension(text, self._sm.bare_number_unit())
                 if parsed is not None:
                     thickness_mm = parsed

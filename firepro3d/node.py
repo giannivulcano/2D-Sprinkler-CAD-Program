@@ -1,12 +1,12 @@
 import math
-from CAD_Math import CAD_Math
+from .cad_math import CAD_Math
 from PyQt6.QtWidgets import QGraphicsEllipseItem, QGraphicsItem, QStyle
 from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
 from PyQt6.QtGui import QBrush, QPen, QColor, QPainterPath
-from fitting import Fitting
-from sprinkler import Sprinkler
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
-from displayable_item import DisplayableItemMixin
+from .fitting import Fitting
+from .sprinkler import Sprinkler
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from .displayable_item import DisplayableItemMixin
 
 class Node(DisplayableItemMixin, QGraphicsEllipseItem):
     RADIUS = 13
@@ -228,7 +228,7 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
                                position="Right", stack_index=0, stack_total=1,
                                node_label=""):
         """Create a selectable hydraulic node badge as a child item."""
-        from hydraulic_node_badge import HydraulicNodeBadge
+        from .hydraulic_node_badge import HydraulicNodeBadge
         self.remove_hydraulic_badge()
         self._hydraulic_badge = HydraulicNodeBadge(
             self, node_number, pressure, flow_out, total_flow,

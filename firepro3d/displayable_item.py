@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtGui import QBrush, QColor, QPainterPath, QPen, QTransform, QPolygonF
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 _SECTION_HATCH_COLOR = QColor(100, 100, 100)  # fallback for section hatching
 
@@ -46,7 +46,7 @@ def draw_section_hatch(painter, clip_path: "QPainterPath", scene,
     if clip_path.isEmpty():
         return
 
-    from hatch_patterns import make_hatch_brush, is_builtin, is_svg, draw_svg_hatch
+    from .hatch_patterns import make_hatch_brush, is_builtin, is_svg, draw_svg_hatch
 
     hatch_col = color or _SECTION_HATCH_COLOR
     views = scene.views() if scene else []
@@ -153,10 +153,10 @@ class DisplayableItemMixin:
 
     def _fmt(self, mm: float) -> str:
         """Format *mm* as a display string using the scene's ScaleManager."""
-        from format_utils import fmt_length
+        from .format_utils import fmt_length
         return fmt_length(self, mm)
 
     def _get_scale_manager(self):
         """Return the ScaleManager from the scene, or a stored fallback."""
-        from format_utils import get_scale_manager
+        from .format_utils import get_scale_manager
         return get_scale_manager(self)

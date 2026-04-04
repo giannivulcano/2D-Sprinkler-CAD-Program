@@ -11,7 +11,7 @@ SprinklerManagerDialog— full-featured manager dialog (library + templates)
 
 Usage
 -----
-    from sprinkler_db import SprinklerManagerDialog, SprinklerDatabase
+    from .sprinkler_db import SprinklerManagerDialog, SprinklerDatabase
 
     # In MainWindow.open_sprinkler_manager():
     dlg = SprinklerManagerDialog(parent=self)

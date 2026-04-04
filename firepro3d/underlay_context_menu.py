@@ -9,8 +9,8 @@ from PyQt6.QtWidgets import (
     QMenu, QInputDialog, QGraphicsItem, QGraphicsItemGroup
 )
 from PyQt6.QtGui import QAction, QPen, QColor
-from underlay import Underlay
-from constants import DEFAULT_USER_LAYER
+from .underlay import Underlay
+from .constants import DEFAULT_USER_LAYER
 
 
 class UnderlayContextMenu:

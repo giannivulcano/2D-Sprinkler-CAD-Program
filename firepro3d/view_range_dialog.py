@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
-from dimension_edit import DimensionEdit
-from level_manager import PlanView, PlanViewManager, LevelManager
+from .dimension_edit import DimensionEdit
+from .level_manager import PlanView, PlanViewManager, LevelManager
 
 
 class ViewRangeDialog(QDialog):
@@ -189,7 +189,7 @@ class ViewRangeDialog(QDialog):
                 next_lvl = l
                 break
 
-        from level_manager import _DEFAULT_SLAB_THICKNESS_MM
+        from .level_manager import _DEFAULT_SLAB_THICKNESS_MM
         if next_lvl is not None:
             view_height = next_lvl.elevation - _DEFAULT_SLAB_THICKNESS_MM
         else:

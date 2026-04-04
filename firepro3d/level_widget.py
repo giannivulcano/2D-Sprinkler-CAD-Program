@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from dimension_edit import DimensionEdit
-import theme as th
+from .dimension_edit import DimensionEdit
+from . import theme as th
 
-from constants import DEFAULT_LEVEL
-from level_manager import Level, LevelManager, DISPLAY_MODES
+from .constants import DEFAULT_LEVEL
+from .level_manager import Level, LevelManager, DISPLAY_MODES
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -293,7 +293,7 @@ class LevelWidget(QWidget):
                 text = item.text().strip()
                 parsed_mm = None
                 if sm:
-                    from scale_manager import ScaleManager
+                    from .scale_manager import ScaleManager
                     fallback = sm.bare_number_unit()
                     parsed_mm = ScaleManager.parse_dimension(text, fallback)
                 if parsed_mm is not None:

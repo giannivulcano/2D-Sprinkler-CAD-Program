@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QGraphicsView
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QShortcut
 
-import theme as th
+from . import theme as th
 
 
 class ElevationView(QGraphicsView):
@@ -56,7 +56,7 @@ class ElevationView(QGraphicsView):
     # ── Select All (filter annotations) ──────────────────────────────────
 
     def _select_all_items(self):
-        from elevation_scene import ElevGridlineItem, ElevDatumItem
+        from .elevation_scene import ElevGridlineItem, ElevDatumItem
         scene = self.scene()
         if scene:
             scene.blockSignals(True)

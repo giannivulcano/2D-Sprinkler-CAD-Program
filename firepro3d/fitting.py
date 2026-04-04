@@ -1,6 +1,6 @@
 import math
 import os
-from CAD_Math import CAD_Math
+from .cad_math import CAD_Math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QGraphicsItem
 from PyQt6.QtGui import QTransform, QPainterPath
@@ -395,7 +395,7 @@ class Fitting():
         """Re-apply colour effect and opacity after symbol recreation."""
         if self.symbol is None:
             return
-        from display_manager import _set_svg_tint
+        from .display_manager import _set_svg_tint
         _set_svg_tint(self.symbol, self._display_color,
                       self._display_fill_color)
         op = self._display_opacity

@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem, QStyle,
 )
 from PyQt6.QtGui import QPen, QColor, QFont, QBrush, QPainterPath
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from PyQt6.QtCore import Qt, QPointF, QRectF
 
 

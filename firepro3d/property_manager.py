@@ -27,12 +27,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QDoubleValidator, QColor, QFont
 from PyQt6.QtCore import Qt, QTimer
 
-from node import Node
-from pipe import Pipe
-from sprinkler import Sprinkler
-from sprinkler_db import SprinklerDatabase
-from dimension_edit import DimensionEdit
-import theme as th
+from .node import Node
+from .pipe import Pipe
+from .sprinkler import Sprinkler
+from .sprinkler_db import SprinklerDatabase
+from .dimension_edit import DimensionEdit
+from . import theme as th
 
 # Lazy-loaded singleton sprinkler database
 _sprinkler_db: SprinklerDatabase | None = None

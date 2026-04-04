@@ -6,9 +6,9 @@ from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtCore import Qt
 
-from constants import DEFAULT_LEVEL
+from .constants import DEFAULT_LEVEL
 
-from displayable_item import DisplayableItemMixin
+from .displayable_item import DisplayableItemMixin
 
 
 class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
@@ -74,7 +74,7 @@ class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
 
     def _centre_on_node(self):
         """Centre the item on the parent node's origin (0, 0)."""
-        from displayable_item import centre_svg_on_origin
+        from .displayable_item import centre_svg_on_origin
         centre_svg_on_origin(self, self.TARGET_MM, self.SCALE,
                               self._display_scale, reset_pos=True)
 

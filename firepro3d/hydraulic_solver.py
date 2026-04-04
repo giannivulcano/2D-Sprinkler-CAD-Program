@@ -353,7 +353,7 @@ class HydraulicSolver:
         Issues a warning if the nearest node is >50 px away.
         Returns None if the system has no nodes.
         """
-        from node import Node
+        from .node import Node
         nodes = self.system.nodes
         if not nodes:
             return None

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal
-from constants import DEFAULT_USER_LAYER
+from .constants import DEFAULT_USER_LAYER
 
 
 @dataclass

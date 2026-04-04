@@ -57,9 +57,9 @@ except ImportError:
     fitz = None
     _HAS_FITZ = False
 
-from dxf_import_worker import _sanitize_dxf
-from snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
-from constants import DEFAULT_USER_LAYER
+from .dxf_import_worker import _sanitize_dxf
+from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
+from .constants import DEFAULT_USER_LAYER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -657,7 +657,7 @@ class UnderlayImportDialog(QDialog):
         self._populate_layer_list()
 
         # Extract geometry synchronously
-        from dxf_import_worker import DxfImportWorker
+        from .dxf_import_worker import DxfImportWorker
         geoms = []
         all_ents = list(msp)
         prog = QProgressDialog("Loading preview…", "Cancel", 0, len(all_ents), self)
@@ -732,7 +732,7 @@ class UnderlayImportDialog(QDialog):
         # Generate thumbnails
         self._thumb_list.clear()
         if self._pdf_page_count > 1:
-            from pdf_import_worker import generate_pdf_thumbnails
+            from .pdf_import_worker import generate_pdf_thumbnails
             thumbs = generate_pdf_thumbnails(path, width=80)
             for page_idx, pixmap in thumbs:
                 item = QListWidgetItem(QIcon(pixmap), f"Page {page_idx + 1}")
@@ -748,7 +748,7 @@ class UnderlayImportDialog(QDialog):
 
     def _load_pdf_page(self, path: str, page: int):
         """Load vectors from a specific PDF page."""
-        from pdf_import_worker import extract_pdf_vectors_sync
+        from .pdf_import_worker import extract_pdf_vectors_sync
 
         self._pdf_page = page
         self._info_lbl.setText(f"Extracting vectors from page {page + 1}…")

@@ -60,7 +60,7 @@ def _z_intersects(item, view_height, view_depth) -> bool:
     z_bot, z_top = zr
     return z_top >= view_depth and z_bot <= view_height
 
-from constants import DEFAULT_LEVEL, DEFAULT_CEILING_OFFSET_MM
+from .constants import DEFAULT_LEVEL, DEFAULT_CEILING_OFFSET_MM
 # Display mode options (stored in Level.display_mode)
 DISPLAY_MODES = ["Auto", "Hidden", "Faded", "Visible"]
 
@@ -326,7 +326,7 @@ class LevelManager:
 
     def update_elevations(self, scene):
         """Recompute z_pos for all nodes using ceiling_level + ceiling_offset."""
-        from node import Node
+        from .node import Node
         lvl_map = {l.name: l for l in self._levels}
         for node in scene.sprinkler_system.nodes:
             # 3D elevation = ceiling level elevation (mm) + ceiling offset (mm)

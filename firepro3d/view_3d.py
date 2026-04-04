@@ -23,19 +23,19 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLab
 from PyQt6.QtGui import QShortcut, QKeySequence
 from PyQt6.QtCore import pyqtSignal, QTimer, Qt, QEvent
 
-from constants import DEFAULT_LEVEL
-from node import Node
-from pipe import Pipe
-from sprinkler import Sprinkler
-from construction_geometry import (
+from .constants import DEFAULT_LEVEL
+from .node import Node
+from .pipe import Pipe
+from .sprinkler import Sprinkler
+from .construction_geometry import (
     ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem, ArcItem,
 )
-from gridline import GridlineItem
-from water_supply import WaterSupply
-from Annotations import DimensionAnnotation, NoteAnnotation
-from wall import WallSegment
-from floor_slab import FloorSlab
-from view_cube import ViewCube
+from .gridline import GridlineItem
+from .water_supply import WaterSupply
+from .annotations import DimensionAnnotation, NoteAnnotation
+from .wall import WallSegment
+from .floor_slab import FloorSlab
+from .view_cube import ViewCube
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ PICK_TOLERANCE_PX = 15
 MAX_CYLINDER_PIPES = 200   # above this count, fall back to line rendering
 
 # Single source of truth for pipe OD table
-from pipe import Pipe as _PipeClass
+from .pipe import Pipe as _PipeClass
 _NOMINAL_OD_IN = _PipeClass.NOMINAL_OD_IN
 
 # Colors (RGB tuples for PyVista)
@@ -1444,9 +1444,9 @@ class View3D(QWidget):
         self._clear_actors("sel_overlay_edges")
         self._plotter.render()
         # Delete each item directly via scene methods
-        from roof import RoofItem
-        from wall import WallSegment
-        from floor_slab import FloorSlab
+        from .roof import RoofItem
+        from .wall import WallSegment
+        from .floor_slab import FloorSlab
         for item in items:
             if isinstance(item, WallSegment):
                 for op in list(item.openings):
@@ -1473,7 +1473,7 @@ class View3D(QWidget):
 
     def _show_context_menu(self, global_pos):
         """Show right-click context menu in the 3D view."""
-        from entity_context_menu import build_entity_context_menu
+        from .entity_context_menu import build_entity_context_menu
 
         selected = list(self._scene.selectedItems())
         # Include 3D-only selections

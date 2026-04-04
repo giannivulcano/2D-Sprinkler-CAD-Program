@@ -21,9 +21,9 @@ from PyQt6.QtGui import (
 )
 
 if TYPE_CHECKING:
-    from wall import WallSegment
+    from .wall import WallSegment
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 
 # ── Preset libraries ─────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ class WallOpening(QGraphicsPathItem):
     # ── Properties ───────────────────────────────────────────────────────────
 
     def _fmt(self, mm: float) -> str:
-        from format_utils import fmt_length
+        from .format_utils import fmt_length
         return fmt_length(self, mm)
 
     def get_properties(self) -> dict:

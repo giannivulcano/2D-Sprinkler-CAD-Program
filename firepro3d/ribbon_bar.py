@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QIcon, QFont, QPainter, QColor
 from PyQt6.QtCore import Qt, QSize
-import theme as th
+from . import theme as th
 
 
 # ─────────────────────────────────────────────────────────────────────────────

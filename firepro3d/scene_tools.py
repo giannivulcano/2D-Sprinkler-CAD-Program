@@ -28,13 +28,13 @@ from PyQt6.QtCore import QPointF, QRectF
 from PyQt6.QtGui import QPen, QBrush, QColor, QPainterPath, QFont
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsLineItem, QApplication
 
-from construction_geometry import (
+from .construction_geometry import (
     ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem, ArcItem,
 )
-from node import Node
-from Annotations import HatchItem
-from CAD_Math import CAD_Math
-import geometry_intersect as gi
+from .node import Node
+from .annotations import HatchItem
+from .cad_math import CAD_Math
+from . import geometry_intersect as gi
 
 
 class SceneToolsMixin:
@@ -962,7 +962,7 @@ class SceneToolsMixin:
 
     def _all_geometry_items(self):
         """Return a flat list of all construction geometry items in the scene."""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, RectangleItem, CircleItem, ArcItem, PolylineItem,
         )
         items = []
@@ -975,7 +975,7 @@ class SceneToolsMixin:
 
     def _find_geometry_at(self, pos: QPointF):
         """Find the geometry item nearest to pos (within tolerance)."""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, RectangleItem, CircleItem, ArcItem, PolylineItem,
         )
         tol = 8.0
@@ -1005,7 +1005,7 @@ class SceneToolsMixin:
     def _find_endpoint_hit(self, pos: QPointF):
         """Find endpoint grip on any geometry item near pos (not just selected).
         Returns (item, grip_index, QPointF) or None."""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, PolylineItem, ArcItem,
         )
         views = self.views()
@@ -1073,7 +1073,7 @@ class SceneToolsMixin:
 
     def _handle_trim_click(self, pos: QPointF):
         """Handle mouse click during trim mode."""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, CircleItem, ArcItem, PolylineItem,
         )
 
@@ -1234,7 +1234,7 @@ class SceneToolsMixin:
 
     def _handle_extend_click(self, pos: QPointF):
         """Handle mouse click during extend mode."""
-        from construction_geometry import LineItem, ArcItem, PolylineItem
+        from .construction_geometry import LineItem, ArcItem, PolylineItem
 
         if self.mode == "extend":
             item = self._find_geometry_at(pos)
@@ -1337,7 +1337,7 @@ class SceneToolsMixin:
 
     def _handle_constraint_concentric_click(self, pos: QPointF):
         """Handle mouse click during concentric constraint mode."""
-        from construction_geometry import CircleItem, ArcItem
+        from .construction_geometry import CircleItem, ArcItem
         item = self._find_geometry_at(pos)
         if item is None or not isinstance(item, (CircleItem, ArcItem)):
             self._show_status("Please select a circle or arc")
@@ -1347,7 +1347,7 @@ class SceneToolsMixin:
             self._constraint_circle_a = item
             self.instructionChanged.emit("Select second circle")
         else:
-            from constraints import ConcentricConstraint
+            from .constraints import ConcentricConstraint
             constraint = ConcentricConstraint(self._constraint_circle_a, item)
             self._constraints.append(constraint)
             self._solve_constraints(self._constraint_circle_a)
@@ -1394,7 +1394,7 @@ class SceneToolsMixin:
             layout.addWidget(buttons)
 
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                from constraints import DimensionalConstraint
+                from .constraints import DimensionalConstraint
                 dist = spin.value()
                 constraint = DimensionalConstraint(
                     item_a, grip_a, item, grip_idx, dist)
@@ -1453,7 +1453,7 @@ class SceneToolsMixin:
 
     def _compute_intersections(self, item, edge):
         """Compute intersection points between two geometry items."""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, CircleItem, ArcItem, RectangleItem, PolylineItem,
         )
 
@@ -1496,7 +1496,7 @@ class SceneToolsMixin:
         Only returns intersections in the forward direction from the
         extending endpoint (away from the interior of the item).
         """
-        from construction_geometry import LineItem, PolylineItem
+        from .construction_geometry import LineItem, PolylineItem
 
         raw_results: list[QPointF] = []
         extend_pt: QPointF | None = None
@@ -1583,7 +1583,7 @@ class SceneToolsMixin:
         """Return geometric representation of an item as list of tuples.
         Returns: [("line", p1, p2), ("circle", center, radius),
                   ("arc", center, radius, start_deg, span_deg)]"""
-        from construction_geometry import (
+        from .construction_geometry import (
             LineItem, CircleItem, ArcItem, RectangleItem, PolylineItem,
         )
         segs = []

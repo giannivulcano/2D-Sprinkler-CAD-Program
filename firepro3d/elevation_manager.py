@@ -14,13 +14,13 @@ from typing import TYPE_CHECKING
 from PyQt6.QtWidgets import QTabWidget
 from PyQt6.QtCore import QTimer
 
-from elevation_scene import ElevationScene
-from elevation_view import ElevationView
+from .elevation_scene import ElevationScene
+from .elevation_view import ElevationView
 
 if TYPE_CHECKING:
-    from Model_Space import Model_Space
-    from level_manager import LevelManager
-    from scale_manager import ScaleManager
+    from .model_space import Model_Space
+    from .level_manager import LevelManager
+    from .scale_manager import ScaleManager
 
 
 class ElevationManager:

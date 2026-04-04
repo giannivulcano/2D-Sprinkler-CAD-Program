@@ -18,7 +18,7 @@ import math
 
 from PyQt6.QtWidgets import QGraphicsRectItem, QGraphicsItem, QStyle
 from PyQt6.QtCore import Qt, QRectF, QPointF
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 from PyQt6.QtGui import QPen, QBrush, QColor, QPainterPath
 
 HAZARD_OPTIONS = [
@@ -442,7 +442,7 @@ class DesignArea(QGraphicsRectItem):
                 L = _fallback_side(spr, ppm)
 
             # Store display values on the sprinkler
-            from scale_manager import DisplayUnit
+            from .scale_manager import DisplayUnit
             S_mm = S / ppm
             L_mm = L / ppm
             if sm.display_unit == DisplayUnit.IMPERIAL:
@@ -526,7 +526,7 @@ class DesignArea(QGraphicsRectItem):
             r = self.rect()
             w_mm = r.width() / ppm
             h_mm = r.height() / ppm
-            from scale_manager import DisplayUnit
+            from .scale_manager import DisplayUnit
             if scale_manager.display_unit == DisplayUnit.METRIC_M:
                 area = (w_mm / 1000.0) * (h_mm / 1000.0)
                 self._properties["Area"]["value"] = f"{area:.1f} m\u00b2"

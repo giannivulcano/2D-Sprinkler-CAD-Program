@@ -28,15 +28,15 @@ from PyQt6.QtWidgets import (
     QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsPathItem,
 )
 
-from Annotations import DimensionAnnotation, NoteAnnotation
-from construction_geometry import (
+from .annotations import DimensionAnnotation, NoteAnnotation
+from .construction_geometry import (
     LineItem, RectangleItem, CircleItem, ArcItem,
     PolylineItem, ConstructionLine,
 )
-from geometry_intersect import _angle_in_arc
-from gridline import GridlineItem
-from pipe import Pipe
-from wall import WallSegment
+from .geometry_intersect import _angle_in_arc
+from .gridline import GridlineItem
+from .pipe import Pipe
+from .wall import WallSegment
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -195,7 +195,7 @@ class SnapEngine:
                            search_rect: QRectF,
                            exclude: QGraphicsItem | None):
         """Phase 1: Check all scene items in the search rect for basic snaps."""
-        from Annotations import HatchItem
+        from .annotations import HatchItem
         _skip_types = (DimensionAnnotation, NoteAnnotation, HatchItem)
 
         for item in scene.items(search_rect):

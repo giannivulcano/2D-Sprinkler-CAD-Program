@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from geometry_utils import triangulate_polygon
+from .geometry_utils import triangulate_polygon
 
 from PyQt6.QtWidgets import QGraphicsPathItem, QStyle, QGraphicsItem
 from PyQt6.QtCore import Qt, QPointF
@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
     QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF,
 )
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ def _scene_hit_width(item) -> float:
 
 # ── FloorSlab ────────────────────────────────────────────────────────────────
 
-from displayable_item import DisplayableItemMixin
+from .displayable_item import DisplayableItemMixin
 
 
 class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
@@ -152,7 +152,7 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
 
         # Section-cut hatch overlay
         if getattr(self, "_is_section_cut", False) and len(self._points) >= 3:
-            from displayable_item import draw_section_hatch
+            from .displayable_item import draw_section_hatch
             clip = QPainterPath()
             clip.addPolygon(QPolygonF(self._points))
             clip.closeSubpath()
@@ -257,7 +257,7 @@ class FloorSlab(DisplayableItemMixin, QGraphicsPathItem):
         """
         if isinstance(value, (int, float)):
             return float(value)
-        from scale_manager import ScaleManager
+        from .scale_manager import ScaleManager
         sc = self.scene()
         sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
         if sm:

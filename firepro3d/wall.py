@@ -20,9 +20,9 @@ from PyQt6.QtGui import (
 )
 
 if TYPE_CHECKING:
-    from wall_opening import WallOpening
+    from .wall_opening import WallOpening
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ def compute_wall_quad(
 
 # ── WallSegment ──────────────────────────────────────────────────────────────
 
-from displayable_item import DisplayableItemMixin
+from .displayable_item import DisplayableItemMixin
 
 
 class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
@@ -307,7 +307,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
         _show_section = (self._fill_mode in (FILL_HATCH, FILL_SECTION)
                          or getattr(self, "_is_section_cut", False))
         if _show_section:
-            from displayable_item import draw_section_hatch
+            from .displayable_item import draw_section_hatch
             clip = QPainterPath()
             clip.addPolygon(QPolygonF([p1l, p2l, p2r, p1r]))
             clip.closeSubpath()
@@ -466,7 +466,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
 
     def _open_edit_dialog(self):
         """Open the WallDialog to edit this wall's properties in-place."""
-        from wall_dialog import WallDialog
+        from .wall_dialog import WallDialog
         sc = self.scene()
         if sc is None:
             return
@@ -521,7 +521,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
         """
         if isinstance(value, (int, float)):
             return float(value)
-        from scale_manager import ScaleManager
+        from .scale_manager import ScaleManager
         sc = self.scene()
         sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
         if sm:

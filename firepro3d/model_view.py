@@ -6,8 +6,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QPoint, QPointF, QLineF, QRectF, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QPolygon, QFont
-import theme as th
-from snap_engine import SNAP_COLORS, SNAP_MARKERS
+from . import theme as th
+from .snap_engine import SNAP_COLORS, SNAP_MARKERS
 
 _DETAIL_BORDER_COLOR = "#4488cc"
 
@@ -764,7 +764,7 @@ class Model_View(QGraphicsView):
         menu.exec(event.globalPos())
 
     def _select_all_items(self):
-        from gridline import GridlineItem
+        from .gridline import GridlineItem
         scene = self.scene()
         if scene:
             scene.blockSignals(True)

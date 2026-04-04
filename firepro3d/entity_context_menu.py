@@ -57,7 +57,7 @@ def build_entity_context_menu(
 
     # ── Room-specific ──
     if on_auto_populate_room is not None:
-        from room import Room
+        from .room import Room
         if isinstance(target, Room):
             menu.addSeparator()
             act = menu.addAction("Auto-Populate Sprinklers\u2026")

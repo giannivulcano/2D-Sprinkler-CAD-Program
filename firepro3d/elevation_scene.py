@@ -27,13 +27,13 @@ from PyQt6.QtGui import QPen, QColor, QBrush, QFont, QPainterPath, QPainter
 
 from PyQt6.QtCore import QSettings
 
-from constants import DEFAULT_LEVEL
-import theme as th
+from .constants import DEFAULT_LEVEL
+from . import theme as th
 
 if TYPE_CHECKING:
-    from Model_Space import Model_Space
-    from level_manager import LevelManager
-    from scale_manager import ScaleManager
+    from .model_space import Model_Space
+    from .level_manager import LevelManager
+    from .scale_manager import ScaleManager
 
 # Data role for storing source entity reference on projected items
 _ROLE_SOURCE = Qt.ItemDataRole.UserRole
@@ -498,7 +498,7 @@ class ElevationScene(QGraphicsScene):
 
     def contextMenuEvent(self, event):
         """Show right-click context menu for elevation view entities."""
-        from entity_context_menu import build_entity_context_menu
+        from .entity_context_menu import build_entity_context_menu
 
         # Find entity under cursor
         target = None
@@ -772,7 +772,7 @@ class ElevationScene(QGraphicsScene):
     # ── Pipes ────────────────────────────────────────────────────────────
 
     def _project_pipes(self):
-        from constants import PIPE_COLORS as _PIPE_COLORS
+        from .constants import PIPE_COLORS as _PIPE_COLORS
         d = self._direction
         pipe_items: list[tuple[float, QGraphicsLineItem]] = []
 
@@ -1150,7 +1150,7 @@ class ElevationScene(QGraphicsScene):
         Returns (h_min, h_max) in world mm based on the actual gridline
         positions.  Falls back to DEFAULT_GRIDLINE_LENGTH_IN if no gridlines.
         """
-        from constants import DEFAULT_GRIDLINE_LENGTH_IN
+        from .constants import DEFAULT_GRIDLINE_LENGTH_IN
         ppm = self._ppm()
 
         gridlines = getattr(self._ms, "_gridlines", [])
@@ -1196,7 +1196,7 @@ class ElevationScene(QGraphicsScene):
         h_min, h_max = self._datum_extent()
 
         # Datum line pen — dash-dot-dash, weight matched to gridline
-        from gridline import BUBBLE_RADIUS_MM
+        from .gridline import BUBBLE_RADIUS_MM
         grid_props = self._gridline_display_props()
         grid_scale = grid_props.get("scale", 1.0)
         pen_w = max(1.0, BUBBLE_RADIUS_MM * 0.04 * grid_scale)

@@ -22,13 +22,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QRectF, QPointF, QTimer
 from PyQt6.QtGui import QPen, QBrush, QColor, QFont, QPainter, QPainterPath
 
-from gridline import BUBBLE_RADIUS_MM
-from constants import DEFAULT_LEVEL
+from .gridline import BUBBLE_RADIUS_MM
+from .constants import DEFAULT_LEVEL
 
 if TYPE_CHECKING:
-    from Model_Space import Model_Space
-    from level_manager import LevelManager
-    from scale_manager import ScaleManager
+    from .model_space import Model_Space
+    from .level_manager import LevelManager
+    from .scale_manager import ScaleManager
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -458,7 +458,7 @@ class DetailViewManager:
     def create_detail(self, name: str, crop_rect: QRectF,
                       level_name: str = DEFAULT_LEVEL) -> DetailMarker:
         """Create a detail marker and add it to the scene."""
-        from display_manager import apply_category_defaults
+        from .display_manager import apply_category_defaults
         marker = DetailMarker(name, crop_rect, level_name)
         marker._manager = self
         self._markers[name] = marker
@@ -485,7 +485,7 @@ class DetailViewManager:
             return None
 
         # Create a new plan view with clip rect
-        from Model_View import Model_View
+        from .model_view import Model_View
         view = Model_View(self._ms)
         view.setObjectName(f"detail_view_{name}")
         view._clip_rect = marker.crop_rect

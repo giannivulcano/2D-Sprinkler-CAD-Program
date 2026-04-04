@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from fire_curves import can_ulc_s101, constant_temperature, iso_834
+from .fire_curves import can_ulc_s101, constant_temperature, iso_834
 
 
 # ---------------------------------------------------------------------------

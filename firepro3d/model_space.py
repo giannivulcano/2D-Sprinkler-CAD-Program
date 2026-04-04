@@ -12,42 +12,42 @@ from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import (QPen, QBrush, QColor, QPixmap, QPainterPath, QFont,
                           QCursor, QDoubleValidator, QImage, QPolygonF)
 from PyQt6.QtPdf import QPdfDocument, QPdfDocumentRenderOptions
-from node import Node
-from pipe import Pipe
-from sprinkler import Sprinkler
-from sprinkler_system import SprinklerSystem
-from CAD_Math import CAD_Math
-from Annotations import Annotation, DimensionAnnotation, NoteAnnotation, HatchItem
-from underlay import Underlay
-from scale_manager import ScaleManager
-from calibrate_dialog import CalibrateDialog
-from roof_dialog import RoofDialog
-from underlay_context_menu import UnderlayContextMenu
-from dxf_import_worker import DxfImportWorker
-from water_supply import WaterSupply
-from design_area import DesignArea
-from construction_geometry import (
+from .node import Node
+from .pipe import Pipe
+from .sprinkler import Sprinkler
+from .sprinkler_system import SprinklerSystem
+from .cad_math import CAD_Math
+from .annotations import Annotation, DimensionAnnotation, NoteAnnotation, HatchItem
+from .underlay import Underlay
+from .scale_manager import ScaleManager
+from .calibrate_dialog import CalibrateDialog
+from .roof_dialog import RoofDialog
+from .underlay_context_menu import UnderlayContextMenu
+from .dxf_import_worker import DxfImportWorker
+from .water_supply import WaterSupply
+from .design_area import DesignArea
+from .construction_geometry import (
     ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem, ArcItem,
 )
-from snap_engine import SnapEngine, OsnapResult
-from display_manager import apply_category_defaults
-from gridline import GridlineItem, reset_grid_counters
-from view_marker import ViewMarkerArrow
-from constants import (Z_BELOW_GEOMETRY, DEFAULT_LEVEL, DEFAULT_USER_LAYER,
+from .snap_engine import SnapEngine, OsnapResult
+from .display_manager import apply_category_defaults
+from .gridline import GridlineItem, reset_grid_counters
+from .view_marker import ViewMarkerArrow
+from .constants import (Z_BELOW_GEOMETRY, DEFAULT_LEVEL, DEFAULT_USER_LAYER,
                        DEFAULT_CEILING_OFFSET_MM)
-from wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_MM
-from floor_slab import FloorSlab
-from roof import RoofItem
-from room import Room
-from wall_opening import WallOpening, DoorOpening, WindowOpening
-from constraints import Constraint as ConstraintBase
-from user_layer_manager import lw_mm_to_cosmetic_px
-import geometry_intersect as gi
+from .wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_MM
+from .floor_slab import FloorSlab
+from .roof import RoofItem
+from .room import Room
+from .wall_opening import WallOpening, DoorOpening, WindowOpening
+from .constraints import Constraint as ConstraintBase
+from .user_layer_manager import lw_mm_to_cosmetic_px
+from . import geometry_intersect as gi
 import os
 
 
-from scene_io import SceneIOMixin
-from scene_tools import SceneToolsMixin
+from .scene_io import SceneIOMixin
+from .scene_tools import SceneToolsMixin
 
 
 class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
@@ -824,7 +824,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         QSettings on Windows can round-trip bools inconsistently. This ensures
         all visibility flags are stored as ``"true"``/``"false"`` strings.
         """
-        from display_manager import _CATEGORIES
+        from .display_manager import _CATEGORIES
         from PyQt6.QtCore import QSettings
         settings = QSettings("GV", "FirePro3D")
         repaired = False
@@ -910,7 +910,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         This avoids the full apply_category_defaults → _apply_fitting → align_fitting
         chain which can displace the symbol if called at the wrong time.
         """
-        from display_manager import _set_svg_tint, _CATEGORIES
+        from .display_manager import _set_svg_tint, _CATEGORIES
         from PyQt6.QtCore import QSettings
         cat_def = next((c for c in _CATEGORIES if c["key"] == "Fitting"), None)
         if cat_def is None or fitting.symbol is None:
@@ -1010,7 +1010,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         Returns an error message string, or None if the connection is valid.
         """
-        from fitting import Fitting
+        from .fitting import Fitting
         pipes = node.pipes
         if len(pipes) != 3:
             return "A 4th branch can only be added to a tee fitting."
@@ -1566,7 +1566,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     ceiling_offset = sprinkler_offset - (ceil_level_elev - room_ceiling_elev)
 
         # Build a temporary Sprinkler as template for set_properties
-        from sprinkler import Sprinkler
+        from .sprinkler import Sprinkler
         temp_spr = Sprinkler(None)
         temp_spr._properties["Manufacturer"]["value"] = sprinkler_record.manufacturer
         temp_spr._properties["Model"]["value"] = sprinkler_record.model
@@ -2595,7 +2595,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     pass  # skip malformed constraint data
 
             # Re-apply display settings (category defaults + per-item overrides)
-            from display_manager import apply_saved_display_settings
+            from .display_manager import apply_saved_display_settings
             apply_saved_display_settings(self)
 
             # Re-apply level visibility
@@ -2685,7 +2685,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def run_hydraulics(self, design_sprinklers=None):
         """Run the Hazen-Williams solver and store results for overlay display."""
-        from hydraulic_solver import HydraulicSolver
+        from .hydraulic_solver import HydraulicSolver
         solver = HydraulicSolver(self.sprinkler_system, self.scale_manager)
         result = solver.solve(design_sprinklers=design_sprinklers)
         self.hydraulic_result = result
@@ -2693,7 +2693,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         for pipe in self.sprinkler_system.pipes:
             pipe.update_label()
             pipe.update()
-        from hydraulic_node_badge import best_position_for_node
+        from .hydraulic_node_badge import best_position_for_node
 
         # Group major nodes by 2D scene position to detect overlaps (vertical drops)
         pos_groups: dict[tuple, list] = {}
@@ -2916,7 +2916,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def _get_geometry_template(self):
         """Return (lazily-created) geometry template for line/rect/circle/polyline."""
-        from construction_geometry import GeometryTemplate
+        from .construction_geometry import GeometryTemplate
         if self._geometry_template is None:
             self._geometry_template = GeometryTemplate()
             self._geometry_template.user_layer = self.active_user_layer
@@ -3540,8 +3540,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             # Style preview from current template
             template = getattr(self, "current_template", None)
             if template:
-                from pipe import Pipe
-                from constants import PIPE_COLORS
+                from .pipe import Pipe
+                from .constants import PIPE_COLORS
                 col_name = template._properties.get("Colour", {}).get("value", "Red")
                 color = QColor(PIPE_COLORS.get(col_name, "#e62828"))
                 width = Pipe.display_width_mm(template)
@@ -6496,8 +6496,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def _show_entity_context_menu(self, target, screen_pos):
         """Build and show the right-click context menu for scene entities."""
-        from entity_context_menu import build_entity_context_menu
-        from room import Room
+        from .entity_context_menu import build_entity_context_menu
+        from .room import Room
 
         selected = self.selectedItems()
         menu = build_entity_context_menu(
@@ -6521,8 +6521,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def _auto_populate_room_dialog(self, room):
         """Open the auto-populate dialog for a room and place sprinklers."""
-        from auto_populate_dialog import AutoPopulateDialog
-        from sprinkler_db import SprinklerDatabase
+        from .auto_populate_dialog import AutoPopulateDialog
+        from .sprinkler_db import SprinklerDatabase
 
         db = SprinklerDatabase()
         dlg = AutoPopulateDialog(
@@ -6559,8 +6559,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def _show_all_hidden(self):
         """Restore visibility for all manually hidden items."""
-        from floor_slab import FloorSlab
-        from room import Room
+        from .floor_slab import FloorSlab
+        from .room import Room
         for item in self.items():
             if hasattr(item, "_display_overrides"):
                 if item._display_overrides.get("visible") is False:
@@ -7095,7 +7095,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 self._construction_lines.append(item)
 
             elif obj_type == "block_item":
-                from block_item import BlockItem
+                from .block_item import BlockItem
                 def _item_factory(d):
                     t = d.get("type", "")
                     if t == "draw_line":

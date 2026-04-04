@@ -25,11 +25,11 @@ from PyQt6.QtGui import (
     QPen, QColor, QBrush, QPolygonF, QFont, QPainter, QPainterPath,
 )
 
-from constants import DEFAULT_LEVEL
-from gridline import BUBBLE_RADIUS_MM, GRID_COLOR
+from .constants import DEFAULT_LEVEL
+from .gridline import BUBBLE_RADIUS_MM, GRID_COLOR
 
 if TYPE_CHECKING:
-    from Model_Space import Model_Space
+    from .model_space import Model_Space
 
 
 # ─────────────────────────────────────────────────────────────────────────────

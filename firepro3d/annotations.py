@@ -7,7 +7,7 @@
 
 # annotations.py
 import math
-from CAD_Math import CAD_Math
+from .cad_math import CAD_Math
 from PyQt6.QtWidgets import (
     QGraphicsTextItem, QGraphicsLineItem,
     QGraphicsPolygonItem, QGraphicsPathItem,
@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPen, QColor, QPolygonF, QFont, QPainter, QTextOption, QPainterPath, QPainterPathStroker, QBrush
 from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 class Annotation:
     """Base class for CAD annotations."""

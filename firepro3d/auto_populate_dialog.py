@@ -28,10 +28,10 @@ from PyQt6.QtGui import (
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSettings, QByteArray
 
 if TYPE_CHECKING:
-    from room import Room
-    from sprinkler_db import SprinklerDatabase, SprinklerRecord
-    from level_manager import LevelManager
-    from scale_manager import ScaleManager
+    from .room import Room
+    from .sprinkler_db import SprinklerDatabase, SprinklerRecord
+    from .level_manager import LevelManager
+    from .scale_manager import ScaleManager
 
 # ─────────────────────────────────────────────────────────────────────────────
 # NFPA 13 Data

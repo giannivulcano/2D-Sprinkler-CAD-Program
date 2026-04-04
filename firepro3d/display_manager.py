@@ -24,7 +24,7 @@ from PyQt6.QtSvg import QSvgRenderer
 
 import os
 import xml.etree.ElementTree as ET
-import theme as th
+from . import theme as th
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,7 @@ def _make_fill_icon(mode: str, hex_color: str, w: int = 40, h: int = 20,
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     col = QColor(hex_color)
     if mode == "hatch":
-        from hatch_patterns import make_hatch_brush
+        from .hatch_patterns import make_hatch_brush
         p.fillRect(0, 0, w, h, QColor("#2b2b2b"))
         brush = make_hatch_brush(pattern, min(w, h), col)
         p.setBrush(brush)
@@ -391,15 +391,15 @@ def apply_display_to_item(item, color: str | None, scale: float,
     """Apply display settings to *item* (Pipe, Sprinkler, Fitting, Node,
     WaterSupply, GridlineItem, or HydraulicNodeBadge).  Called both by the
     live-preview loop and at project load."""
-    from pipe import Pipe
-    from sprinkler import Sprinkler
-    from fitting import Fitting
-    from water_supply import WaterSupply
-    from node import Node
-    from gridline import GridlineItem
-    from hydraulic_node_badge import HydraulicNodeBadge
-    from wall import WallSegment
-    from room import Room
+    from .pipe import Pipe
+    from .sprinkler import Sprinkler
+    from .fitting import Fitting
+    from .water_supply import WaterSupply
+    from .node import Node
+    from .gridline import GridlineItem
+    from .hydraulic_node_badge import HydraulicNodeBadge
+    from .wall import WallSegment
+    from .room import Room
 
     if isinstance(item, Pipe):
         _apply_pipe(item, color, scale, opacity, visible, font_size)
@@ -626,15 +626,15 @@ def apply_category_defaults(item):
     Call this whenever a new item is added to the scene so it inherits
     the user's current Display Manager preferences.
     """
-    from pipe import Pipe
-    from sprinkler import Sprinkler
-    from fitting import Fitting
-    from water_supply import WaterSupply
-    from node import Node
-    from gridline import GridlineItem
-    from hydraulic_node_badge import HydraulicNodeBadge
-    from wall import WallSegment
-    from room import Room
+    from .pipe import Pipe
+    from .sprinkler import Sprinkler
+    from .fitting import Fitting
+    from .water_supply import WaterSupply
+    from .node import Node
+    from .gridline import GridlineItem
+    from .hydraulic_node_badge import HydraulicNodeBadge
+    from .wall import WallSegment
+    from .room import Room
 
     if isinstance(item, Pipe):
         key = "Pipe"
@@ -718,7 +718,7 @@ class SectionPatternDialog(QDialog):
     def __init__(self, current_color: str, current_pattern: str,
                  current_scale: float = 1.0, parent=None):
         super().__init__(parent)
-        from hatch_patterns import PATTERN_NAMES
+        from .hatch_patterns import PATTERN_NAMES
         self._pattern_names = PATTERN_NAMES
 
         self.setWindowTitle("Section Pattern")
@@ -871,7 +871,7 @@ class DisplayManager(QDialog):
                 }
 
         # Snapshot gridline pen/brush colours
-        from gridline import GridlineItem
+        from .gridline import GridlineItem
         for item in self._scene.items():
             if isinstance(item, GridlineItem):
                 self._snapshot[id(item)] = {
@@ -898,12 +898,12 @@ class DisplayManager(QDialog):
 
     def _restore_snapshot(self):
         """Revert every item to its snapshotted state."""
-        from fitting import Fitting
-        from pipe import Pipe
-        from sprinkler import Sprinkler
-        from water_supply import WaterSupply
-        from gridline import GridlineItem
-        from hydraulic_node_badge import HydraulicNodeBadge
+        from .fitting import Fitting
+        from .pipe import Pipe
+        from .sprinkler import Sprinkler
+        from .water_supply import WaterSupply
+        from .gridline import GridlineItem
+        from .hydraulic_node_badge import HydraulicNodeBadge
 
         for item in self._iter_all_items():
             snap = self._snapshot.get(id(item))
@@ -997,8 +997,8 @@ class DisplayManager(QDialog):
 
     def _iter_all_items(self):
         """Yield every fire-suppression QGraphicsItem in the scene."""
-        from gridline import GridlineItem
-        from hydraulic_node_badge import HydraulicNodeBadge
+        from .gridline import GridlineItem
+        from .hydraulic_node_badge import HydraulicNodeBadge
         ss = self._scene.sprinkler_system
         yield from ss.pipes
         for node in ss.nodes:
@@ -1053,13 +1053,13 @@ class DisplayManager(QDialog):
         Returns a dict with keys: color, fill, scale, opacity, visible, font.
         This ensures the dialog always reflects what is actually on screen.
         """
-        from gridline import GridlineItem
-        from pipe import Pipe
-        from fitting import Fitting
-        from sprinkler import Sprinkler
-        from water_supply import WaterSupply
-        from hydraulic_node_badge import HydraulicNodeBadge
-        from wall import WallSegment
+        from .gridline import GridlineItem
+        from .pipe import Pipe
+        from .fitting import Fitting
+        from .sprinkler import Sprinkler
+        from .water_supply import WaterSupply
+        from .hydraulic_node_badge import HydraulicNodeBadge
+        from .wall import WallSegment
 
         cat_def = next(c for c in _CATEGORIES if c["key"] == category_key)
 
@@ -1843,7 +1843,7 @@ class DisplayManager(QDialog):
 
     def _apply_preview(self):
         """Apply current dialog state to all scene items (live preview)."""
-        from fitting import Fitting
+        from .fitting import Fitting
 
         elev_dirty = False
         for cat_def in _CATEGORIES:
@@ -2038,8 +2038,8 @@ def apply_project_display_settings(scene, display_dict: dict):
 
 def _items_for_category_static(scene, key: str) -> list:
     """Same as DisplayManager._items_for_category but as a free function."""
-    from gridline import GridlineItem
-    from hydraulic_node_badge import HydraulicNodeBadge
+    from .gridline import GridlineItem
+    from .hydraulic_node_badge import HydraulicNodeBadge
     ss = scene.sprinkler_system
     if key == "Pipe":
         return list(ss.pipes)

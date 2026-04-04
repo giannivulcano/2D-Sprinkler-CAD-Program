@@ -132,7 +132,7 @@ class HydraulicNodeBadge(QGraphicsSvgItem):
 
     def _centre_on_offset(self):
         """Scale SVG to badge size and position at the current offset."""
-        from displayable_item import centre_svg_on_origin
+        from .displayable_item import centre_svg_on_origin
         centre_svg_on_origin(self, _BADGE_DIAMETER_MM)
 
         offset = QPointF(_POSITION_OFFSETS.get(self._badge_position, QPointF(0, 0)))

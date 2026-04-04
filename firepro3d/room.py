@@ -23,13 +23,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPen, QColor, QBrush, QPolygonF, QFont, QPainterPath, QPainter
 from PyQt6.QtCore import Qt, QPointF
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
 
 if TYPE_CHECKING:
-    from scale_manager import ScaleManager
+    from .scale_manager import ScaleManager
 
 # ── NFPA 13 coverage limits — imported from constants.py ─────────────────
-from constants import HAZARD_CLASSES, NFPA_MAX_COVERAGE_SQFT as _NFPA_MAX_COVERAGE_SQFT
+from .constants import HAZARD_CLASSES, NFPA_MAX_COVERAGE_SQFT as _NFPA_MAX_COVERAGE_SQFT
 
 
 # NFPA 13 ceiling construction types — determines max spacing and
@@ -71,7 +71,7 @@ class _RoundedRectBgItem(QGraphicsRectItem):
 # ── Room class ──────────────────────────────────────────────────────────
 
 
-from displayable_item import DisplayableItemMixin
+from .displayable_item import DisplayableItemMixin
 
 
 class Room(DisplayableItemMixin, QGraphicsPolygonItem):
@@ -349,7 +349,7 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         sm = self._get_scale_manager()
         if sm is None:
             return f"{mm2:.0f} mm²"
-        from scale_manager import DisplayUnit
+        from .scale_manager import DisplayUnit
         if sm._display_unit == DisplayUnit.IMPERIAL:
             sqft = mm2 / (304.8 ** 2)
             return f"{sqft:.1f} sq ft"
@@ -362,7 +362,7 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         sm = self._get_scale_manager()
         if sm is None:
             return f"{mm3:.0f} mm³"
-        from scale_manager import DisplayUnit
+        from .scale_manager import DisplayUnit
         if sm._display_unit == DisplayUnit.IMPERIAL:
             cuft = mm3 / (304.8 ** 3)
             return f"{cuft:.0f} cu ft"

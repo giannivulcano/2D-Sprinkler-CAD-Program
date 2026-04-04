@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import QSettings
-import theme as th
+from . import theme as th
 
 
 # Default colours per component type

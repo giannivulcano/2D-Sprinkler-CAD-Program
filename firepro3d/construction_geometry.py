@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF
 from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF
-from constants import DEFAULT_USER_LAYER
-from constants import DEFAULT_LEVEL
+from .constants import DEFAULT_USER_LAYER
+from .constants import DEFAULT_LEVEL
 
 
 # ─────────────────────────────────────────────────────────────────────────────

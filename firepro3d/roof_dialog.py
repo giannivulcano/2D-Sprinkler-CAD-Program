@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QPixmap, QPainter, QPen, QFont, QPolygonF
 from PyQt6.QtCore import Qt, QPointF
 
-from roof import ROOF_TYPES, DEFAULT_PITCH_DEG
-from scale_manager import DisplayUnit
-from dimension_edit import DimensionEdit
+from .roof import ROOF_TYPES, DEFAULT_PITCH_DEG
+from .scale_manager import DisplayUnit
+from .dimension_edit import DimensionEdit
 
 # Path where user-supplied images will live (one per roof type).
 _IMG_DIR = os.path.join(os.path.dirname(__file__), "graphics", "roof_types")

@@ -17,12 +17,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor, QBrush
 
-import theme as th
-from wall import WallSegment
-from floor_slab import FloorSlab
-from wall_opening import DoorOpening, WindowOpening
-from pipe import Pipe
-from node import Node
+from . import theme as th
+from .wall import WallSegment
+from .floor_slab import FloorSlab
+from .wall_opening import DoorOpening, WindowOpening
+from .pipe import Pipe
+from .node import Node
 
 
 _ROLE_ENTITY = Qt.ItemDataRole.UserRole  # stores Python id() of the entity

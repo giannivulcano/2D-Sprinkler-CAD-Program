@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from geometry_utils import triangulate_polygon
+from .geometry_utils import triangulate_polygon
 
 from PyQt6.QtWidgets import QGraphicsPathItem, QStyle, QGraphicsItem
 from PyQt6.QtCore import Qt, QPointF
@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
     QPen, QColor, QPainterPath, QBrush, QPainterPathStroker, QPolygonF,
 )
 
-from constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, Z_ROOF
+from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, Z_ROOF
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ def _offset_polygon(points: list[QPointF], dist: float) -> list[QPointF]:
     return result if len(result) >= 3 else list(points)
 
 
-from geometry_intersect import line_line_intersection_unbounded as _line_intersect
+from .geometry_intersect import line_line_intersection_unbounded as _line_intersect
 
 
 def _scene_hit_width(item) -> float:
@@ -104,7 +104,7 @@ def _scene_hit_width(item) -> float:
 
 # ── RoofItem ─────────────────────────────────────────────────────────────────
 
-from displayable_item import DisplayableItemMixin
+from .displayable_item import DisplayableItemMixin
 
 
 class RoofItem(DisplayableItemMixin, QGraphicsPathItem):
@@ -432,7 +432,7 @@ class RoofItem(DisplayableItemMixin, QGraphicsPathItem):
 
     def _open_edit_dialog(self):
         """Open the RoofDialog to edit this roof's properties in-place."""
-        from roof_dialog import RoofDialog
+        from .roof_dialog import RoofDialog
         sc = self.scene()
         if sc is None:
             return
@@ -484,7 +484,7 @@ class RoofItem(DisplayableItemMixin, QGraphicsPathItem):
         """
         if isinstance(value, (int, float)):
             return float(value)
-        from scale_manager import ScaleManager
+        from .scale_manager import ScaleManager
         sc = self.scene()
         sm = sc.scale_manager if sc and hasattr(sc, "scale_manager") else self._scale_manager_ref
         if sm:
