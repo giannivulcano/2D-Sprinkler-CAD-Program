@@ -814,6 +814,387 @@ def _min_dist_to_boundary(pt: QPointF, boundary: list[QPointF]) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Voronoi Relaxation Algorithm
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_voronoi_relaxation(
+    boundary: list[QPointF],
+    max_coverage_sqft: float,
+    max_spacing_ft: float,
+    min_spacing_ft: float = NFPA_MIN_SPACING_FT,
+    min_wall_dist_in: float = NFPA_MIN_WALL_DIST_IN,
+    alpha: float = 0.3,
+    max_iter: int = 50,
+    tolerance_mm: float = 1.0,
+    mesh_res_mm: float = 152.4,
+    **kwargs,
+) -> tuple[list[QPointF], float, float, str]:
+    """Compute sprinkler positions using Voronoi relaxation.
+
+    1. Generate a uniform initial grid inside the room boundary.
+    2. Iteratively move sprinklers toward the centroids of their
+       Voronoi cells (Lloyd's algorithm) while enforcing NFPA
+       spacing and wall-distance constraints.
+
+    Returns (positions, avg_spacing_x_ft, avg_spacing_y_ft, calc_log).
+    """
+    import numpy as np
+
+    log_lines: list[str] = []
+    log = log_lines.append
+
+    if len(boundary) < 3:
+        return [], 0.0, 0.0, ""
+
+    # ── Unit conversions ─────────────────────────────────────────────
+    max_cov_mm2 = max_coverage_sqft * SQFT_TO_MM2
+    s_max_mm = max_spacing_ft * FT_TO_MM
+    s_min_mm = min_spacing_ft * FT_TO_MM
+    wall_mm = min_wall_dist_in * IN_TO_MM
+    s_target = min(s_max_mm, math.sqrt(max_cov_mm2))
+
+    log(f"Voronoi Relaxation — alpha={alpha}, max_iter={max_iter}")
+    log(f"S_target: {s_target / FT_TO_MM:.2f} ft  "
+        f"S_max: {max_spacing_ft:.1f} ft  S_min: {min_spacing_ft:.1f} ft")
+    log(f"Mesh resolution: {mesh_res_mm:.1f} mm ({mesh_res_mm / IN_TO_MM:.1f} in)")
+    log("")
+
+    # ── Build boundary path ──────────────────────────────────────────
+    path = QPainterPath()
+    path.addPolygon(QPolygonF(boundary))
+    path.closeSubpath()
+
+    xs = [p.x() for p in boundary]
+    ys = [p.y() for p in boundary]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    def _inside(px, py):
+        return path.contains(QPointF(px, py))
+
+    # ── Helper: project point to nearest boundary edge ───────────────
+    def _project_inside(px, py):
+        """If (px, py) is outside, project to nearest boundary point."""
+        if _inside(px, py):
+            return px, py
+        best_d2 = float("inf")
+        best = (px, py)
+        for i in range(len(boundary)):
+            ax, ay = boundary[i].x(), boundary[i].y()
+            bx, by = boundary[(i + 1) % len(boundary)].x(), boundary[(i + 1) % len(boundary)].y()
+            # Project onto segment
+            dx, dy = bx - ax, by - ay
+            seg_len2 = dx * dx + dy * dy
+            if seg_len2 < 1e-10:
+                t = 0.0
+            else:
+                t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg_len2))
+            cx, cy = ax + t * dx, ay + t * dy
+            d2 = (px - cx) ** 2 + (py - cy) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best = (cx, cy)
+        return best
+
+    # ── Helper: push point inward by wall offset ─────────────────────
+    def _enforce_wall_dist(px, py):
+        """Push point inward if too close to any boundary edge."""
+        for i in range(len(boundary)):
+            ax, ay = boundary[i].x(), boundary[i].y()
+            bx, by = boundary[(i + 1) % len(boundary)].x(), boundary[(i + 1) % len(boundary)].y()
+            dx, dy = bx - ax, by - ay
+            seg_len = math.sqrt(dx * dx + dy * dy)
+            if seg_len < 1e-10:
+                continue
+            # Distance from point to line
+            cross = abs((px - ax) * dy - (py - ay) * dx) / seg_len
+            if cross < wall_mm:
+                # Push inward: normal direction toward interior
+                nx, ny = -dy / seg_len, dx / seg_len
+                mid_x = (ax + bx) / 2 + nx
+                mid_y = (ay + by) / 2 + ny
+                if not _inside(mid_x, mid_y):
+                    nx, ny = -nx, -ny
+                push = wall_mm - cross
+                px += nx * push
+                py += ny * push
+        return px, py
+
+    # ── Step 1: Initial grid ─────────────────────────────────────────
+    grid = []
+    x = x_min + wall_mm
+    while x <= x_max - wall_mm:
+        y = y_min + wall_mm
+        while y <= y_max - wall_mm:
+            if _inside(x, y):
+                grid.append([x, y])
+            y += s_target
+        x += s_target
+
+    if not grid:
+        # Fallback: place one at centroid
+        cx = sum(xs) / len(xs)
+        cy = sum(ys) / len(ys)
+        grid.append([cx, cy])
+
+    sprinklers = np.array(grid, dtype=np.float64)
+    n_initial = len(sprinklers)
+    log(f"Initial grid: {n_initial} sprinklers")
+
+    # ── Step 2: Generate mesh points ─────────────────────────────────
+    mesh = []
+    mx = x_min
+    while mx <= x_max:
+        my = y_min
+        while my <= y_max:
+            if _inside(mx, my):
+                mesh.append([mx, my])
+            my += mesh_res_mm
+        mx += mesh_res_mm
+    mesh = np.array(mesh, dtype=np.float64)
+    log(f"Mesh points: {len(mesh)}")
+    log("")
+
+    if len(mesh) == 0:
+        positions = [QPointF(p[0], p[1]) for p in sprinklers]
+        return positions, 0.0, 0.0, "\n".join(log_lines)
+
+    # ── Step 3: Voronoi relaxation loop ──────────────────────────────
+    prev_positions = sprinklers.copy()
+
+    for iteration in range(max_iter):
+        n_spr = len(sprinklers)
+        if n_spr == 0:
+            break
+
+        # Assign each mesh point to nearest sprinkler using KDTree
+        from scipy.spatial import KDTree
+        tree = KDTree(sprinklers)
+        _, nearest = tree.query(mesh)  # nearest: (M,)
+
+        # Compute centroids
+        centroids = np.zeros_like(sprinklers)
+        counts = np.zeros(n_spr, dtype=np.int64)
+        for m_idx in range(len(mesh)):
+            s_idx = nearest[m_idx]
+            centroids[s_idx] += mesh[m_idx]
+            counts[s_idx] += 1
+
+        # Move toward centroids
+        for i in range(n_spr):
+            if counts[i] > 0:
+                cx = centroids[i, 0] / counts[i]
+                cy = centroids[i, 1] / counts[i]
+                sprinklers[i, 0] += alpha * (cx - sprinklers[i, 0])
+                sprinklers[i, 1] += alpha * (cy - sprinklers[i, 1])
+
+        # Enforce constraints
+        for i in range(len(sprinklers)):
+            px, py = sprinklers[i]
+            # Project back into boundary
+            px, py = _project_inside(px, py)
+            # Enforce wall distance
+            px, py = _enforce_wall_dist(px, py)
+            # Ensure still inside after push
+            if not _inside(px, py):
+                px, py = _project_inside(px, py)
+            sprinklers[i] = [px, py]
+
+        # Merge points closer than S_min
+        merged = []
+        used = set()
+        for i in range(len(sprinklers)):
+            if i in used:
+                continue
+            cluster = [sprinklers[i]]
+            for j in range(i + 1, len(sprinklers)):
+                if j in used:
+                    continue
+                d = math.sqrt((sprinklers[i, 0] - sprinklers[j, 0]) ** 2 +
+                              (sprinklers[i, 1] - sprinklers[j, 1]) ** 2)
+                if d < s_min_mm:
+                    cluster.append(sprinklers[j])
+                    used.add(j)
+            # Average the cluster
+            avg = np.mean(cluster, axis=0)
+            merged.append(avg)
+            used.add(i)
+        sprinklers = np.array(merged, dtype=np.float64)
+
+        # Check convergence
+        if len(sprinklers) == len(prev_positions):
+            displacements = np.sqrt(np.sum(
+                (sprinklers - prev_positions) ** 2, axis=1))
+            max_disp = np.max(displacements)
+            if max_disp < tolerance_mm:
+                log(f"Converged at iteration {iteration + 1} "
+                    f"(max displacement: {max_disp:.2f} mm)")
+                break
+        prev_positions = sprinklers.copy()
+
+    else:
+        log(f"Reached max iterations ({max_iter})")
+
+    log(f"Final: {len(sprinklers)} sprinklers")
+
+    # ── Step 4: Compute average spacing ──────────────────────────────
+    avg_sx_mm = s_target
+    avg_sy_mm = s_target
+    if len(sprinklers) >= 2:
+        # Average nearest-neighbor distance as proxy for spacing
+        all_dists = []
+        for i in range(len(sprinklers)):
+            min_d = float("inf")
+            for j in range(len(sprinklers)):
+                if i == j:
+                    continue
+                d = math.sqrt((sprinklers[i, 0] - sprinklers[j, 0]) ** 2 +
+                              (sprinklers[i, 1] - sprinklers[j, 1]) ** 2)
+                if d < min_d:
+                    min_d = d
+            all_dists.append(min_d)
+        avg_nn = sum(all_dists) / len(all_dists) if all_dists else s_target
+        avg_sx_mm = avg_nn
+        avg_sy_mm = avg_nn
+        log(f"Avg nearest-neighbor spacing: {avg_nn / FT_TO_MM:.2f} ft")
+
+    # ── Step 5: Post-processing — snap-align close X/Y values ────────
+    align_tol = kwargs.get("align_tolerance_mm", 25.0)
+    if len(sprinklers) >= 2 and align_tol > 0:
+        log("")
+        log(f"Post-processing: aligning X/Y within {align_tol:.0f} mm tolerance")
+
+        # Align X values
+        x_vals = sprinklers[:, 0].copy()
+        x_sorted_idx = np.argsort(x_vals)
+        x_groups: list[list[int]] = []
+        current_group: list[int] = [x_sorted_idx[0]]
+        for k in range(1, len(x_sorted_idx)):
+            if abs(x_vals[x_sorted_idx[k]] - x_vals[x_sorted_idx[k - 1]]) <= align_tol:
+                current_group.append(x_sorted_idx[k])
+            else:
+                x_groups.append(current_group)
+                current_group = [x_sorted_idx[k]]
+        x_groups.append(current_group)
+
+        x_aligned = 0
+        for grp in x_groups:
+            if len(grp) > 1:
+                avg_x = np.mean(sprinklers[grp, 0])
+                for idx in grp:
+                    sprinklers[idx, 0] = avg_x
+                x_aligned += len(grp)
+
+        # Align Y values
+        y_vals = sprinklers[:, 1].copy()
+        y_sorted_idx = np.argsort(y_vals)
+        y_groups: list[list[int]] = []
+        current_group = [y_sorted_idx[0]]
+        for k in range(1, len(y_sorted_idx)):
+            if abs(y_vals[y_sorted_idx[k]] - y_vals[y_sorted_idx[k - 1]]) <= align_tol:
+                current_group.append(y_sorted_idx[k])
+            else:
+                y_groups.append(current_group)
+                current_group = [y_sorted_idx[k]]
+        y_groups.append(current_group)
+
+        y_aligned = 0
+        for grp in y_groups:
+            if len(grp) > 1:
+                avg_y = np.mean(sprinklers[grp, 1])
+                for idx in grp:
+                    sprinklers[idx, 1] = avg_y
+                y_aligned += len(grp)
+
+        log(f"Aligned {x_aligned} X-values, {y_aligned} Y-values")
+
+    positions = [QPointF(p[0], p[1]) for p in sprinklers]
+    sx_ft = avg_sx_mm / FT_TO_MM
+    sy_ft = avg_sy_mm / FT_TO_MM
+
+    return positions, sx_ft, sy_ft, "\n".join(log_lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Algorithm Parameters Dialog
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class AlgorithmParamsDialog(QDialog):
+    """Small dialog for tweaking algorithm-specific parameters before running."""
+
+    # Default parameter sets per algorithm
+    _DEFAULTS = {
+        "voronoi_relaxation": {
+            "alpha": ("Relaxation Factor (α)", 0.3, 0.01, 1.0, 2,
+                      "How aggressively sprinklers move toward Voronoi centroids each iteration.\n"
+                      "Lower = more stable, higher = faster convergence."),
+            "max_iter": ("Max Iterations", 50, 1, 500, 0,
+                         "Maximum number of relaxation iterations before stopping."),
+            "tolerance_mm": ("Convergence Tolerance (mm)", 1.0, 0.1, 50.0, 1,
+                             "Stop iterating when max displacement is below this value."),
+            "mesh_res_mm": ("Mesh Resolution (mm)", 152.4, 25.0, 500.0, 1,
+                            "Resolution of the point mesh used for Voronoi cell computation.\n"
+                            "Lower = more accurate but slower."),
+            "align_tolerance_mm": ("Alignment Tolerance (mm)", 25.0, 0.0, 100.0, 1,
+                                   "Post-processing: snap sprinklers with X or Y values\n"
+                                   "within this distance to their average.  0 = disabled."),
+        },
+        "grid_uniform": {},
+    }
+
+    def __init__(self, algo_key: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Algorithm Parameters")
+        self._algo_key = algo_key
+        self._params: dict[str, float] = {}
+        self._spin_map: dict[str, object] = {}
+
+        layout = QVBoxLayout(self)
+        defs = self._DEFAULTS.get(algo_key, {})
+
+        if not defs:
+            layout.addWidget(QLabel("No configurable parameters for this algorithm."))
+        else:
+            form = QFormLayout()
+            from PyQt6.QtWidgets import QDoubleSpinBox, QSpinBox
+            for key, (label, default, lo, hi, decimals, tooltip) in defs.items():
+                if decimals == 0:
+                    spin = QSpinBox()
+                    spin.setRange(int(lo), int(hi))
+                    spin.setValue(int(default))
+                else:
+                    spin = QDoubleSpinBox()
+                    spin.setRange(lo, hi)
+                    spin.setDecimals(decimals)
+                    spin.setSingleStep(10 ** (-decimals))
+                    spin.setValue(default)
+                spin.setToolTip(tooltip)
+                lbl = QLabel(label)
+                lbl.setToolTip(tooltip)
+                form.addRow(lbl, spin)
+                self._spin_map[key] = spin
+                self._params[key] = default
+            layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.resize(380, 40 + 35 * max(1, len(defs)))
+
+    def params(self) -> dict:
+        """Return the parameter dict after the dialog is accepted."""
+        result = {}
+        for key, spin in self._spin_map.items():
+            result[key] = spin.value()
+        return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Auto-Populate Dialog
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -961,10 +1342,10 @@ class AutoPopulateDialog(QDialog):
         req_lay = QFormLayout(g_req)
 
         # Algorithm selection
-        from PyQt6.QtWidgets import QComboBox
         self._algo_combo = QComboBox()
         self._algorithms = {
             "Grid (Uniform)": "grid_uniform",
+            "Voronoi Relaxation": "voronoi_relaxation",
         }
         for label in self._algorithms:
             self._algo_combo.addItem(label)
@@ -1066,13 +1447,26 @@ class AutoPopulateDialog(QDialog):
 
     def _run_algorithm(self, algo_key: str, max_cov: float, max_spacing: float):
         """Run the selected placement algorithm and return
-        (positions, spacing_x_ft, spacing_y_ft, calc_log)."""
+        (positions, spacing_x_ft, spacing_y_ft, calc_log).
+
+        Shows the parameter-tuning dialog for algorithms that support it.
+        """
+        # Show parameter dialog for algorithms with configurable params
+        algo_params: dict = {}
+        defs = AlgorithmParamsDialog._DEFAULTS.get(algo_key, {})
+        if defs:
+            dlg = AlgorithmParamsDialog(algo_key, parent=self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                # User cancelled — return empty so caller knows
+                return [], 0.0, 0.0, "Cancelled by user."
+            algo_params = dlg.params()
+
         if algo_key == "grid_uniform":
             return compute_sprinkler_grid(
                 self._room.boundary, max_cov, max_spacing)
-        # Future algorithms go here:
-        # elif algo_key == "offset_from_walls":
-        #     return compute_wall_offset(...)
+        elif algo_key == "voronoi_relaxation":
+            return compute_voronoi_relaxation(
+                self._room.boundary, max_cov, max_spacing, **algo_params)
         # Fallback
         return compute_sprinkler_grid(
             self._room.boundary, max_cov, max_spacing)
@@ -1157,6 +1551,8 @@ class AutoPopulateDialog(QDialog):
             self._algo_combo.currentText(), "grid_uniform")
         positions, sx, sy, calc_log = self._run_algorithm(
             algo_key, nfpa_max_cov, max_spacing)
+        if not positions and calc_log == "Cancelled by user.":
+            return  # User cancelled parameter dialog
         self._computed_positions = positions
         self._computed_sx = sx
         self._computed_sy = sy
