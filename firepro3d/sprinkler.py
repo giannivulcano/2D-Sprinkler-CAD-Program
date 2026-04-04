@@ -6,6 +6,7 @@ from PyQt6.QtSvgWidgets import QGraphicsSvgItem
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtCore import Qt
 
+from .assets import asset_path
 from .constants import DEFAULT_LEVEL
 
 from .displayable_item import DisplayableItemMixin
@@ -13,9 +14,9 @@ from .displayable_item import DisplayableItemMixin
 
 class Sprinkler(DisplayableItemMixin, QGraphicsSvgItem):
     GRAPHICS = {
-        "Sprinkler0": r"graphics/sprinkler_graphics/sprinkler0.svg",
-        "Sprinkler1": r"graphics/sprinkler_graphics/sprinkler1.svg",
-        "Sprinkler2": r"graphics/sprinkler_graphics/sprinkler2.svg"
+        "Sprinkler0": asset_path("sprinkler_graphics", "sprinkler0.svg"),
+        "Sprinkler1": asset_path("sprinkler_graphics", "sprinkler1.svg"),
+        "Sprinkler2": asset_path("sprinkler_graphics", "sprinkler2.svg"),
     }
 
     SVG_NATURAL_PX = 30.0    # natural SVG bounding-box width (px)

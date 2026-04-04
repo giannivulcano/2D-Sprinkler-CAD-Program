@@ -1,5 +1,6 @@
 import math
 import os
+from .assets import asset_path
 from .cad_math import CAD_Math
 from PyQt6.QtCore import QPointF
 from PyQt6.QtWidgets import QGraphicsItem
@@ -21,46 +22,46 @@ class Fitting():
     # Nominal OD table: use Pipe.NOMINAL_OD_IN (single source of truth)
     SYMBOLS = {
         "no fitting": {
-            "path": r"graphics/fitting_symbols/no_fitting.svg"
+            "path": asset_path("fitting_symbols", "no_fitting.svg")
         },
         "cap": {
-            "path": r"graphics/fitting_symbols/cap.svg",
+            "path": asset_path("fitting_symbols", "cap.svg"),
             "through": QPointF(0, 1)  # entry/exit
         },
         "45elbow": {
-            "path": r"graphics/fitting_symbols/45_elbow.svg",
+            "path": asset_path("fitting_symbols", "45_elbow.svg"),
             "through": (QPointF(1,0), QPointF(-(math.sqrt(2) / 2), -(math.sqrt(2) / 2)))
         },
         "90elbow": {
-            "path": r"graphics/fitting_symbols/90_elbow.svg",
+            "path": asset_path("fitting_symbols", "90_elbow.svg"),
             "through": (QPointF(1, 0), QPointF(0, -1))
         },
         "tee": {
-            "path": r"graphics/fitting_symbols/tee.svg",
+            "path": asset_path("fitting_symbols", "tee.svg"),
             "through": (QPointF(1, 0), QPointF(0, -1))
         },
         "wye": {
-            "path": r"graphics/fitting_symbols/wye.svg",
+            "path": asset_path("fitting_symbols", "wye.svg"),
             "through": (QPointF(1, 0), QPointF(-(math.sqrt(2) / 2), -(math.sqrt(2) / 2)))
         },
         "cross": {
-            "path": r"graphics/fitting_symbols/double_tee.svg",
+            "path": asset_path("fitting_symbols", "double_tee.svg"),
             "through": QPointF(0, -1)
         },
         "tee_up": {
-            "path": r"graphics/fitting_symbols/tee_up.svg",
+            "path": asset_path("fitting_symbols", "tee_up.svg"),
             "through": (QPointF(1, 0), QPointF(0, -1))
         },
         "tee_down": {
-            "path": r"graphics/fitting_symbols/tee_down.svg",
+            "path": asset_path("fitting_symbols", "tee_down.svg"),
             "through": (QPointF(1, 0), QPointF(0, -1))
         },
         "elbow_up": {
-            "path": r"graphics/fitting_symbols/elbow_up.svg",
+            "path": asset_path("fitting_symbols", "elbow_up.svg"),
             "through": QPointF(1, 0)
         },
         "elbow_down": {
-            "path": r"graphics/fitting_symbols/elbow_down.svg",
+            "path": asset_path("fitting_symbols", "elbow_down.svg"),
             "through": QPointF(-1, 0)   # opening faces toward the horizontal pipe
         },
     }
