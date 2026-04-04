@@ -63,7 +63,10 @@ for tier_name, modules in TIERS.items():
             fd.write(f"# {module_name}\n\n::: {ident}\n")
 
         mkdocs_gen_files.set_edit_path(doc_path, module_path)
-        nav[tier_name, module_name] = str(doc_path)
+        # Use as_posix() for forward slashes on Windows, and make path
+        # relative to reference/ since SUMMARY.md lives there
+        rel_path = Path(tier_name, f"{module_name}.md").as_posix()
+        nav[tier_name, module_name] = rel_path
 
 with mkdocs_gen_files.open("reference/SUMMARY.md", "w") as nav_file:
     nav_file.writelines(nav.build_literate_nav())
