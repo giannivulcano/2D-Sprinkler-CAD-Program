@@ -32,3 +32,4 @@ Thumbs.db
 # Project
 *.pyc
 .claude/
+.worktrees/
