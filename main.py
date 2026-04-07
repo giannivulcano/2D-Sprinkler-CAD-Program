@@ -827,12 +827,17 @@ class MainWindow(QMainWindow):
             box = QMessageBox(self)
             box.setWindowTitle(title)
             box.setText(message)
+            box.setWindowFlags(
+                Qt.WindowType.Dialog
+                | Qt.WindowType.WindowTitleHint
+                | Qt.WindowType.WindowCloseButtonHint
+                | Qt.WindowType.CustomizeWindowHint)
             btn_riser = box.addButton(
                 "Create Riser", QMessageBox.ButtonRole.YesRole)
             btn_match = box.addButton(
-                "Place at Existing Elevation", QMessageBox.ButtonRole.NoRole)
+                "Use Existing Elevation", QMessageBox.ButtonRole.NoRole)
             btn_template = box.addButton(
-                "Place at Specified Elevation", QMessageBox.ButtonRole.AcceptRole)
+                "Use Specified Elevation", QMessageBox.ButtonRole.AcceptRole)
             box.setDefaultButton(btn_riser)
             box.exec()
             clicked = box.clickedButton()
