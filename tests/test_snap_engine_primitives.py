@@ -323,3 +323,11 @@ class TestProjectToSegment:
         assert foot is not None
         assert foot.x() == pytest.approx(10.0, abs=1e-9)
         assert foot.y() == pytest.approx(0.0, abs=1e-9)
+
+    def test_degenerate_segment_returns_none(self):
+        """Zero-length segment (``len_sq < 1e-12``) → ``None``."""
+        foot = SnapEngine._project_to_segment(
+            QPointF(5, 5),
+            QPointF(3, 3), QPointF(3, 3),
+        )
+        assert foot is None
