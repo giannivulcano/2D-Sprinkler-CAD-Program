@@ -37,16 +37,25 @@ def main_window(_main_window_singleton):
     yield win
 
 
-def test_f3_shortcut_exists_and_toggles_osnap(main_window):
-    """The F3 shortcut must be bound, use ApplicationShortcut context,
-    and invoke toggle_osnap when activated."""
-    sc = main_window._osnap_shortcut
-    assert sc.key() == QKeySequence("F3")
-    assert sc.context() == Qt.ShortcutContext.ApplicationShortcut
-    assert main_window.scene._osnap_enabled is True
-    sc.activated.emit()
+def test_ribbon_osnap_button_bound_to_f3(main_window):
+    """The ribbon OSNAP button owns the F3 shortcut and toggles state.
+
+    F3 binding lives on the ribbon button (created in init_ribbon via
+    `shortcut="F3"`), not on a standalone QShortcut. This test asserts
+    the button exists, is checkable, carries the F3 shortcut, and that
+    its click path reaches Model_Space.toggle_osnap.
+    """
+    btn = main_window._osnap_btn
+    assert btn is not None
+    assert btn.isCheckable()
+    assert btn.shortcut() == QKeySequence("F3")
+    # Programmatic click drives the same path as F3 / mouse click.
+    # Start with both button and scene in the "on" state.
+    main_window.scene.toggle_osnap(True)
+    btn.setChecked(True)
+    btn.click()  # -> unchecked -> _toggle_osnap(False)
     assert main_window.scene._osnap_enabled is False
-    sc.activated.emit()
+    btn.click()  # -> checked -> _toggle_osnap(True)
     assert main_window.scene._osnap_enabled is True
 
 

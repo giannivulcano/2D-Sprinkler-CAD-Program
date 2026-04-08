@@ -166,7 +166,7 @@ class _OsnapIndicatorLabel(QLabel):
         super().__init__("OSNAP", parent)
         self.setToolTip("Toggle Object Snap (F3)")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumWidth(64)
+        self.setMinimumWidth(80)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setProperty("osnapOn", True)
         self._apply_style()
@@ -179,13 +179,15 @@ class _OsnapIndicatorLabel(QLabel):
         on = bool(self.property("osnapOn"))
         if on:
             self.setStyleSheet(
-                "font-weight: bold; color: #44ff88; padding: 2px 8px; "
+                "font-weight: bold; color: #44ff88; "
+                "background: #1a3a24; padding: 2px 10px; "
                 "border: 1px solid #44ff88; border-radius: 3px;"
             )
         else:
             self.setStyleSheet(
-                "font-weight: bold; color: #666; padding: 2px 8px; "
-                "border: 1px solid #666; border-radius: 3px;"
+                "font-weight: bold; color: #888; "
+                "background: transparent; padding: 2px 10px; "
+                "border: 1px solid #555; border-radius: 3px;"
             )
 
     def mousePressEvent(self, event):
@@ -424,15 +426,17 @@ class MainWindow(QMainWindow):
 
         # Status bar with cursor coordinates
         status_bar = self.statusBar()
-        self.coord_label = QLabel("X: —   Y: —")
-        self.coord_label.setMinimumWidth(280)
-        status_bar.addPermanentWidget(self.coord_label)
         # OSNAP status-bar indicator (snap-spec §9.5 / §12 item 11).
+        # Added BEFORE coord_label so it sits to the left of the
+        # coordinate readout, clear of the QSizeGrip at the far right.
         self.osnap_indicator = _OsnapIndicatorLabel(self)
         self.osnap_indicator.clicked.connect(self.scene.toggle_osnap)
         status_bar.addPermanentWidget(self.osnap_indicator)
         self.scene.osnapToggled.connect(self._update_osnap_indicator)
         self._update_osnap_indicator(self.scene._osnap_enabled)
+        self.coord_label = QLabel("X: —   Y: —")
+        self.coord_label.setMinimumWidth(280)
+        status_bar.addPermanentWidget(self.coord_label)
         # Mode name badge — prominent indicator of active mode
         self.mode_name_label = QLabel("Select")
         self.mode_name_label.setStyleSheet(
@@ -465,12 +469,9 @@ class MainWindow(QMainWindow):
         # Global keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_file)
 
-        # OSNAP global F3 toggle (snap-spec §9.4 / §12 item 11).
-        # Application-global so pressing F3 in any view (plan, elevation,
-        # 3D) flips OSNAP state.
-        self._osnap_shortcut = QShortcut(QKeySequence("F3"), self)
-        self._osnap_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-        self._osnap_shortcut.activated.connect(self.scene.toggle_osnap)
+        # F3 global OSNAP toggle is bound via the existing ribbon OSNAP
+        # QAction (see init_ribbon / _toggle_osnap). The status-bar
+        # indicator stays in sync via the osnapToggled signal.
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.open_file)
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.new_file)
         QShortcut(QKeySequence("Delete"), self).activated.connect(
