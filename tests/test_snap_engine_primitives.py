@@ -242,3 +242,14 @@ class TestLineCircleIntersect:
             QPointF(0, 0), radius=5.0,
         )
         assert pts == []
+
+    def test_degenerate_segment_returns_empty(self):
+        """Zero-length segment → ``a < 1e-12`` → ``[]``, regardless of
+        whether the point lies on the circle."""
+        # Both endpoints coincide at (3, 4), which is ON a circle of
+        # radius 5 at origin. Still returns empty.
+        pts = SnapEngine._line_circle_intersect(
+            QPointF(3, 4), QPointF(3, 4),
+            QPointF(0, 0), radius=5.0,
+        )
+        assert pts == []
