@@ -170,3 +170,35 @@ class TestLineLineIntersect:
         # x should be very close to 0.5; y should be 0.
         assert result.y() == pytest.approx(0.0, abs=1e-9)
         assert result.x() == pytest.approx(0.5, abs=1e-6)
+
+
+# ────────────────────────────────────────────────────────────────────
+# _line_circle_intersect
+# ────────────────────────────────────────────────────────────────────
+
+
+class TestLineCircleIntersect:
+    """Tests for ``SnapEngine._line_circle_intersect``.
+
+    Contract (pinned from snap_engine.py:643-664):
+    - Degenerate segment (``a = dx² + dy² < 1e-12``) → ``[]``.
+    - Discriminant < 0 → ``[]``.
+    - Otherwise loop over sign in (-1, +1); append point iff
+      ``0.0 <= t <= 1.0``. Tangent case (disc == 0) returns TWO
+      IDENTICAL points.
+    """
+
+    def test_two_intersections_both_inside_segment(self):
+        """A horizontal segment crossing through a circle centered on
+        the segment produces two points symmetric about the center."""
+        # Segment: y=0, x in [-10, 10]. Circle: center (0,0), r=5.
+        pts = SnapEngine._line_circle_intersect(
+            QPointF(-10, 0), QPointF(10, 0),
+            QPointF(0, 0), radius=5.0,
+        )
+        assert len(pts) == 2
+        xs = sorted(p.x() for p in pts)
+        assert xs[0] == pytest.approx(-5.0, abs=1e-9)
+        assert xs[1] == pytest.approx(5.0, abs=1e-9)
+        for p in pts:
+            assert p.y() == pytest.approx(0.0, abs=1e-9)
