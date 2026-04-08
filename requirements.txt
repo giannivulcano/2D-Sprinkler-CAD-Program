@@ -10,4 +10,5 @@ PyQt6>=6.8
 PyQt6-Qt6>=6.8
 PyQt6_sip>=13.8
 requests>=2.32
+scipy>=1.14
 vispy>=0.16
