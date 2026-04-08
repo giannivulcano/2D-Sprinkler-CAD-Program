@@ -75,3 +75,23 @@ class TestLineLineIntersect:
         )
         assert result is not None
         assert _xy(result) == _approx_point(QPointF(5, 5))
+
+    def test_crossing_outside_one_segment_returns_none(self):
+        """Lines *would* cross if extended, but the crossing point falls
+        outside segment B's [0, 1] parameter range → None."""
+        # Segment A: y=5 horizontal, x in [0, 10]
+        # Segment B: short diagonal near (20, 0) — the infinite lines
+        # meet somewhere around x=15 but t falls outside A's range.
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 5), QPointF(10, 5),
+            QPointF(20, 0), QPointF(22, 10),
+        )
+        assert result is None
+
+    def test_crossing_outside_both_segments_returns_none(self):
+        """Both infinite lines intersect far from either segment."""
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(1, 1),
+            QPointF(10, 0), QPointF(11, 1),
+        )
+        assert result is None
