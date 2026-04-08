@@ -21,7 +21,10 @@
 - [ ] Spec & grill session: wall placement & joinery — cover L/T/cross joints, cap geometry, face-corner semantics, wall-to-wall snap targets, zero-thickness behavior. Same exercise as pipe placement spec. Surfaced during snap-engine item 3 grill (T-joint snap target has no candidate today) [type:Backlog] [P1] [subject:Architecture]
 - [x] Spec & grill session: snapping engine — see `docs/specs/snapping-engine.md` (14 roadmap items added below) [type:Recently Completed] [subject:CAD]
 - [ ] Add absolute elevation for node 1 and 2 in pipe properties template [type:Task] [subject:Sprinkler Design]
-- [ ] Investigate `Room.z_range_mm()` vs user expectations — code already uses level-derived floor Z; real cause is likely one of: (a) slab-thickness lookup fragility when no slab exists for `_ceiling_level`, (b) `_ceiling_offset` sign, or (c) a UI display path using a different formula [ref:view-relationships§7.2] [subject:CAD] [P2] [type:In Progress]
+- [x] Investigate `Room.z_range_mm()` vs user expectations [ref:view-relationships§7.2] [subject:CAD] [done:2026-04-08]
+- [x] Bug: Room fill/highlight disappears when room label is scrolled off-screen in plan view — root cause was `Room.shape()` override returning only the label area; Qt used it in the viewport paint path. Fixed by removing the override. [type:Task] [P2] [subject:CAD] [done:2026-04-08]
+- [ ] Restore label-only click-selection for rooms — removing `Room.shape()` means clicking anywhere inside the polygon now selects the Room. Preferred fix: in `model_space.py` selection pick (~line 4403), prefer Wall/Floor/Roof/etc. over Room, and only accept a Room hit when the click falls inside the label-bg rect. [type:Task] [P2] [subject:CAD]
+- [ ] Audit other `shape()` overrides in the codebase — the Room bug proved that a restricted `shape()` affects Qt's paint culling, not just hit-testing. Grep `def shape` across `firepro3d/` and verify no other item silently loses its fill when the narrow shape region scrolls off-screen. [type:Task] [P3] [subject:CAD]
 
 ## Snapping Engine Roadmap (from `docs/specs/snapping-engine.md` §12)
 - [x] Snap picker: same-parent intersection suppression + endpoint protection band — fixes wall-corner and hatch case studies [ref:snap-spec§6.3] [type:Backlog] [P1] [subject:CAD] [done:2026-04-07]
