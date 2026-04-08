@@ -51,3 +51,27 @@ def test_smoke_primitives_are_importable():
     assert callable(SnapEngine._line_line_intersect)
     assert callable(SnapEngine._line_circle_intersect)
     assert callable(SnapEngine._project_to_segment)
+
+
+# ────────────────────────────────────────────────────────────────────
+# _line_line_intersect
+# ────────────────────────────────────────────────────────────────────
+
+
+class TestLineLineIntersect:
+    """Tests for ``SnapEngine._line_line_intersect``.
+
+    Contract (pinned from snap_engine.py:625-638):
+    - Parallel OR collinear (``abs(denom) < 1e-10``) → ``None``.
+    - Otherwise compute t, s; return intersection only if
+      ``0.0 <= t <= 1.0 and 0.0 <= s <= 1.0``, else ``None``.
+    """
+
+    def test_crossing_inside_both_segments(self):
+        """Generic X-shape: two diagonals meeting at the midpoint."""
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(10, 10),
+            QPointF(0, 10), QPointF(10, 0),
+        )
+        assert result is not None
+        assert _xy(result) == _approx_point(QPointF(5, 5))
