@@ -265,7 +265,7 @@ Two new variants, additive to the existing 8 marker glyphs:
 | **hollow square** (yellow outline, transparent fill) | `WallSegment` face-corner endpoints | Endpoint that lives on the wall *face*, not the centerline. |
 | **hollow triangle** (green outline, transparent fill) | `WallSegment` face-edge midpoints | Midpoint of a wall *face edge*, not the centerline. |
 
-The existing **filled** square and **filled** triangle continue to mean "centerline endpoint / midpoint" or "ordinary endpoint / midpoint on simple objects." Filled = primary/centerline; hollow = secondary/face — the rule is small enough to memorize at a glance.
+The existing **outlined** square and **outlined** triangle continue to mean "centerline endpoint / midpoint" or "ordinary endpoint / midpoint on simple objects." **Outlined = primary / centerline / default; filled = secondary / face** — the rule was inverted during implementation (April 2026) because all pre-existing markers in FirePro3D were already rendered outlined, and introducing new outlined variants would have required changing every non-wall glyph. The user-facing disambiguation is preserved: at an L-joint the filled face-corner glyph reads clearly against the outlined centerline-end glyph. See roadmap item 3.
 
 ### 8.3 Item type coverage
 
@@ -274,6 +274,8 @@ The existing **filled** square and **filled** triangle continue to mean "centerl
 | `WallSegment` | centerline-end-A, centerline-end-B, centerline-mid, face-left-corner-A, face-left-corner-B, face-right-corner-A, face-right-corner-B, face-left-mid, face-right-mid | **planned by this spec** (roadmap §12 item 3) |
 | `Pipe` (with attached `Fitting`) | centerline-end-A, centerline-end-B, fitting-port-N | **planned (future spec)** — pipe-with-fitting named targets are large enough to merit their own design session (see §12 item 13) |
 | All other item types | none | N/A — no disambiguation needed |
+
+**T-joint inferred targets (deferred).** When one wall terminates into the face of another, there is no candidate at the T-point today (neither endpoint nor phase-4 intersection; the walls do not cross). This is an *inferred* target — it belongs to the wall placement / joinery spec (tracked in `TODO.md` as a separate P1 spec & grill session, surfaced 2026-04 during the item-3 grill) and to the inferred-placement subsystem (roadmap item 14). This spec commits only to the L-joint case, which is handled by items 1 + 3.
 
 ### 8.4 Picker integration
 
@@ -369,16 +371,16 @@ Each item is sized for one focused work session (1–4 hours), closes at least o
 
 | # | Pri | Subject | Done when | Ref |
 |---|---|---|---|---|
-| 1 | **P1** | Implement same-parent intersection suppression (Change A) and endpoint protection band (Change B) in the picker | Both §7 case studies pass regression fixtures; no other matrix cell regresses | `[ref:snap-spec§6.3]` |
+| 1 | ~~done~~ | Implement same-parent intersection suppression (Change A) and endpoint protection band (Change B) in the picker | Both §7 case studies pass regression fixtures; no other matrix cell regresses | `[ref:snap-spec§6.3]` |
 | 2 | **P1** | Phase-4 segment-source filter audit | `_check_geometry_intersections` only iterates item types whose §5 row contributes to phase 4 (`ConstructionLine`, `QGraphicsLineItem`, `PolylineItem`, `RectangleItem`, `WallSegment`, `CircleItem`); generic `QGraphicsPathItem` (DXF) added per matrix note 7 | `[ref:snap-spec§5,§6]` |
-| 3 | **P1** | `WallSegment` named-target marker variants | `_collect()` emits face vs centerline distinction; foreground renderer draws hollow squares for face corners and hollow triangles for face midpoints; legend updated | `[ref:snap-spec§8]` |
+| 3 | ~~done~~ | `WallSegment` named-target marker variants | `_collect()` emits face vs centerline distinction; foreground renderer draws hollow squares for face corners and hollow triangles for face midpoints; legend updated | `[ref:snap-spec§8]` |
 | 4 | **P2** | Fix `ConstructionLine` perpendicular / nearest / phase-4 participation (matrix note 2) | All three matrix cells flip from **bug** to ✓; one regression test per cell | `[ref:snap-spec§5-row-ConstructionLine]` |
 | 5 | **P2** | Decouple `nearest` from the perpendicular toggle (matrix note 1) | `nearest` is emitted whenever `snap_nearest` is on, independently of `snap_perpendicular`; the picker's priority band breaks ties as expected | `[ref:snap-spec§5-note-1]` |
 | 6 | **P2** | `ArcItem` tangent support | `_geometric_snaps` arc branch emits tangent candidates when `snap_tangent` is on; matrix cell `ArcItem×tangent` flips to ✓ | `[ref:snap-spec§5-row-ArcItem]` |
 | 7 | **P2** | Generic `QGraphicsPathItem` (DXF) phase-4 segments | Phase 4 extracts segment pairs from DXF path items; matrix cell flips from bug⁷ to ✓; regression test on a small DXF underlay fixture | `[ref:snap-spec§5-note-7]` |
 | 8 | **P2** | Geometric primitive unit tests (§10.1) | `_line_line_intersect`, `_line_circle_intersect`, `_project_to_segment` covered by tests for every case in §10.1 tables | `[ref:snap-spec§10.1]` |
 | 9 | **P2** | Matrix fixture test harness (§10.2) | One headless `QGraphicsScene` fixture test per ✓-cell in §5; harness pattern documented for future cells | `[ref:snap-spec§10.2]` |
-| 10 | **P2** | Case-study regression tests (§10.3) | Two regression tests pinned to §7.1 and §7.2 (in addition to the fixtures from item 1) | `[ref:snap-spec§10.3]` |
+| 10 | ~~done~~ | Case-study regression tests (§10.3) | Two regression tests pinned to §7.1 and §7.2 (in addition to the fixtures from item 1) | `[ref:snap-spec§10.3]` |
 | 11 | **P3** | Bind F3 to global OSNAP on/off and surface state in status bar | F3 toggles `SnapEngine.enabled`; status bar reflects current state | `[ref:snap-spec§9.4-§9.5]` |
 | 12 | **P3** | Confirm and (if absent) expose per-type OSNAP toggle UI surface | Either confirm an existing UI surfaces `snap_endpoint`, `snap_midpoint`, etc., or document that none does and file the toolbar spec as a follow-up | `[ref:snap-spec§9.5]` |
 | 13 | **P2 spec** | Spec session: pipe-with-fitting named targets | Design doc for `Pipe`/`Fitting` named-target glyphs and `_collect()` emission rules; brainstorm session conducted | `[ref:snap-spec§8.3]` |
