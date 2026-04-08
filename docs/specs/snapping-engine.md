@@ -310,6 +310,8 @@ Reserved bindings (not bound today, do not implement in this spec, but no other 
 
 A future OSNAP toolbar (deferred — §2.3) is the natural home for per-type toggle indication. This spec only commits to: the status bar must, at minimum, show whether OSNAPs are globally on or off when F3 is bound.
 
+**2026-04-08 finding (roadmap item 12):** A code search of the project confirmed that no UI surface currently toggles the per-type `SnapEngine` booleans (`snap_endpoint`, `snap_midpoint`, `snap_intersection`, `snap_center`, `snap_quadrant`, `snap_nearest`, `snap_perpendicular`, `snap_tangent`). They remain reachable only by direct attribute access. The per-type toggle UI is therefore formally deferred to a dedicated OSNAP-toolbar spec session, which has been promoted from "deferred" to a P1 backlog task. The persistent OSNAP status-bar indicator delivered alongside this finding is the anchor the toolbar will later integrate with.
+
 ### 9.6 Settings persistence
 
 Per-type toggle state is currently held only in `SnapEngine` instance attributes and is lost on application restart. The future toolbar spec inherits the responsibility to persist toggle state to `QSettings`. Not delivered here.
@@ -381,8 +383,8 @@ Each item is sized for one focused work session (1–4 hours), closes at least o
 | 8 | **P2** | Geometric primitive unit tests (§10.1) | `_line_line_intersect`, `_line_circle_intersect`, `_project_to_segment` covered by tests for every case in §10.1 tables | `[ref:snap-spec§10.1]` |
 | 9 | **P2** | Matrix fixture test harness (§10.2) | One headless `QGraphicsScene` fixture test per ✓-cell in §5; harness pattern documented for future cells | `[ref:snap-spec§10.2]` |
 | 10 | ~~done~~ | Case-study regression tests (§10.3) | Two regression tests pinned to §7.1 and §7.2 (in addition to the fixtures from item 1) | `[ref:snap-spec§10.3]` |
-| 11 | **P3** | Bind F3 to global OSNAP on/off and surface state in status bar | F3 toggles `SnapEngine.enabled`; status bar reflects current state | `[ref:snap-spec§9.4-§9.5]` |
-| 12 | **P3** | Confirm and (if absent) expose per-type OSNAP toggle UI surface | Either confirm an existing UI surfaces `snap_endpoint`, `snap_midpoint`, etc., or document that none does and file the toolbar spec as a follow-up | `[ref:snap-spec§9.5]` |
+| 11 | ~~done~~ | Bind F3 to global OSNAP on/off and surface state in status bar | F3 toggles `SnapEngine.enabled`; status bar reflects current state | `[ref:snap-spec§9.4-§9.5]` `[done:2026-04-08]` |
+| 12 | ~~done~~ | Confirm and (if absent) expose per-type OSNAP toggle UI surface | Verified absent; §9.5 amended and OSNAP toolbar spec promoted to P1 backlog task | `[ref:snap-spec§9.5]` `[done:2026-04-08]` |
 | 13 | **P2 spec** | Spec session: pipe-with-fitting named targets | Design doc for `Pipe`/`Fitting` named-target glyphs and `_collect()` emission rules; brainstorm session conducted | `[ref:snap-spec§8.3]` |
 | 14 | **P1 spec** | Spec session: inferred / dimension-driven placement (Revit subsystem) | Design doc for the next subsystem flagged in §2.3 as "next priority" | `[ref:snap-spec§2.3]` |
 
