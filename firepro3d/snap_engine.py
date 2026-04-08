@@ -90,6 +90,16 @@ class OsnapResult:
     snap_type:   str                               # key from SNAP_COLORS
     source_item:  QGraphicsItem | None = field(default=None, repr=False)
     source_item2: QGraphicsItem | None = field(default=None, repr=False)
+    name:         str | None = None
+    """Optional semantic name for this candidate.
+
+    Used for named/semantic targets on complex objects (e.g. a
+    WallSegment emits ``centerline-end-A``, ``face-left-corner-A``,
+    ``face-right-mid`` etc.).  Targets whose name starts with ``face-``
+    are rendered with a *filled* marker glyph by the foreground pass
+    in ``model_view.drawForeground``; all other targets (including
+    ``name=None``) keep today's outlined rendering.
+    """
 
 
 class _SnapCtx:
@@ -105,7 +115,8 @@ class _SnapCtx:
         self.best_prio: int = 999
         self.best_result: OsnapResult | None = None
 
-    def check(self, snap_type: str, pt: QPointF, src_item: QGraphicsItem):
+    def check(self, snap_type: str, pt: QPointF, src_item: QGraphicsItem,
+              name: str | None = None):
         """Compare a candidate snap against the current best."""
         d = math.hypot(pt.x() - self.cursor.x(), pt.y() - self.cursor.y())
         prio = SNAP_PRIORITY.get(snap_type, 6)
@@ -113,8 +124,10 @@ class _SnapCtx:
                 (d < self.best_dist + self.priority_band and prio < self.best_prio)):
             self.best_dist = d
             self.best_prio = prio
-            self.best_result = OsnapResult(point=pt, snap_type=snap_type,
-                                            source_item=src_item)
+            self.best_result = OsnapResult(
+                point=pt, snap_type=snap_type,
+                source_item=src_item, name=name,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
