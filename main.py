@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow,
                               QComboBox, QDoubleSpinBox, QFormLayout,
                               QProgressBar, QToolButton, QProgressDialog)
 from PyQt6.QtGui import QPainter, QIcon, QColor, QPixmap, QKeySequence, QShortcut, QFont
-from PyQt6.QtCore import Qt, QSettings, QSize, QPointF, QTimer
+from PyQt6.QtCore import Qt, QSettings, QSize, QPointF, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QGraphicsTextItem
 from firepro3d.model_space import Model_Space
 from firepro3d.model_view import Model_View
@@ -155,6 +155,48 @@ class _SplashScreen(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 # Main Window
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+class _OsnapIndicatorLabel(QLabel):
+    """Clickable status-bar label for the OSNAP state indicator."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__("OSNAP", parent)
+        self.setToolTip("Toggle Object Snap (F3)")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumWidth(80)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setProperty("osnapOn", True)
+        self._apply_style()
+
+    def setOsnapOn(self, on: bool) -> None:
+        self.setProperty("osnapOn", bool(on))
+        self._apply_style()
+
+    def _apply_style(self) -> None:
+        on = bool(self.property("osnapOn"))
+        if on:
+            self.setStyleSheet(
+                "font-weight: bold; color: #44ff88; "
+                "background: #1a3a24; padding: 2px 10px; "
+                "border: 1px solid #44ff88; border-radius: 3px;"
+            )
+        else:
+            self.setStyleSheet(
+                "font-weight: bold; color: #888; "
+                "background: transparent; padding: 2px 10px; "
+                "border: 1px solid #555; border-radius: 3px;"
+            )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
 
 class MainWindow(QMainWindow):
     def __init__(self, splash: _SplashScreen | None = None):
@@ -384,6 +426,14 @@ class MainWindow(QMainWindow):
 
         # Status bar with cursor coordinates
         status_bar = self.statusBar()
+        # OSNAP status-bar indicator (snap-spec §9.5 / §12 item 11).
+        # Added BEFORE coord_label so it sits to the left of the
+        # coordinate readout, clear of the QSizeGrip at the far right.
+        self.osnap_indicator = _OsnapIndicatorLabel(self)
+        self.osnap_indicator.clicked.connect(self.scene.toggle_osnap)
+        status_bar.addPermanentWidget(self.osnap_indicator)
+        self.scene.osnapToggled.connect(self._update_osnap_indicator)
+        self._update_osnap_indicator(self.scene._osnap_enabled)
         self.coord_label = QLabel("X: —   Y: —")
         self.coord_label.setMinimumWidth(280)
         status_bar.addPermanentWidget(self.coord_label)
@@ -418,6 +468,10 @@ class MainWindow(QMainWindow):
 
         # Global keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_file)
+
+        # F3 global OSNAP toggle is bound via the existing ribbon OSNAP
+        # QAction (see init_ribbon / _toggle_osnap). The status-bar
+        # indicator stays in sync via the osnapToggled signal.
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.open_file)
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.new_file)
         QShortcut(QKeySequence("Delete"), self).activated.connect(
@@ -1925,6 +1979,9 @@ class MainWindow(QMainWindow):
         "radiation_emitter":  "Select EMITTING surfaces (walls / roofs), then press Enter",
         "radiation_receiver": "Select RECEIVING surfaces, then press Enter",
     }
+
+    def _update_osnap_indicator(self, enabled: bool) -> None:
+        self.osnap_indicator.setOsnapOn(enabled)
 
     def _update_mode_label(self, mode: str):
         text = self._MODE_INSTRUCTIONS.get(mode, mode.replace("_", " ").title())
