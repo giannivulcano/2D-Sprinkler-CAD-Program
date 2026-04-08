@@ -95,3 +95,30 @@ class TestLineLineIntersect:
             QPointF(10, 0), QPointF(11, 1),
         )
         assert result is None
+
+    def test_parallel_non_collinear_returns_none(self):
+        """Two horizontal lines at different y's → denom == 0 → None."""
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(10, 0),
+            QPointF(0, 5), QPointF(10, 5),
+        )
+        assert result is None
+
+    def test_collinear_overlapping_returns_none(self):
+        """CURRENT CONTRACT: collinear segments produce denom == 0 and
+        the function returns None — it does NOT attempt to report an
+        overlap region. Pinned; if spec demands overlap reporting later,
+        this test becomes xfail + bug entry."""
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(10, 0),
+            QPointF(5, 0), QPointF(15, 0),
+        )
+        assert result is None
+
+    def test_collinear_non_overlapping_returns_none(self):
+        """Collinear, disjoint segments → still None (same denom==0 branch)."""
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(10, 0),
+            QPointF(20, 0), QPointF(30, 0),
+        )
+        assert result is None
