@@ -384,15 +384,14 @@ class Room(DisplayableItemMixin, QGraphicsPolygonItem):
         br = super().boundingRect()
         return br.united(self.childrenBoundingRect())
 
-    def shape(self) -> QPainterPath:
-        """Only the room tag label area is selectable, not the full polygon."""
-        path = QPainterPath()
-        if self._label_bg is not None and self._label_bg.isVisible():
-            path.addRect(self._label_bg.rect())
-        elif self._label.isVisible():
-            path.addRect(self._label.mapRectToParent(
-                self._label.boundingRect()))
-        return path
+    # NOTE: shape() intentionally NOT overridden. A previous version
+    # returned only the room-tag label area so that clicking inside the
+    # polygon would fall through to walls/floors — but Qt used that
+    # restricted shape in its viewport-paint path, causing the room fill
+    # to vanish whenever the label scrolled off-screen. Fall back to the
+    # inherited QGraphicsPolygonItem.shape() (the full polygon) so the
+    # fill renders whenever any part of the polygon is visible.
+    # Side effect: clicks inside the polygon now hit the room.
 
     # ── Paint ────────────────────────────────────────────────────────────
 
