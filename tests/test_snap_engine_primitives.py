@@ -134,3 +134,39 @@ class TestLineLineIntersect:
         )
         assert result is not None
         assert _xy(result) == _approx_point(QPointF(10, 0))
+
+    def test_near_zero_denominator_below_epsilon_returns_none(self):
+        """denom slightly below 1e-10 → treated as parallel → None.
+
+        Construct two segments whose direction vectors differ by a
+        cross-product smaller than the engine's epsilon.
+        """
+        # Segment A: (0,0) -> (1,0). dx1=1, dy1=0.
+        # Segment B: (0,1) -> (1, 1 + tiny). dx2=1, dy2=tiny.
+        # denom = dx1*dy2 - dy1*dx2 = tiny.
+        tiny = LINE_LINE_DENOM_EPS / 10.0  # 1e-11, strictly below eps
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(1, 0),
+            QPointF(0, 1), QPointF(1, 1 + tiny),
+        )
+        assert result is None
+
+    def test_near_zero_denominator_above_epsilon_may_intersect(self):
+        """denom strictly above 1e-10 → engine proceeds with the
+        intersection math. The segments here are effectively parallel
+        but denom > eps, so the computed t/s are valid (though possibly
+        outside [0,1]). This pins the boundary behavior: whatever the
+        engine returns, it must not be None solely because of the
+        epsilon check."""
+        big = LINE_LINE_DENOM_EPS * 100.0  # 1e-8, well above eps
+        # Choose B so the computed intersection falls inside both segments.
+        # A: (0,0) -> (1,0). B: (0.5, -1) -> (0.5 + big, 1).
+        # These cross near x=0.5.
+        result = SnapEngine._line_line_intersect(
+            QPointF(0, 0), QPointF(1, 0),
+            QPointF(0.5, -1), QPointF(0.5 + big, 1),
+        )
+        assert result is not None
+        # x should be very close to 0.5; y should be 0.
+        assert result.y() == pytest.approx(0.0, abs=1e-9)
+        assert result.x() == pytest.approx(0.5, abs=1e-6)
