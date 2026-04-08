@@ -418,6 +418,13 @@ class MainWindow(QMainWindow):
 
         # Global keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.save_file)
+
+        # OSNAP global F3 toggle (snap-spec §9.4 / §12 item 11).
+        # Application-global so pressing F3 in any view (plan, elevation,
+        # 3D) flips OSNAP state.
+        self._osnap_shortcut = QShortcut(QKeySequence("F3"), self)
+        self._osnap_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._osnap_shortcut.activated.connect(self.scene.toggle_osnap)
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.open_file)
         QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.new_file)
         QShortcut(QKeySequence("Delete"), self).activated.connect(
