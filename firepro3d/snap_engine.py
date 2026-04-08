@@ -53,6 +53,34 @@ SNAP_TOLERANCE_PX = 40      # screen-pixel search radius
 # finer scale will almost always have thicker walls.
 _FACE_COLLAPSE_SCENE_EPS: float = 3.0
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Snap marker legend
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Eight base glyphs, all rendered *outlined* (no fill) by the foreground
+# pass in model_view.drawForeground. Color is carried by SNAP_COLORS;
+# shape is carried by SNAP_MARKERS; priority (picker tie-break) is
+# carried by SNAP_PRIORITY below.
+#
+#   endpoint        yellow     outlined square          END  (priority 1)
+#   midpoint        green      outlined triangle        MID  (priority 2)
+#   intersection    yellow     x inside square          INT  (priority 0)
+#   center          cyan       circle                   CEN  (priority 3)
+#   quadrant        orange     diamond                  QUA  (priority 5)
+#   perpendicular   magenta    right-angle symbol       PER  (priority 4)
+#   tangent         lime       tangent circle           TAN  (priority 6)
+#   nearest         grey       cross                    NEA  (priority 7)
+#
+# Two *filled* named-target variants (added 2026-04 per snap engine
+# spec §8.2, amended). These are triggered by the ``name`` field on
+# OsnapResult: targets whose name starts with ``face-`` are rendered
+# with the base glyph's fill color instead of the outlined default.
+#
+#   face-*-corner-* filled yellow square    WallSegment face corners
+#   face-*-mid      filled green triangle   WallSegment face midpoints
+#
+# See docs/specs/snapping-engine.md §4, §8.
+# ─────────────────────────────────────────────────────────────────────────────
 SNAP_COLORS: dict[str, str] = {
     "endpoint":      "#ffff00",   # yellow  – square marker
     "midpoint":      "#00ff88",   # green   – triangle marker
