@@ -678,7 +678,7 @@ class SnapEngine:
             if foot is not None:
                 if self.snap_perpendicular:
                     pts.append(("perpendicular", foot))
-                elif self.snap_nearest:
+                if self.snap_nearest:
                     pts.append(("nearest", foot))
 
         # ── Line-based items (QGraphicsLineItem: pipes, gridlines, etc.) ──
@@ -731,7 +731,7 @@ class SnapEngine:
                     foot = QPointF(cx + r * dx / d, cy + r * dy / d)
                     if self.snap_perpendicular:
                         pts.append(("perpendicular", foot))
-                    elif self.snap_nearest:
+                    if self.snap_nearest:
                         pts.append(("nearest", foot))
 
         # ── Full circle (QGraphicsEllipseItem) — closest point on circle ─
@@ -748,8 +748,10 @@ class SnapEngine:
                         center.x() + r * (cursor.x() - center.x()) / d,
                         center.y() + r * (cursor.y() - center.y()) / d,
                     )
-                    snap_t = "perpendicular" if self.snap_perpendicular else "nearest"
-                    pts.append((snap_t, foot))
+                    if self.snap_perpendicular:
+                        pts.append(("perpendicular", foot))
+                    if self.snap_nearest:
+                        pts.append(("nearest", foot))
 
                 # Tangent
                 if self.snap_tangent and d > r + 1e-6:
