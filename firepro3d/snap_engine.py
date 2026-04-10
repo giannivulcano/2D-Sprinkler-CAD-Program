@@ -318,6 +318,7 @@ class SnapEngine:
                                        exclude: QGraphicsItem | None,
                                        gl_items: list):
         """Phase 4: Line-line and line-circle intersection snaps."""
+        from .annotations import HatchItem as _hatch_type
         _segments: list[tuple[QPointF, QPointF, QGraphicsItem]] = []
         _circles: list[tuple[QPointF, float, QGraphicsItem]] = []
 
@@ -327,11 +328,21 @@ class SnapEngine:
             _segments.append((gl.mapToScene(line.p1()),
                              gl.mapToScene(line.p2()), gl))
 
-        for item in scene.items(search_rect):
-            if exclude is not None and item is exclude:
-                continue
-            if item.parentItem() is not None:
-                continue
+        def _phase4_items():
+            """Yield items for segment extraction, descending into DXF groups."""
+            for item in scene.items(search_rect):
+                if exclude is not None and item is exclude:
+                    continue
+                if item.parentItem() is not None:
+                    continue
+                if (isinstance(item, QGraphicsItemGroup)
+                        and item.data(0) == "DXF Underlay"):
+                    for child in item.childItems():
+                        yield child
+                    continue
+                yield item
+
+        for item in _phase4_items():
             if isinstance(item, ConstructionLine):
                 _segments.append((item.pt1, item.pt2, item))
             elif isinstance(item, QGraphicsLineItem):
@@ -365,6 +376,20 @@ class SnapEngine:
                     pass
             elif isinstance(item, CircleItem):
                 _circles.append((item._center, item._radius, item))
+            elif isinstance(item, QGraphicsPathItem):
+                # Generic path items (DXF imports). Skip HatchItem —
+                # intentionally all-N/A per snap spec §5.
+                if not isinstance(item, _hatch_type):
+                    path = item.path()
+                    n = path.elementCount()
+                    for j in range(min(n - 1, 511)):
+                        e1 = path.elementAt(j)
+                        e2 = path.elementAt(j + 1)
+                        _segments.append((
+                            item.mapToScene(QPointF(e1.x, e1.y)),
+                            item.mapToScene(QPointF(e2.x, e2.y)),
+                            item,
+                        ))
 
         # Endpoint protection band — §6.3 Change B. Intersection
         # candidates within this radius of any in-tolerance endpoint
