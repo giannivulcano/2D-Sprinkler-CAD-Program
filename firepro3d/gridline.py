@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from PyQt6.QtWidgets import (
     QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsTextItem,
-    QGraphicsItem, QStyle,
+    QGraphicsRectItem, QGraphicsItem, QStyle,
 )
 from PyQt6.QtGui import QPen, QColor, QFont, QBrush, QPainterPath
 from .constants import DEFAULT_USER_LAYER
@@ -77,13 +77,15 @@ BUBBLE_RADIUS_MM = 8.0 * 25.4   # 8-inch radius in mm (zoom-dependent scene unit
 
 
 class GridBubble(QGraphicsEllipseItem):
-    """Zoom-dependent circle with a centred label (scales with scene geometry)."""
+    """Fixed-size circle with a centred label (constant screen pixels)."""
+
+    RADIUS_PX = 14.0  # screen pixels — constant regardless of zoom
 
     def __init__(self, label: str, parent: QGraphicsItem | None = None):
-        r = BUBBLE_RADIUS_MM
+        r = self.RADIUS_PX
         super().__init__(-r, -r, 2 * r, 2 * r, parent)
-        # No ItemIgnoresTransformations — bubble scales with zoom
-        pen = QPen(QColor("#4488cc"), max(1, r * 0.04))
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        pen = QPen(QColor("#4488cc"), max(1.0, r * 0.08))
         self.setPen(pen)
         self.setBrush(QBrush(QColor("#1a1a2e")))
         self.setZValue(500)
@@ -91,7 +93,7 @@ class GridBubble(QGraphicsEllipseItem):
         self._label = QGraphicsTextItem(label, self)
         self._label.setDefaultTextColor(QColor("#88ccff"))
         font = QFont("Consolas")
-        font.setPixelSize(max(1, int(r * 1.0)))
+        font.setPixelSize(max(1, int(r * 0.9)))
         font.setBold(True)
         self._label.setFont(font)
         self._center_label()
@@ -113,10 +115,10 @@ class GridBubble(QGraphicsEllipseItem):
         super().paint(painter, option, widget)
         parent = self.parentItem()
         if parent is not None and parent.isSelected():
-            r = BUBBLE_RADIUS_MM
+            r = self.RADIUS_PX
             # Use the gridline's assigned colour for the highlight ring
             base_color = getattr(parent, "_grid_color", QColor(GRID_COLOR))
-            highlight = QPen(base_color.lighter(150), max(1, r * 0.08))
+            highlight = QPen(base_color.lighter(150), max(1.0, r * 0.12))
             painter.setPen(highlight)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(QRectF(-r, -r, 2 * r, 2 * r))
@@ -132,6 +134,29 @@ class GridBubble(QGraphicsEllipseItem):
                     scene.clearSelection()
                     parent.setSelected(True)
         event.accept()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _PullTabGrip — small handle at gridline endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GRIP_HALF = 5.0  # Half-width of pull-tab square (screen pixels)
+
+
+class _PullTabGrip(QGraphicsRectItem):
+    """Small square grip handle at a gridline endpoint.
+
+    Uses ItemIgnoresTransformations for constant screen size.
+    Visible only when parent gridline is selected or hovered.
+    """
+
+    def __init__(self, parent: QGraphicsItem):
+        super().__init__(-_GRIP_HALF, -_GRIP_HALF, 2 * _GRIP_HALF, 2 * _GRIP_HALF, parent)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setPen(QPen(Qt.PenStyle.NoPen))
+        self.setBrush(QBrush(QColor(68, 136, 204, 60)))
+        self.setZValue(1)
+        self.setVisible(False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +196,14 @@ class GridlineItem(QGraphicsLineItem):
         self.bubble2 = GridBubble(label, self)
         self._update_bubble_positions()
 
+        # Pull-tab grips
+        self._grip1 = _PullTabGrip(self)
+        self._grip2 = _PullTabGrip(self)
+        self._update_grip_positions()
+
+        # Hover events for grip visibility
+        self.setAcceptHoverEvents(True)
+
         # User layer
         self.user_layer: str = DEFAULT_USER_LAYER
         self._locked: bool = False
@@ -181,27 +214,35 @@ class GridlineItem(QGraphicsLineItem):
     # ── Geometry overrides ────────────────────────────────────────────────
 
     def boundingRect(self):
-        """Expand bounding rect to include the bubbles and a margin for
-        the manually-drawn gridline pen."""
+        """Expand bounding rect with a small margin for the pen.
+
+        Bubbles and grips use ItemIgnoresTransformations and manage
+        their own bounds independently.
+        """
         br = super().boundingRect()
-        m = BUBBLE_RADIUS_MM
+        m = 20.0  # small scene-unit margin for the gridline pen
         return br.adjusted(-m, -m, m, m)
 
     def shape(self) -> QPainterPath:
-        """Return bubble areas as the selectable shape.
+        """Return bubble positions as the selectable shape.
 
-        This allows rubber-band (marquee) selection to work when the
-        selection rectangle covers a bubble.  Direct clicks on bubbles
-        are still handled by GridBubble.mousePressEvent.
+        Uses a small scene-unit radius so marquee selection works
+        near endpoints.  Direct clicks on ITT bubbles are handled
+        by GridBubble.mousePressEvent.
         """
         path = QPainterPath()
-        r = BUBBLE_RADIUS_MM
+        # Use a fixed scene-unit radius — enough for marquee selection
+        r = 50.0
         path.addEllipse(self.bubble1.pos(), r, r)
         path.addEllipse(self.bubble2.pos(), r, r)
         return path
 
     def itemChange(self, change, value):
-        """Refresh bubble paint when selection state changes."""
+        """Refresh bubble paint and show/hide grips on selection change."""
+        if change == self.GraphicsItemChange.ItemSelectedChange:
+            selected = bool(value)
+            self._grip1.setVisible(selected)
+            self._grip2.setVisible(selected)
         if change == self.GraphicsItemChange.ItemSelectedHasChanged:
             self.bubble1.update()
             self.bubble2.update()
@@ -213,6 +254,37 @@ class GridlineItem(QGraphicsLineItem):
         line = self.line()
         self.bubble1.setPos(line.p1())
         self.bubble2.setPos(line.p2())
+        if hasattr(self, '_grip1'):
+            self._update_grip_positions()
+
+    def _update_grip_positions(self):
+        """Place grips slightly beyond each endpoint along the line direction."""
+        line = self.line()
+        p1, p2 = line.p1(), line.p2()
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy)
+        if length < 1e-12:
+            self._grip1.setPos(p1)
+            self._grip2.setPos(p2)
+            return
+        ux, uy = dx / length, dy / length
+        self._grip1.setPos(p1.x() - ux * 10, p1.y() - uy * 10)
+        self._grip2.setPos(p2.x() + ux * 10, p2.y() + uy * 10)
+
+    # ── Hover events ─────────────────────────────────────────────────────
+
+    def hoverEnterEvent(self, event):
+        if not self.isSelected():
+            self._grip1.setVisible(True)
+            self._grip2.setVisible(True)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        if not self.isSelected():
+            self._grip1.setVisible(False)
+            self._grip2.setVisible(False)
+        super().hoverLeaveEvent(event)
 
     # ── Selection highlight (suppress dashed box) ─────────────────────────
 
@@ -229,7 +301,8 @@ class GridlineItem(QGraphicsLineItem):
         pen_w = GRID_WIDTH / sx
 
         # Shorten line to meet visible bubbles at their edge.
-        # Account for bubble scale (display manager may call setScale()).
+        # Bubbles use ItemIgnoresTransformations, so convert pixel radius
+        # back to scene units using the current view scale.
         line = self.line()
         p1, p2 = line.p1(), line.p2()
         dx = p2.x() - p1.x()
@@ -237,10 +310,9 @@ class GridlineItem(QGraphicsLineItem):
         length = math.sqrt(dx * dx + dy * dy)
         if length > 1e-9:
             ux, uy = dx / length, dy / length
-            r1 = BUBBLE_RADIUS_MM * self.bubble1.scale()
-            r2 = BUBBLE_RADIUS_MM * self.bubble2.scale()
-            draw_p1 = QPointF(p1.x() + ux * r1, p1.y() + uy * r1) if self.bubble1.isVisible() else p1
-            draw_p2 = QPointF(p2.x() - ux * r2, p2.y() - uy * r2) if self.bubble2.isVisible() else p2
+            scene_r = GridBubble.RADIUS_PX / sx  # pixel radius → scene units
+            draw_p1 = QPointF(p1.x() + ux * scene_r, p1.y() + uy * scene_r) if self.bubble1.isVisible() else p1
+            draw_p2 = QPointF(p2.x() - ux * scene_r, p2.y() - uy * scene_r) if self.bubble2.isVisible() else p2
         else:
             draw_p1, draw_p2 = p1, p2
 
