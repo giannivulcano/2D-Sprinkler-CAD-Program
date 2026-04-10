@@ -337,8 +337,13 @@ class SnapEngine:
                     continue
                 if (isinstance(item, QGraphicsItemGroup)
                         and item.data(0) == "DXF Underlay"):
+                    # Only yield children whose bounding rect overlaps
+                    # the search area — a DXF underlay can have thousands
+                    # of children and the O(n²) segment pairing below
+                    # would freeze the UI without this spatial filter.
                     for child in item.childItems():
-                        yield child
+                        if child.sceneBoundingRect().intersects(search_rect):
+                            yield child
                     continue
                 yield item
 
