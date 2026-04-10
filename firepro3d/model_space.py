@@ -146,6 +146,10 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._grip_item = None                  # item currently being grip-dragged
         self._grip_index: int = -1              # grip handle index
         self._grip_dragging: bool = False
+        # Gridline body drag (perpendicular constraint)
+        self._dragging_gridline = None          # GridlineItem being body-dragged
+        self._gridline_drag_start = None        # scene pos at drag start
+        self._gridline_drag_original_pos = None # perpendicular position at drag start
         # Offset command (Sprint L)
         self._offset_source = None              # entity selected for offset
         self._offset_dist: float = 0.0          # distance entered by user
@@ -498,6 +502,10 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._grip_item = None
         self._grip_index = -1
         self._grip_dragging = False
+        # Reset gridline body drag state
+        self._dragging_gridline = None
+        self._gridline_drag_start = None
+        self._gridline_drag_original_pos = None
         self.modeChanged.emit(mode)
         # Auto-deselect all geometry when entering a drawing/placement mode
         if mode not in ("select", "stretch", "move", "rotate", "scale",
@@ -3480,6 +3488,18 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 v.viewport().update()
             return
 
+        # ── Gridline body drag (perpendicular constraint) ───────────────
+        if self._dragging_gridline is not None:
+            gl = self._dragging_gridline
+            delta_x = snapped.x() - self._gridline_drag_start.x()
+            delta_y = snapped.y() - self._gridline_drag_start.y()
+            px, py = gl._perpendicular_vector()
+            perp_offset = delta_x * px + delta_y * py
+            gl.set_perpendicular_position(self._gridline_drag_original_pos + perp_offset)
+            for v in self.views():
+                v.viewport().update()
+            return
+
         # ── Dispatch to per-mode handler ────────────────────────────────
         handler_name = self._MOVE_DISPATCH.get(self.mode)
         if handler_name is not None:
@@ -4431,6 +4451,25 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 self._grip_item, self._grip_index = grip_hit
                 self._grip_dragging = True
                 return  # consumed by grip system
+
+        # ── Gridline body drag (perpendicular constraint, select mode) ──
+        if self.mode in (None, "select"):
+            gl_hit = next(
+                (i for i in items
+                 if isinstance(i, GridlineItem)
+                 or (hasattr(i, 'parentItem') and isinstance(i.parentItem(), GridlineItem))),
+                None,
+            )
+            if gl_hit is not None:
+                gl = gl_hit if isinstance(gl_hit, GridlineItem) else gl_hit.parentItem()
+                if not gl.locked:
+                    px, py = gl._perpendicular_vector()
+                    line = gl.line()
+                    orig_perp = line.p1().x() * px + line.p1().y() * py
+                    self._dragging_gridline = gl
+                    self._gridline_drag_start = snapped
+                    self._gridline_drag_original_pos = orig_perp
+                    return
 
         # ── Dispatch to per-mode handler ────────────────────────────────
         handler_name = self._PRESS_DISPATCH.get(self.mode)
@@ -6348,6 +6387,13 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         return False
 
     def mouseReleaseEvent(self, event):
+        # ── Gridline body drag release ──────────────────────────────────
+        if event.button() == Qt.MouseButton.LeftButton and self._dragging_gridline is not None:
+            self.push_undo_state()
+            self._dragging_gridline = None
+            self._gridline_drag_start = None
+            self._gridline_drag_original_pos = None
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._grip_dragging:
             self._solve_constraints(self._grip_item)  # enforce constraints
             # Rebuild any hatches whose source was the dragged item
