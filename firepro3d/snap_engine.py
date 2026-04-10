@@ -743,7 +743,7 @@ class SnapEngine:
                 _seg_snap(item.mapToScene(vertices[i]),
                           item.mapToScene(vertices[i + 1]))
 
-        # ── ArcItem — closest point on arc circumference ─────────────────
+        # ── ArcItem — closest point on arc circumference + tangent ───────
         if isinstance(item, ArcItem):
             cx, cy = item._center.x(), item._center.y()
             r = item._radius
@@ -758,6 +758,23 @@ class SnapEngine:
                         pts.append(("perpendicular", foot))
                     if self.snap_nearest:
                         pts.append(("nearest", foot))
+
+                # Tangent — cursor must be outside the arc's radius
+                if self.snap_tangent and d > r + 1e-6:
+                    angle_to_cursor = math.atan2(
+                        cursor.y() - cy, cursor.x() - cx,
+                    )
+                    half_angle = math.acos(r / d)
+                    for sign in (+1, -1):
+                        a = angle_to_cursor + sign * half_angle
+                        tp = QPointF(cx + r * math.cos(a),
+                                     cy + r * math.sin(a))
+                        # Only emit if tangent point falls on the visible arc
+                        tp_deg = math.degrees(math.atan2(-(tp.y() - cy),
+                                                          tp.x() - cx))
+                        if _angle_in_arc(tp_deg, item._start_deg,
+                                         item._span_deg):
+                            pts.append(("tangent", tp))
 
         # ── Full circle (QGraphicsEllipseItem) — closest point on circle ─
         if isinstance(item, QGraphicsEllipseItem) and not hasattr(item, "pipes"):
