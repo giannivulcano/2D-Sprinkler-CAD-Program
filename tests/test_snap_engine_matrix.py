@@ -355,6 +355,13 @@ class TestFullCircle:
             self.scene, cursor)
         assert result is not None, "expected tangent snap"
         assert result.snap_type == "tangent"
+        # Tangent point must lie on the circumference (distance from
+        # center ≈ radius, within BR tolerance for pen-width expansion)
+        tp = result.point
+        dist = math.hypot(tp.x() - 100, tp.y() - 100)
+        assert abs(dist - 50) < self.BR_TOL, (
+            f"tangent point dist from center={dist:.1f}, expected ≈50"
+        )
 
     def test_nearest(self):
         result = _find(
@@ -572,6 +579,17 @@ class TestArcItem:
             self.scene, cursor)
         assert result is not None, "expected tangent snap"
         assert result.snap_type == "tangent"
+        # Tangent point must lie on the arc circumference
+        tp = result.point
+        dist = math.hypot(tp.x(), tp.y())
+        assert abs(dist - self.R) < ABS_TOL, (
+            f"tangent point dist from center={dist:.1f}, expected ≈{self.R}"
+        )
+        # Tangent point angle must fall within the arc's 0°–90° range
+        tp_deg = math.degrees(math.atan2(-tp.y(), tp.x())) % 360
+        assert 0 <= tp_deg <= 90 + 1, (
+            f"tangent at {tp_deg:.1f}° is outside the arc's 0°–90° range"
+        )
 
     def test_nearest(self):
         """Cursor outside arc along 0° — nearest snaps to (30, 0)."""
