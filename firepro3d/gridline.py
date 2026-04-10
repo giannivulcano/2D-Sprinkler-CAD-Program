@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem, QStyle,
 )
 from PyQt6.QtGui import QPen, QColor, QFont, QBrush, QPainterPath
-from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import DEFAULT_USER_LAYER
 from PyQt6.QtCore import Qt, QPointF, QRectF
 
 
@@ -173,7 +173,8 @@ class GridlineItem(QGraphicsLineItem):
 
         # User layer
         self.user_layer: str = DEFAULT_USER_LAYER
-        self.level: str = DEFAULT_LEVEL
+        self._locked: bool = False
+        self.paper_height_mm: float = 3.0
         self._display_overrides: dict = {}  # per-instance display overrides
         self._display_scale: float = 1.0    # display scale for bubbles
 
@@ -272,6 +273,78 @@ class GridlineItem(QGraphicsLineItem):
         else:
             self.bubble2.setVisible(visible)
 
+    # ── Lock property ──────────────────────────────────────────────────
+
+    @property
+    def locked(self) -> bool:
+        """Whether the gridline is locked against editing."""
+        return self._locked
+
+    @locked.setter
+    def locked(self, value: bool):
+        self._locked = value
+
+    # ── Perpendicular move ───────────────────────────────────────────────
+
+    def _perpendicular_vector(self) -> tuple[float, float]:
+        """Return the unit perpendicular vector to the gridline direction.
+
+        For a vertical line (dx=0, dy!=0), returns (1, 0).
+        For a horizontal line (dy=0, dx!=0), returns (0, 1).
+        For angled lines, returns the left-hand normal.
+        """
+        line = self.line()
+        dx = line.p2().x() - line.p1().x()
+        dy = line.p2().y() - line.p1().y()
+        length = math.sqrt(dx * dx + dy * dy)
+        if length < 1e-12:
+            return (1.0, 0.0)
+        # Perpendicular normal: (-dy, dx) normalized, then flipped so
+        # the dominant component is positive.  This ensures positive
+        # distance always moves in the +X or +Y direction.
+        nx, ny = -dy / length, dx / length
+        # Flip so that the larger component is positive
+        dominant = nx if abs(nx) >= abs(ny) else ny
+        if dominant < 0:
+            nx, ny = -nx, -ny
+        return (nx, ny)
+
+    def move_perpendicular(self, distance: float):
+        """Translate the gridline by *distance* in the perpendicular direction.
+
+        Positive distance moves in the perpendicular direction; negative
+        moves opposite.  Locked gridlines are not affected.
+        """
+        if self._locked:
+            return
+        nx, ny = self._perpendicular_vector()
+        line = self.line()
+        p1 = line.p1()
+        p2 = line.p2()
+        offset_x = nx * distance
+        offset_y = ny * distance
+        self.setLine(
+            p1.x() + offset_x, p1.y() + offset_y,
+            p2.x() + offset_x, p2.y() + offset_y,
+        )
+        self._update_bubble_positions()
+        self.update()
+
+    def set_perpendicular_position(self, position: float):
+        """Move the gridline so its perpendicular coordinate equals *position*.
+
+        For a vertical gridline this sets the X coordinate of both endpoints.
+        For a horizontal gridline this sets the Y coordinate.
+        """
+        if self._locked:
+            return
+        nx, ny = self._perpendicular_vector()
+        line = self.line()
+        p1 = line.p1()
+        # Current perpendicular position = dot(p1, normal)
+        current = p1.x() * nx + p1.y() * ny
+        self.move_perpendicular(position - current)
+
     # ── Grip drag (constrained to gridline direction) ────────────────────
 
     def grip_points(self) -> list[QPointF]:
@@ -281,7 +354,10 @@ class GridlineItem(QGraphicsLineItem):
 
     def apply_grip(self, index: int, new_pos: QPointF):
         """Move grip *index* to *new_pos*, constrained along the gridline
-        direction so the line stays co-linear."""
+        direction so the line stays co-linear.  Locked gridlines are not
+        affected."""
+        if self._locked:
+            return
         line = self.line()
         p1, p2 = line.p1(), line.p2()
         dx = p2.x() - p1.x()
@@ -315,7 +391,8 @@ class GridlineItem(QGraphicsLineItem):
             "bubble1_vis": self.bubble1.isVisible(),
             "bubble2_vis": self.bubble2.isVisible(),
             "user_layer": self.user_layer,
-            "level":      self.level,
+            "locked": self._locked,
+            "paper_height_mm": self.paper_height_mm,
         }
         if self._display_overrides:
             d["display_overrides"] = self._display_overrides
@@ -326,11 +403,16 @@ class GridlineItem(QGraphicsLineItem):
         p1 = QPointF(d["p1"][0], d["p1"][1])
         p2 = QPointF(d["p2"][0], d["p2"][1])
         item = cls(p1, p2, label=d.get("label", "?"))
-        item.bubble1.setVisible(d.get("bubble1_vis", True))
-        item.bubble2.setVisible(d.get("bubble2_vis", True))
+        # Handle old-format key renames
+        b1_vis = d.get("bubble1_vis", d.get("bubble_start", True))
+        b2_vis = d.get("bubble2_vis", d.get("bubble_end", True))
+        item.bubble1.setVisible(b1_vis)
+        item.bubble2.setVisible(b2_vis)
         item.user_layer = d.get("user_layer", "0")
-        item.level = d.get("level", DEFAULT_LEVEL)
+        item._locked = d.get("locked", False)
+        item.paper_height_mm = d.get("paper_height_mm", 3.0)
         item._display_overrides = d.get("display_overrides", {})
+        # Silently ignore "level" key from old files
         return item
 
     # ── Properties for property panel ─────────────────────────────────────
