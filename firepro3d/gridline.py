@@ -576,6 +576,7 @@ class GridlineItem(QGraphicsLineItem):
                          "value": "Visible" if self.bubble1.isVisible() else "Hidden"},
             "Bubble 2": {"type": "enum", "options": ["Visible", "Hidden"],
                          "value": "Visible" if self.bubble2.isVisible() else "Hidden"},
+            "Locked": {"type": "enum", "options": ["True", "False"], "value": str(self._locked)},
         }
 
     def set_property(self, key: str, value):
@@ -585,6 +586,8 @@ class GridlineItem(QGraphicsLineItem):
             self.bubble1.setVisible(value == "Visible")
         elif key == "Bubble 2":
             self.bubble2.setVisible(value == "Visible")
+        elif key == "Locked":
+            self._locked = value in ("True", True)
 
     # ── Duplicate warning ─────────────────────────────────────────────────
 
