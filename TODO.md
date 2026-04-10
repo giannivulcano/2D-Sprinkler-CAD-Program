@@ -32,14 +32,14 @@
 
 ## Snapping Engine Roadmap (from `docs/specs/snapping-engine.md` §12)
 - [x] Snap picker: same-parent intersection suppression + endpoint protection band — fixes wall-corner and hatch case studies [ref:snap-spec§6.3] [type:Backlog] [P1] [subject:CAD] [done:2026-04-07]
-- [ ] Snap phase-4 segment-source filter audit — restrict `_check_geometry_intersections` to matrix-supported types; add generic `QGraphicsPathItem` (DXF) [ref:snap-spec§5,§6] [type:Backlog] [P1] [subject:CAD]
+- [x] Snap phase-4 segment-source filter audit — restrict `_check_geometry_intersections` to matrix-supported types; add generic `QGraphicsPathItem` (DXF) + DXF underlay group descent [ref:snap-spec§5,§6] [type:Backlog] [P1] [subject:CAD] [done:2026-04-10]
 - [x] WallSegment named-target marker variants — hollow square / hollow triangle for face corners and face midpoints [ref:snap-spec§8] [type:Backlog] [P1] [subject:CAD] [done:2026-04-07]
 - [ ] Fix ConstructionLine perpendicular / nearest / phase-4 participation — **deferred**: ConstructionLine tool is not in active use; revisit if the feature sees real usage. Spec §5 note 2 corrected 2026-04-08. [ref:snap-spec§5-row-ConstructionLine] [type:Backlog] [P3] [subject:CAD]
 - [x] Decouple `nearest` from the perpendicular toggle in `_geometric_snaps` [ref:snap-spec§5-note-1] [type:Backlog] [P2] [subject:CAD] [done:2026-04-08]
-- [ ] ArcItem tangent support in `_geometric_snaps` [ref:snap-spec§5-row-ArcItem] [type:Backlog] [P2] [subject:CAD]
-- [ ] Generic `QGraphicsPathItem` (DXF) phase-4 segment extraction [ref:snap-spec§5-note-7] [type:Backlog] [P2] [subject:CAD]
+- [x] ArcItem tangent support in `_geometric_snaps` [ref:snap-spec§5-row-ArcItem] [type:Backlog] [P2] [subject:CAD] [done:2026-04-10]
+- [x] Generic `QGraphicsPathItem` (DXF) phase-4 segment extraction [ref:snap-spec§5-note-7] [type:Backlog] [P2] [subject:CAD] [done:2026-04-10]
 - [x] Snap engine geometric primitive unit tests (`_line_line_intersect`, `_line_circle_intersect`, `_project_to_segment`) [ref:snap-spec§10.1] [type:Backlog] [P2] [subject:CAD] [done:2026-04-08]
-- [ ] Snap engine matrix fixture test harness — one headless fixture per ✓-cell in §5 [ref:snap-spec§10.2] [type:Backlog] [P2] [subject:CAD]
+- [x] Snap engine matrix fixture test harness — one headless fixture per ✓-cell in §5 (59 tests, 11 classes) [ref:snap-spec§10.2] [type:Backlog] [P2] [subject:CAD] [done:2026-04-10]
 - [x] Snap engine case-study regression tests pinned to §7.1 and §7.2 [ref:snap-spec§10.3] [type:Backlog] [P2] [subject:CAD] [done:2026-04-07]
 - [x] Bind F3 to global OSNAP toggle and reflect state in status bar [ref:snap-spec§9.4-§9.5] [type:Backlog] [P3] [subject:CAD] [done:2026-04-08]
 - [x] Confirm or build per-type OSNAP toggle UI surface (`snap_endpoint`, `snap_midpoint`, etc.) [ref:snap-spec§9.5] [type:Backlog] [P3] [subject:CAD] [done:2026-04-08]
@@ -49,6 +49,7 @@
 - [ ] Spec session: pipe-with-fitting named targets [ref:snap-spec§8.3] [type:Backlog] [P2] [subject:CAD]
 - [ ] Spec session: inferred / dimension-driven placement (next-priority subsystem) [ref:snap-spec§2.3] [type:Backlog] [P1] [subject:Architecture]
 - [ ] Extract snap primitive epsilons (`1e-10` line-line denom, `1e-12` degenerate segment/radius) to named constants on `SnapEngine` — surfaced by primitive unit tests mirroring literals [type:Backlog] [P3] [subject:CAD]
+- [ ] QPainterPath MoveTo element handling — `_collect`, `_geometric_snaps`, and `_check_geometry_intersections` all pair consecutive path elements as segments without checking element type; MoveToElements in multi-contour DXF paths create phantom connecting segments. Fix consistently across all three sites. [type:Backlog] [P3] [subject:CAD]
 
 ## View Relationships Follow-Ups (from `docs/specs/view-relationships.md` §11)
 - [ ] Extract plan-family Z-band magic numbers to named constants in `constants.py` — spec is source of truth for order, `constants.py` should own values [ref:view-relationships§7.3] [type:Backlog] [P3] [subject:CAD]
