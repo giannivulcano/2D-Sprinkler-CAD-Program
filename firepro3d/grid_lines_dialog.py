@@ -16,7 +16,7 @@ from __future__ import annotations
 import math
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QDoubleSpinBox, QSpinBox, QDialogButtonBox, QLabel,
+    QSpinBox, QDialogButtonBox, QLabel,
     QComboBox, QLineEdit, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QAbstractItemView, QTabWidget, QWidget,
     QMessageBox,
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QPointF
 
 from .constants import DEFAULT_GRIDLINE_SPACING_IN, DEFAULT_GRIDLINE_LENGTH_IN
+from .scale_manager import ScaleManager
 
 
 # ── Label generation helpers ──────────────────────────────────────────────────
@@ -83,13 +84,32 @@ def _normalize_angle(angle: float) -> float:
 class _DirectionTab(QWidget):
     """One tab containing labelling, quick-fill, and an editable gridline table."""
 
-    def __init__(self, direction: str, suffix: str, scale_manager=None, parent=None):
+    def __init__(self, direction: str, scale_manager=None, parent=None):
         """*direction* is ``'H'`` or ``'V'``."""
         super().__init__(parent)
         self._direction = direction
-        self._suffix = suffix
         self._sm = scale_manager
         self._build_ui()
+
+    # ── Dimension format / parse helpers ──────────────────────────────
+
+    def _fmt(self, mm: float) -> str:
+        """Format mm as a display string (e.g. ``24'-0"`` or ``7315.2 mm``)."""
+        if self._sm:
+            return self._sm.format_length(mm)
+        return f"{mm:.1f} mm"
+
+    def _parse(self, text: str) -> float:
+        """Parse a dimension string to mm. Returns 0.0 on failure."""
+        if self._sm:
+            fallback = self._sm.bare_number_unit()
+            parsed = ScaleManager.parse_dimension(text.strip(), fallback)
+            if parsed is not None:
+                return parsed
+        try:
+            return float(text)
+        except ValueError:
+            return 0.0
 
     def _build_ui(self):
         outer = QVBoxLayout(self)
@@ -113,14 +133,9 @@ class _DirectionTab(QWidget):
         self._scheme_combo.currentTextChanged.connect(self._update_start_label)
         lbl_form.addRow("Start Label:", self._start_label)
 
-        self._length_spin = QDoubleSpinBox()
-        self._length_spin.setRange(1, 1_000_000)
-        default_length = (self._sm.scene_to_display_value(DEFAULT_GRIDLINE_LENGTH_IN)
-                          if self._sm else DEFAULT_GRIDLINE_LENGTH_IN)
-        self._length_spin.setValue(default_length)
-        self._length_spin.setDecimals(2)
-        self._length_spin.setSuffix(self._suffix)
-        lbl_form.addRow("Default Length:", self._length_spin)
+        self._length_edit = QLineEdit(self._fmt(DEFAULT_GRIDLINE_LENGTH_IN))
+        self._length_edit.setMaximumWidth(140)
+        lbl_form.addRow("Default Length:", self._length_edit)
 
         outer.addWidget(lbl_group)
 
@@ -135,14 +150,9 @@ class _DirectionTab(QWidget):
         qf_lay.addWidget(self._qf_count)
 
         qf_lay.addWidget(QLabel("Spacing:"))
-        self._qf_spacing = QDoubleSpinBox()
-        self._qf_spacing.setRange(0.01, 1_000_000)
-        default_spacing = (self._sm.scene_to_display_value(DEFAULT_GRIDLINE_SPACING_IN)
-                           if self._sm else DEFAULT_GRIDLINE_SPACING_IN)
-        self._qf_spacing.setValue(default_spacing)
-        self._qf_spacing.setDecimals(2)
-        self._qf_spacing.setSuffix(self._suffix)
-        qf_lay.addWidget(self._qf_spacing)
+        self._qf_spacing_edit = QLineEdit(self._fmt(DEFAULT_GRIDLINE_SPACING_IN))
+        self._qf_spacing_edit.setMaximumWidth(140)
+        qf_lay.addWidget(self._qf_spacing_edit)
 
         gen_btn = QPushButton("Generate")
         gen_btn.clicked.connect(self._generate_array)
@@ -155,9 +165,9 @@ class _DirectionTab(QWidget):
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels([
             "Label",
-            "Offset" + self._suffix,
-            "Spacing" + self._suffix,
-            "Length" + self._suffix,
+            "Offset",
+            "Spacing",
+            "Length",
             "Angle°",
             "_backing",
         ])
@@ -208,23 +218,19 @@ class _DirectionTab(QWidget):
         last_label = last_item.text() if last_item else "A"
         return _increment_label(last_label, self._current_scheme())
 
-    def _last_offset(self) -> float:
+    def _last_offset_mm(self) -> float:
+        """Return the last row's offset in mm."""
         if self._table.rowCount() == 0:
             return 0.0
         item = self._table.item(self._table.rowCount() - 1, 1)
-        try:
-            return float(item.text()) if item else 0.0
-        except ValueError:
-            return 0.0
+        return self._parse(item.text()) if item else 0.0
 
-    def _row_offset(self, row: int) -> float:
+    def _row_offset_mm(self, row: int) -> float:
+        """Return a row's offset in mm."""
         if row < 0 or row >= self._table.rowCount():
             return 0.0
         item = self._table.item(row, 1)
-        try:
-            return float(item.text()) if item else 0.0
-        except ValueError:
-            return 0.0
+        return self._parse(item.text()) if item else 0.0
 
     def _on_cell_changed(self, row: int, col: int):
         """Keep Offset (col 1) and Spacing (col 2) in sync."""
@@ -233,31 +239,28 @@ class _DirectionTab(QWidget):
         self._syncing = True
         if col == 1:
             # Offset changed → recalculate Spacing
-            offset = self._row_offset(row)
-            prev = self._row_offset(row - 1) if row > 0 else 0.0
+            offset = self._row_offset_mm(row)
+            prev = self._row_offset_mm(row - 1) if row > 0 else 0.0
             spacing = offset - prev
             sp_item = self._table.item(row, 2)
             if sp_item:
-                sp_item.setText(f"{spacing:.2f}")
+                sp_item.setText(self._fmt(spacing))
             # Also update next row's spacing if it exists
             if row + 1 < self._table.rowCount():
-                next_off = self._row_offset(row + 1)
+                next_off = self._row_offset_mm(row + 1)
                 next_sp = next_off - offset
                 nsp_item = self._table.item(row + 1, 2)
                 if nsp_item:
-                    nsp_item.setText(f"{next_sp:.2f}")
+                    nsp_item.setText(self._fmt(next_sp))
         elif col == 2:
             # Spacing changed → recalculate Offset
             sp_item = self._table.item(row, 2)
-            try:
-                spacing = float(sp_item.text()) if sp_item else 0.0
-            except ValueError:
-                spacing = 0.0
-            prev = self._row_offset(row - 1) if row > 0 else 0.0
+            spacing = self._parse(sp_item.text()) if sp_item else 0.0
+            prev = self._row_offset_mm(row - 1) if row > 0 else 0.0
             new_offset = prev + spacing
             off_item = self._table.item(row, 1)
             if off_item:
-                off_item.setText(f"{new_offset:.2f}")
+                off_item.setText(self._fmt(new_offset))
         self._syncing = False
 
     # ── Row management ────────────────────────────────────────────────────
@@ -267,14 +270,14 @@ class _DirectionTab(QWidget):
         row = self._table.rowCount()
         self._table.insertRow(row)
         label = self._next_table_label() if row > 0 else (self._start_label.text() or "A")
-        offset = self._last_offset()
-        prev = self._row_offset(row - 1) if row > 0 else 0.0
-        spacing = offset - prev
-        length = self._length_spin.value()
+        offset_mm = self._last_offset_mm()
+        prev_mm = self._row_offset_mm(row - 1) if row > 0 else 0.0
+        spacing_mm = offset_mm - prev_mm
+        length_mm = self._parse(self._length_edit.text())
         self._table.setItem(row, 0, QTableWidgetItem(label))
-        self._table.setItem(row, 1, QTableWidgetItem(f"{offset:.2f}"))
-        self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
-        self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
+        self._table.setItem(row, 1, QTableWidgetItem(self._fmt(offset_mm)))
+        self._table.setItem(row, 2, QTableWidgetItem(self._fmt(spacing_mm)))
+        self._table.setItem(row, 3, QTableWidgetItem(self._fmt(length_mm)))
         self._table.setItem(row, 4, QTableWidgetItem(f"{self._default_angle:.1f}"))
         backing_item = QTableWidgetItem()
         backing_item.setData(Qt.ItemDataRole.UserRole, None)
@@ -296,17 +299,18 @@ class _DirectionTab(QWidget):
         self._syncing = True
         self._table.setRowCount(0)
         count = self._qf_count.value()
-        spacing = self._qf_spacing.value()
-        length = self._length_spin.value()
+        spacing_mm = self._parse(self._qf_spacing_edit.text())
+        length_mm = self._parse(self._length_edit.text())
         scheme = self._current_scheme()
         label = self._start_label.text() or ("A" if scheme == "Letters" else "1")
         for i in range(count):
             row = self._table.rowCount()
             self._table.insertRow(row)
+            offset_mm = i * spacing_mm
             self._table.setItem(row, 0, QTableWidgetItem(label))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{i * spacing:.2f}"))
-            self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
-            self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
+            self._table.setItem(row, 1, QTableWidgetItem(self._fmt(offset_mm)))
+            self._table.setItem(row, 2, QTableWidgetItem(self._fmt(spacing_mm)))
+            self._table.setItem(row, 3, QTableWidgetItem(self._fmt(length_mm)))
             self._table.setItem(row, 4, QTableWidgetItem(f"{self._default_angle:.1f}"))
             backing_item = QTableWidgetItem()
             backing_item.setData(Qt.ItemDataRole.UserRole, None)
@@ -319,42 +323,42 @@ class _DirectionTab(QWidget):
     def populate(self, rows: list[tuple]):
         """Fill table with existing gridlines.
 
-        Each element is ``(label, offset, length, angle)`` or
-        ``(label, offset, length, angle, backing_gridline)``.
-        Offset and length are in **display units**, angle in degrees.
+        Each element is ``(label, offset_mm, length_mm, angle)`` or
+        ``(label, offset_mm, length_mm, angle, backing_gridline)``.
+        Offset and length are in **mm**, angle in degrees.
         *backing_gridline* is the existing ``GridlineItem`` (or ``None``).
         """
         self._syncing = True
         self._table.setRowCount(0)
-        prev_offset = 0.0
+        prev_offset_mm = 0.0
         for entry in rows:
             if len(entry) >= 5:
-                label, offset, length, angle, backing = entry[0], entry[1], entry[2], entry[3], entry[4]
+                label, offset_mm, length_mm, angle, backing = entry[0], entry[1], entry[2], entry[3], entry[4]
             else:
-                label, offset, length, angle = entry
+                label, offset_mm, length_mm, angle = entry
                 backing = None
             row = self._table.rowCount()
             self._table.insertRow(row)
-            spacing = offset - prev_offset
+            spacing_mm = offset_mm - prev_offset_mm
             angle = _normalize_angle(angle)
             self._table.setItem(row, 0, QTableWidgetItem(label))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{offset:.2f}"))
-            self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
-            self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
+            self._table.setItem(row, 1, QTableWidgetItem(self._fmt(offset_mm)))
+            self._table.setItem(row, 2, QTableWidgetItem(self._fmt(spacing_mm)))
+            self._table.setItem(row, 3, QTableWidgetItem(self._fmt(length_mm)))
             self._table.setItem(row, 4, QTableWidgetItem(f"{angle:.1f}"))
             backing_item = QTableWidgetItem()
             backing_item.setData(Qt.ItemDataRole.UserRole, backing)
             self._table.setItem(row, 5, backing_item)
-            prev_offset = offset
+            prev_offset_mm = offset_mm
         self._syncing = False
 
     # ── Read table ────────────────────────────────────────────────────────
 
     def read_rows(self) -> list[tuple]:
-        """Return (label, offset_display, length_display, angle_deg, backing) per row.
+        """Return (label, offset_mm, length_mm, angle_deg, backing) per row.
 
         *backing* is the original ``GridlineItem`` reference (or ``None``
-        for newly-added rows).
+        for newly-added rows).  Offset and length are in **mm**.
         """
         result = []
         for row in range(self._table.rowCount()):
@@ -365,14 +369,8 @@ class _DirectionTab(QWidget):
             ang_item = self._table.item(row, 4)
             bck_item = self._table.item(row, 5)
             label = lbl_item.text() if lbl_item else "?"
-            try:
-                offset = float(off_item.text()) if off_item else 0.0
-            except ValueError:
-                offset = 0.0
-            try:
-                length = float(len_item.text()) if len_item else 100.0
-            except ValueError:
-                length = 100.0
+            offset = self._parse(off_item.text()) if off_item else 0.0
+            length = self._parse(len_item.text()) if len_item else 100.0
             try:
                 angle = float(ang_item.text()) if ang_item else self._default_angle
             except ValueError:
@@ -410,11 +408,9 @@ class GridLinesDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setSpacing(8)
 
-        _suffix = self._sm.display_unit_suffix() if self._sm else "  units"
-
         self._tabs = QTabWidget()
-        self._v_tab = _DirectionTab("V", _suffix, scale_manager=self._sm)
-        self._h_tab = _DirectionTab("H", _suffix, scale_manager=self._sm)
+        self._v_tab = _DirectionTab("V", scale_manager=self._sm)
+        self._h_tab = _DirectionTab("H", scale_manager=self._sm)
         self._tabs.addTab(self._v_tab, "Vertical")
         self._tabs.addTab(self._h_tab, "Horizontal")
         outer.addWidget(self._tabs)
@@ -428,12 +424,6 @@ class GridLinesDialog(QDialog):
         outer.addWidget(buttons)
 
     # ── Populate from existing scene gridlines ────────────────────────────
-
-    def _scene_to_display(self, val: float) -> float:
-        """Convert scene units to display units (numeric)."""
-        if self._sm and hasattr(self._sm, 'scene_to_display_value'):
-            return self._sm.scene_to_display_value(val)
-        return val
 
     def _populate_from_scene(self, gridlines):
         """Read existing GridlineItem list and fill H/V tables.
@@ -456,19 +446,11 @@ class GridLinesDialog(QDialog):
 
             if kind == "V":
                 offset = (p1.x() + p2.x()) / 2.0
-                v_rows.append((label,
-                               self._scene_to_display(offset),
-                               self._scene_to_display(length),
-                               angle_deg,
-                               gl))
+                v_rows.append((label, offset, length, angle_deg, gl))
             else:
                 # Horizontal: offset = -y position (architectural convention)
                 offset = -((p1.y() + p2.y()) / 2.0)
-                h_rows.append((label,
-                               self._scene_to_display(offset),
-                               self._scene_to_display(length),
-                               angle_deg,
-                               gl))
+                h_rows.append((label, offset, length, angle_deg, gl))
 
         if v_rows:
             self._v_tab.populate(v_rows)
@@ -477,36 +459,31 @@ class GridLinesDialog(QDialog):
 
     # ── Result ────────────────────────────────────────────────────────────
 
-    def _to_scene(self, val: float) -> float:
-        if self._sm:
-            return self._sm.display_to_scene(val)
-        return val
-
     def get_gridlines(self) -> list[dict]:
         """Return combined H+V gridline specs for ``Model_Space.apply_grid_dialog()``.
 
-        Each dict has keys: label, offset (scene), length (scene),
+        Each dict has keys: label, offset (mm), length (mm),
         angle_deg, and ``_backing`` (the original ``GridlineItem`` or
         ``None`` for new rows).
         """
         result = []
 
         # Vertical gridlines
-        for label, offset, length, angle, backing in self._v_tab.read_rows():
+        for label, offset_mm, length_mm, angle, backing in self._v_tab.read_rows():
             result.append({
                 "label": label,
-                "offset": self._to_scene(offset),
-                "length": self._to_scene(length),
+                "offset": offset_mm,
+                "length": length_mm,
                 "angle_deg": angle,
                 "_backing": backing,
             })
 
         # Horizontal gridlines
-        for label, offset, length, angle, backing in self._h_tab.read_rows():
+        for label, offset_mm, length_mm, angle, backing in self._h_tab.read_rows():
             result.append({
                 "label": label,
-                "offset": self._to_scene(offset),
-                "length": self._to_scene(length),
+                "offset": offset_mm,
+                "length": length_mm,
                 "angle_deg": angle,
                 "_backing": backing,
             })
