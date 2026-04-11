@@ -19,8 +19,11 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox, QSpinBox, QDialogButtonBox, QLabel,
     QComboBox, QLineEdit, QTableWidget, QTableWidgetItem,
     QPushButton, QHeaderView, QAbstractItemView, QTabWidget, QWidget,
+    QMessageBox,
 )
 from PyQt6.QtCore import Qt, QPointF
+
+from .constants import DEFAULT_GRIDLINE_SPACING_IN, DEFAULT_GRIDLINE_LENGTH_IN
 
 
 # ── Label generation helpers ──────────────────────────────────────────────────
@@ -80,11 +83,12 @@ def _normalize_angle(angle: float) -> float:
 class _DirectionTab(QWidget):
     """One tab containing labelling, quick-fill, and an editable gridline table."""
 
-    def __init__(self, direction: str, suffix: str, parent=None):
+    def __init__(self, direction: str, suffix: str, scale_manager=None, parent=None):
         """*direction* is ``'H'`` or ``'V'``."""
         super().__init__(parent)
         self._direction = direction
         self._suffix = suffix
+        self._sm = scale_manager
         self._build_ui()
 
     def _build_ui(self):
@@ -111,7 +115,9 @@ class _DirectionTab(QWidget):
 
         self._length_spin = QDoubleSpinBox()
         self._length_spin.setRange(1, 1_000_000)
-        self._length_spin.setValue(1000)
+        default_length = (self._sm.scene_to_display_value(DEFAULT_GRIDLINE_LENGTH_IN)
+                          if self._sm else DEFAULT_GRIDLINE_LENGTH_IN)
+        self._length_spin.setValue(default_length)
         self._length_spin.setDecimals(2)
         self._length_spin.setSuffix(self._suffix)
         lbl_form.addRow("Default Length:", self._length_spin)
@@ -131,7 +137,9 @@ class _DirectionTab(QWidget):
         qf_lay.addWidget(QLabel("Spacing:"))
         self._qf_spacing = QDoubleSpinBox()
         self._qf_spacing.setRange(0.01, 1_000_000)
-        self._qf_spacing.setValue(100)
+        default_spacing = (self._sm.scene_to_display_value(DEFAULT_GRIDLINE_SPACING_IN)
+                           if self._sm else DEFAULT_GRIDLINE_SPACING_IN)
+        self._qf_spacing.setValue(default_spacing)
         self._qf_spacing.setDecimals(2)
         self._qf_spacing.setSuffix(self._suffix)
         qf_lay.addWidget(self._qf_spacing)
@@ -144,14 +152,16 @@ class _DirectionTab(QWidget):
 
         # ── Table ─────────────────────────────────────────────────────────
         self._default_angle = 90.0 if self._direction == "V" else 0.0
-        self._table = QTableWidget(0, 5)
+        self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels([
             "Label",
             "Offset" + self._suffix,
             "Spacing" + self._suffix,
             "Length" + self._suffix,
             "Angle°",
+            "_backing",
         ])
+        self._table.setColumnHidden(5, True)
         self._syncing = False  # guard against recursive cellChanged loops
         self._table.cellChanged.connect(self._on_cell_changed)
         self._table.horizontalHeader().setSectionResizeMode(
@@ -266,6 +276,9 @@ class _DirectionTab(QWidget):
         self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
         self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
         self._table.setItem(row, 4, QTableWidgetItem(f"{self._default_angle:.1f}"))
+        backing_item = QTableWidgetItem()
+        backing_item.setData(Qt.ItemDataRole.UserRole, None)
+        self._table.setItem(row, 5, backing_item)
         self._syncing = False
 
     def _remove_row(self):
@@ -295,18 +308,31 @@ class _DirectionTab(QWidget):
             self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
             self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
             self._table.setItem(row, 4, QTableWidgetItem(f"{self._default_angle:.1f}"))
+            backing_item = QTableWidgetItem()
+            backing_item.setData(Qt.ItemDataRole.UserRole, None)
+            self._table.setItem(row, 5, backing_item)
             label = _increment_label(label, scheme)
         self._syncing = False
 
     # ── Populate from existing gridlines ──────────────────────────────────
 
-    def populate(self, rows: list[tuple[str, float, float, float]]):
-        """Fill table with existing gridlines: list of (label, offset, length, angle)
-        where offset and length are in **display units**, angle in degrees."""
+    def populate(self, rows: list[tuple]):
+        """Fill table with existing gridlines.
+
+        Each element is ``(label, offset, length, angle)`` or
+        ``(label, offset, length, angle, backing_gridline)``.
+        Offset and length are in **display units**, angle in degrees.
+        *backing_gridline* is the existing ``GridlineItem`` (or ``None``).
+        """
         self._syncing = True
         self._table.setRowCount(0)
         prev_offset = 0.0
-        for label, offset, length, angle in rows:
+        for entry in rows:
+            if len(entry) >= 5:
+                label, offset, length, angle, backing = entry[0], entry[1], entry[2], entry[3], entry[4]
+            else:
+                label, offset, length, angle = entry
+                backing = None
             row = self._table.rowCount()
             self._table.insertRow(row)
             spacing = offset - prev_offset
@@ -316,13 +342,20 @@ class _DirectionTab(QWidget):
             self._table.setItem(row, 2, QTableWidgetItem(f"{spacing:.2f}"))
             self._table.setItem(row, 3, QTableWidgetItem(f"{length:.2f}"))
             self._table.setItem(row, 4, QTableWidgetItem(f"{angle:.1f}"))
+            backing_item = QTableWidgetItem()
+            backing_item.setData(Qt.ItemDataRole.UserRole, backing)
+            self._table.setItem(row, 5, backing_item)
             prev_offset = offset
         self._syncing = False
 
     # ── Read table ────────────────────────────────────────────────────────
 
-    def read_rows(self) -> list[tuple[str, float, float, float]]:
-        """Return (label, offset_display, length_display, angle_deg) for each row."""
+    def read_rows(self) -> list[tuple]:
+        """Return (label, offset_display, length_display, angle_deg, backing) per row.
+
+        *backing* is the original ``GridlineItem`` reference (or ``None``
+        for newly-added rows).
+        """
         result = []
         for row in range(self._table.rowCount()):
             lbl_item = self._table.item(row, 0)
@@ -330,6 +363,7 @@ class _DirectionTab(QWidget):
             # column 2 = spacing (derived), skip
             len_item = self._table.item(row, 3)
             ang_item = self._table.item(row, 4)
+            bck_item = self._table.item(row, 5)
             label = lbl_item.text() if lbl_item else "?"
             try:
                 offset = float(off_item.text()) if off_item else 0.0
@@ -344,7 +378,8 @@ class _DirectionTab(QWidget):
             except ValueError:
                 angle = self._default_angle
             angle = _normalize_angle(angle)
-            result.append((label, offset, length, angle))
+            backing = bck_item.data(Qt.ItemDataRole.UserRole) if bck_item else None
+            result.append((label, offset, length, angle, backing))
         return result
 
 
@@ -362,11 +397,12 @@ class GridLinesDialog(QDialog):
         self.setMinimumWidth(480)
         self.setMinimumHeight(520)
         self._sm = scale_manager
+        self._existing = list(existing_gridlines) if existing_gridlines else []
         self._build_ui()
 
         # Populate tabs with existing gridlines (if any)
-        if existing_gridlines:
-            self._populate_from_scene(existing_gridlines)
+        if self._existing:
+            self._populate_from_scene(self._existing)
 
     # ── UI ────────────────────────────────────────────────────────────────
 
@@ -377,8 +413,8 @@ class GridLinesDialog(QDialog):
         _suffix = self._sm.display_unit_suffix() if self._sm else "  units"
 
         self._tabs = QTabWidget()
-        self._v_tab = _DirectionTab("V", _suffix)
-        self._h_tab = _DirectionTab("H", _suffix)
+        self._v_tab = _DirectionTab("V", _suffix, scale_manager=self._sm)
+        self._h_tab = _DirectionTab("H", _suffix, scale_manager=self._sm)
         self._tabs.addTab(self._v_tab, "Vertical")
         self._tabs.addTab(self._h_tab, "Horizontal")
         outer.addWidget(self._tabs)
@@ -400,9 +436,13 @@ class GridLinesDialog(QDialog):
         return val
 
     def _populate_from_scene(self, gridlines):
-        """Read existing GridlineItem list and fill H/V tables."""
-        h_rows: list[tuple[str, float, float, float]] = []
-        v_rows: list[tuple[str, float, float, float]] = []
+        """Read existing GridlineItem list and fill H/V tables.
+
+        Each row stores a reference to its backing GridlineItem so
+        that ``apply_grid_dialog()`` can diff-reconcile on accept.
+        """
+        h_rows: list[tuple] = []
+        v_rows: list[tuple] = []
 
         for gl in gridlines:
             line = gl.line()
@@ -419,14 +459,16 @@ class GridLinesDialog(QDialog):
                 v_rows.append((label,
                                self._scene_to_display(offset),
                                self._scene_to_display(length),
-                               angle_deg))
+                               angle_deg,
+                               gl))
             else:
                 # Horizontal: offset = -y position (architectural convention)
                 offset = -((p1.y() + p2.y()) / 2.0)
                 h_rows.append((label,
                                self._scene_to_display(offset),
                                self._scene_to_display(length),
-                               angle_deg))
+                               angle_deg,
+                               gl))
 
         if v_rows:
             self._v_tab.populate(v_rows)
@@ -441,31 +483,62 @@ class GridLinesDialog(QDialog):
         return val
 
     def get_gridlines(self) -> list[dict]:
-        """Return combined H+V gridline specs for ``Model_Space.place_grid_lines()``.
+        """Return combined H+V gridline specs for ``Model_Space.apply_grid_dialog()``.
 
-        Each dict has keys: label, offset (scene), length (scene), angle_deg.
+        Each dict has keys: label, offset (scene), length (scene),
+        angle_deg, and ``_backing`` (the original ``GridlineItem`` or
+        ``None`` for new rows).
         """
         result = []
 
         # Vertical gridlines
-        for label, offset, length, angle in self._v_tab.read_rows():
+        for label, offset, length, angle, backing in self._v_tab.read_rows():
             result.append({
                 "label": label,
                 "offset": self._to_scene(offset),
                 "length": self._to_scene(length),
                 "angle_deg": angle,
+                "_backing": backing,
             })
 
         # Horizontal gridlines
-        for label, offset, length, angle in self._h_tab.read_rows():
+        for label, offset, length, angle, backing in self._h_tab.read_rows():
             result.append({
                 "label": label,
                 "offset": self._to_scene(offset),
                 "length": self._to_scene(length),
                 "angle_deg": angle,
+                "_backing": backing,
             })
 
         return result
+
+    # ── Deletion confirmation ───────────────────────────────────────────
+
+    def accept(self):
+        """Confirm before deleting gridlines that were removed from tables."""
+        if self._existing:
+            # Collect all backing refs still present in the tables
+            kept = set()
+            for _, _, _, _, backing in self._v_tab.read_rows():
+                if backing is not None:
+                    kept.add(id(backing))
+            for _, _, _, _, backing in self._h_tab.read_rows():
+                if backing is not None:
+                    kept.add(id(backing))
+            deleted = [gl for gl in self._existing if id(gl) not in kept]
+            if deleted:
+                n = len(deleted)
+                answer = QMessageBox.question(
+                    self,
+                    "Delete Gridlines",
+                    f"{n} gridline(s) will be deleted. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return  # abort accept
+        super().accept()
 
     def get_params(self) -> dict:
         """Backward-compat wrapper for ``main.py``."""

@@ -358,7 +358,6 @@ class Model_View(QGraphicsView):
                             painter.setPen(QPen(color, 1.5, Qt.PenStyle.DashLine))
                             painter.drawLine(vpa, vpb)
                             # Witness ticks (short perpendicular marks)
-                            import math
                             dx = vpb.x() - vpa.x()
                             dy = vpb.y() - vpa.y()
                             length = math.hypot(dx, dy)
