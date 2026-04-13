@@ -156,6 +156,8 @@ class Underlay:
                         "value": "Yes" if self.locked else "No"},
             "Visible": {"type": "label",
                          "value": "Yes" if self.visible else "No"},
+            "Import Scale": {"type": "label",
+                              "value": f"{self.import_scale:.6g}"},
         }
         if self.type == "pdf":
             props["DPI"] = {"type": "label", "value": str(self.dpi)}
