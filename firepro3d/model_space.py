@@ -2023,10 +2023,12 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             colour=color.name(),
             line_weight=params.get("line_weight", lw),
             user_layer=ul,
+            level=self.active_level,
         )
 
         # Apply saved display settings
         self._apply_underlay_display(group, record)
+        self._apply_underlay_hidden_layers(group, record)
         # Store sorted layer list on the group for the LayerManager
         all_layers = sorted({geom.get("layer", "0") for geom in geom_list})
         group.setData(2, all_layers)
@@ -2208,7 +2210,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         record = _record or Underlay(
             type="pdf", path=file_path,
             x=item.pos().x(), y=item.pos().y(),
-            dpi=dpi, page=page
+            dpi=dpi, page=page,
+            level=self.active_level,
         )
 
         # Apply saved display settings
@@ -2222,13 +2225,61 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
     # UNDERLAYS — MANAGEMENT
 
     def _apply_underlay_display(self, item: QGraphicsItem, record: Underlay):
-        """Apply scale, rotation, opacity, and lock state from the record."""
+        """Apply transform origin, scale, rotation, opacity, and lock state."""
+        item.setTransformOriginPoint(item.boundingRect().center())
         item.setScale(record.scale)
         item.setRotation(record.rotation)
         item.setOpacity(record.opacity)
         if record.locked:
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+
+    def _apply_underlay_hidden_layers(self, item: QGraphicsItem,
+                                       data: Underlay):
+        """Hide child items whose source layer is in data.hidden_layers.
+
+        Stale layer names (no longer in the file) are silently dropped.
+        """
+        if not data.hidden_layers or not hasattr(item, "childItems"):
+            return
+        actual_layers = set()
+        for child in item.childItems():
+            layer_name = child.data(1)
+            if layer_name is not None:
+                actual_layers.add(layer_name)
+        data.hidden_layers = [
+            ln for ln in data.hidden_layers if ln in actual_layers
+        ]
+        hidden_set = set(data.hidden_layers)
+        for child in item.childItems():
+            layer_name = child.data(1)
+            if layer_name in hidden_set:
+                child.setVisible(False)
+
+    def _create_underlay_placeholder(self, data: Underlay) -> QGraphicsItem:
+        """Create a placeholder rect for a missing underlay file."""
+        rect = QGraphicsRectItem(0, 0, 200, 150)
+        pen = QPen(QColor("#ff0000"), 2, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        rect.setPen(pen)
+        rect.setBrush(QBrush(QColor(255, 0, 0, 30)))
+        rect.setPos(data.x, data.y)
+        rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        rect.setData(0, "missing_underlay")
+
+        filename = os.path.basename(data.path)
+        label = QGraphicsSimpleTextItem(
+            f"{filename}\nMissing \u2014 right-click to relink", rect)
+        font = QFont()
+        font.setPointSize(8)
+        label.setFont(font)
+        label.setBrush(QBrush(QColor("#ff0000")))
+
+        self.addItem(rect)
+        self.underlays.append((data, rect))
+        self.underlaysChanged.emit()
+        return rect
 
     def find_underlay_for_item(self, item: QGraphicsItem):
         """Return the (Underlay, QGraphicsItem) tuple for a scene item, or None."""
@@ -2263,16 +2314,27 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         data.rotation = item.rotation()
         data.opacity = item.opacity()
 
-        # Remove old item from scene
-        idx = None
-        for i, (d, it) in enumerate(self.underlays):
-            if d is data:
-                idx = i
-                break
+        # Check file exists before re-import
+        if not os.path.exists(data.path):
+            # Replace with placeholder
+            if item.scene() is self:
+                self.removeItem(item)
+            # Remove old entry from underlays list
+            old_entries = [(i, d) for i, (d, it) in enumerate(self.underlays) if d is data]
+            for i, _ in reversed(old_entries):
+                self.underlays.pop(i)
+            self._create_underlay_placeholder(data)
+            self._show_status(f"Missing underlay: {data.path}")
+            return
+
+        # Remove old entry from underlays list BEFORE re-import.
+        # DXF import is async (worker thread) — if we clean up after,
+        # the duplicate check races with _on_dxf_finished appending.
+        self.underlays = [(d, it) for d, it in self.underlays if d is not data]
         if item.scene() is self:
             self.removeItem(item)
 
-        # Re-import
+        # Re-import (appends a fresh entry to self.underlays)
         if data.type == "pdf":
             self.import_pdf(
                 data.path, dpi=data.dpi, page=data.page,
@@ -2285,15 +2347,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 x=data.x, y=data.y, _record=data,
                 user_layer=data.user_layer,
             )
-
-        # The import functions append a new entry — remove the duplicate old slot if needed
-        if idx is not None and idx < len(self.underlays):
-            # Find and remove the entry pointing to the old (now removed) item
-            # The fresh entry is at the end
-            old_entries = [(i, d) for i, (d, it) in enumerate(self.underlays) if d is data]
-            if len(old_entries) > 1:
-                # Remove the first (stale) one
-                self.underlays.pop(old_entries[0][0])
 
         self._show_status(f"Refreshed underlay: {data.path}")
 
