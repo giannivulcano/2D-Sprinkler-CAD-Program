@@ -1,4 +1,7 @@
 """Unit tests for the Underlay data model."""
+import os
+import tempfile
+
 import pytest
 from firepro3d.underlay import Underlay
 from firepro3d.constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
@@ -90,3 +93,52 @@ class TestUnderlaySerialization:
         assert d["visible"] is False
         assert d["hidden_layers"] == ["X"]
         assert d["import_mode"] == "auto"
+
+
+class TestPathResolution:
+    """Path relativize / resolve helpers."""
+
+    def test_relativize_same_dir(self):
+        project_dir = "/projects/building"
+        abs_path = "/projects/building/plans/floor1.dxf"
+        result = Underlay.relativize_path(abs_path, project_dir)
+        assert result == os.path.join("plans", "floor1.dxf")
+
+    def test_relativize_one_level_up(self):
+        project_dir = "/projects/building"
+        abs_path = "/projects/shared/floor1.dxf"
+        result = Underlay.relativize_path(abs_path, project_dir)
+        assert ".." in result
+        assert result.endswith("floor1.dxf")
+
+    def test_relativize_deep_traversal_returns_absolute(self, tmp_path):
+        project_dir = str(tmp_path / "a" / "b" / "c")
+        abs_path = str(tmp_path.parent / "other" / "deep" / "file.dxf")
+        result = Underlay.relativize_path(abs_path, project_dir)
+        assert os.path.isabs(result)
+
+    def test_resolve_relative_path(self, tmp_path):
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        dxf = plans / "floor1.dxf"
+        dxf.write_text("dummy")
+        result = Underlay.resolve_path("plans/floor1.dxf", str(tmp_path))
+        assert result is not None
+        assert os.path.exists(result)
+
+    def test_resolve_absolute_path(self, tmp_path):
+        dxf = tmp_path / "floor1.dxf"
+        dxf.write_text("dummy")
+        result = Underlay.resolve_path(str(dxf), str(tmp_path))
+        assert result == str(dxf)
+
+    def test_resolve_missing_returns_none(self, tmp_path):
+        result = Underlay.resolve_path("nonexistent.dxf", str(tmp_path))
+        assert result is None
+
+    def test_resolve_relative_fallback_to_absolute(self, tmp_path):
+        """Relative resolution fails but stored path exists as absolute."""
+        dxf = tmp_path / "floor1.dxf"
+        dxf.write_text("dummy")
+        result = Underlay.resolve_path(str(dxf), "/some/other/dir")
+        assert result == str(dxf)

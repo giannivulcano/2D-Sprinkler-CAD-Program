@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from typing import Literal
 from .constants import DEFAULT_USER_LAYER, DEFAULT_LEVEL
@@ -78,3 +79,43 @@ class Underlay:
             hidden_layers = d.get("hidden_layers", []),
             import_mode   = d.get("import_mode", "auto"),
         )
+
+    @staticmethod
+    def relativize_path(abs_path: str, project_dir: str) -> str:
+        """Convert absolute path to relative if the result is sensible.
+
+        Returns absolute path if the relative form requires 3+ parent
+        traversals (``../../../`` or deeper) or if the paths are on
+        different drives (Windows).
+        """
+        try:
+            rel = os.path.relpath(abs_path, project_dir)
+        except ValueError:
+            return abs_path
+        parts = rel.replace("\\", "/").split("/")
+        parent_count = sum(1 for p in parts if p == "..")
+        if parent_count >= 3:
+            return abs_path
+        return rel
+
+    @staticmethod
+    def resolve_path(stored_path: str, project_dir: str) -> str | None:
+        """Resolve a stored underlay path to an existing absolute path.
+
+        Returns ``None`` if the file cannot be found.
+
+        Resolution order:
+        1. If relative, resolve against *project_dir*.
+        2. If that doesn't exist, try stored path as absolute.
+        3. If absolute and exists, return as-is.
+        """
+        if os.path.isabs(stored_path):
+            if os.path.exists(stored_path):
+                return stored_path
+            return None
+        resolved = os.path.normpath(os.path.join(project_dir, stored_path))
+        if os.path.exists(resolved):
+            return resolved
+        if os.path.exists(stored_path):
+            return stored_path
+        return None

@@ -22,6 +22,7 @@ import shutil
 from PyQt6.QtCore import QPointF
 
 from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM
+from .underlay import Underlay
 
 
 class SceneIOMixin:
@@ -131,6 +132,7 @@ class SceneIOMixin:
 
         # --- Underlays ---
         underlays_data = []
+        project_dir = os.path.dirname(os.path.abspath(filename))
         for data, item in self.underlays:
             if item is not None:
                 data.x        = item.scenePos().x()
@@ -138,7 +140,10 @@ class SceneIOMixin:
                 data.scale    = item.scale()
                 data.rotation = item.rotation()
                 data.opacity  = item.opacity()
-            underlays_data.append(data.to_dict())
+            d = data.to_dict()
+            d["path"] = Underlay.relativize_path(
+                os.path.abspath(data.path), project_dir)
+            underlays_data.append(d)
 
         # --- Water supply ---
         ws = self.water_supply_node
@@ -433,8 +438,15 @@ class SceneIOMixin:
                 note.level = entry.get("level", DEFAULT_LEVEL)
 
         # --- Underlays ---
+        project_dir = os.path.dirname(os.path.abspath(filename))
+        missing_underlays = []
         for entry in payload.get("underlays", []):
             udata = Underlay.from_dict(entry)
+            resolved = Underlay.resolve_path(udata.path, project_dir)
+            if resolved is None:
+                missing_underlays.append(udata)
+                continue
+            udata.path = resolved
             if udata.type == "pdf":
                 self.import_pdf(udata.path, dpi=udata.dpi, page=udata.page,
                                 x=udata.x, y=udata.y, _record=udata)
