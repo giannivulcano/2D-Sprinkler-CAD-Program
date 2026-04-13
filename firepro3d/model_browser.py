@@ -302,8 +302,8 @@ class ModelBrowser(QWidget):
 
             for idx, (data, item) in enumerate(underlays):
                 filename = os.path.basename(data.path)
-                is_missing = (item is not None
-                              and item.data(0) == "missing_underlay")
+                is_missing = (item is None
+                              or item.data(0) == "missing_underlay")
                 level_label = ("All Levels" if data.level == "*"
                                else data.level)
 
@@ -395,11 +395,14 @@ class ModelBrowser(QWidget):
             return
         selected_items = self._tree.selectedItems()
 
-        # Check for underlay selection first
+        # Check for underlay file-node selection (skip layer nodes)
         for tree_item in selected_items:
             ul_idx = tree_item.data(0, _ROLE_UNDERLAY)
             if ul_idx is not None:
-                self._on_underlay_selected(ul_idx)
+                # Layer nodes have _ROLE_ENTITY set to the layer name —
+                # don't pan/select for those, only file nodes
+                if tree_item.data(0, _ROLE_ENTITY) is None:
+                    self._on_underlay_selected(ul_idx)
                 return
 
         # Existing entity selection logic
@@ -503,26 +506,25 @@ class ModelBrowser(QWidget):
         if idx < 0 or idx >= len(underlays):
             return
         data, item = underlays[idx]
-        if item is None:
-            return
 
-        # Pan view to the underlay
-        views = self._scene.views()
-        if views:
-            br = item.boundingRect()
-            scene_rect = item.mapToScene(br).boundingRect()
-            views[0].centerOn(scene_rect.center())
+        if item is not None:
+            # Pan view to the underlay
+            views = self._scene.views()
+            if views:
+                br = item.boundingRect()
+                scene_rect = item.mapToScene(br).boundingRect()
+                views[0].centerOn(scene_rect.center())
 
-        # Select in scene if not locked
-        self._syncing = True
-        try:
-            self._scene.clearSelection()
-            if not data.locked:
-                item.setSelected(True)
-        finally:
-            self._syncing = False
+            # Select in scene if not locked
+            self._syncing = True
+            try:
+                self._scene.clearSelection()
+                if not data.locked:
+                    item.setSelected(True)
+            finally:
+                self._syncing = False
 
-        # Populate property panel (always, even for locked underlays)
+        # Populate property panel (always, even when item is None)
         self.entitySelected.emit(data)
 
     def _underlay_context_menu(self, tree_item, ul_idx: int, pos):
@@ -531,8 +533,8 @@ class ModelBrowser(QWidget):
         if ul_idx < 0 or ul_idx >= len(underlays):
             return
         data, item = underlays[ul_idx]
-        is_missing = (item is not None
-                      and item.data(0) == "missing_underlay")
+        is_missing = (item is None
+                      or item.data(0) == "missing_underlay")
 
         # Check if this is a source-layer node
         layer_name = tree_item.data(0, _ROLE_ENTITY)
@@ -626,6 +628,8 @@ class ModelBrowser(QWidget):
         lm = getattr(self._scene, "_level_manager", None)
         if lm:
             lm.apply_to_scene(self._scene)
+        elif item is not None:
+            item.setVisible(data.visible)
         self._scene.push_undo_state()
         self.refresh()
 
