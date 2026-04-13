@@ -259,11 +259,14 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
     def _on_selection_changed(self):
         """Recompute gridline spacing dimensions when selection changes."""
         self._gridline_spacing_dims = self._compute_gridline_spacing()
-        # Snapshot selected gridlines NOW so the spacing editor can use
-        # them later (by the time double-click fires, selection is gone).
-        self._gridline_spacing_selected = [
-            item for item in self.selectedItems()
-            if isinstance(item, GridlineItem)]
+        # Snapshot selected gridlines — only update when there IS a
+        # selection.  The double-click press events fire deselection
+        # before mouseDoubleClickEvent, so we must keep the last
+        # non-empty snapshot intact.
+        sel = [item for item in self.selectedItems()
+               if isinstance(item, GridlineItem)]
+        if sel:
+            self._gridline_spacing_selected = sel
         for v in self.views():
             v.viewport().update()
 
@@ -369,7 +372,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 if not gl.locked:
                     gl.move_perpendicular(-delta)
         else:
-            # Both or neither selected — move to_gl only
             if not to_gl.locked:
                 to_gl.move_perpendicular(delta)
 
