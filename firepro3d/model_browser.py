@@ -10,9 +10,11 @@ an entity in the 2D scene, double-click to zoom-to-fit.
 
 from __future__ import annotations
 
+import os
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem, QLabel, QSizePolicy,
-    QAbstractItemView, QMenu,
+    QAbstractItemView, QMenu, QMessageBox, QFileDialog,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor, QBrush
@@ -23,9 +25,12 @@ from .floor_slab import FloorSlab
 from .wall_opening import DoorOpening, WindowOpening
 from .pipe import Pipe
 from .node import Node
+from .underlay import Underlay
+from .underlay_context_menu import UnderlayContextMenu
 
 
 _ROLE_ENTITY = Qt.ItemDataRole.UserRole  # stores Python id() of the entity
+_ROLE_UNDERLAY = Qt.ItemDataRole.UserRole + 1  # stores index into scene.underlays
 
 
 class ModelBrowser(QWidget):
@@ -287,6 +292,51 @@ class ModelBrowser(QWidget):
             item.setData(0, _ROLE_ENTITY, id(ws))
             self._style_hidden(item, ws)
 
+        # -- Underlays ─────────────────────────────────────────────────
+        underlays = getattr(self._scene, "underlays", [])
+        if underlays:
+            ul_root = QTreeWidgetItem(
+                self._tree, [f"Underlays ({len(underlays)})"])
+            ul_root.setFont(0, f_bold)
+            ul_root.setExpanded(True)
+
+            for idx, (data, item) in enumerate(underlays):
+                filename = os.path.basename(data.path)
+                is_missing = (item is not None
+                              and item.data(0) == "missing_underlay")
+                level_label = ("All Levels" if data.level == "*"
+                               else data.level)
+
+                # File node
+                label = f"{filename}    [{level_label}]"
+                if is_missing:
+                    label += "  (missing)"
+                file_node = QTreeWidgetItem(ul_root, [label])
+                file_node.setData(0, _ROLE_UNDERLAY, idx)
+                if not data.visible:
+                    file_node.setForeground(0, self._GREY)
+
+                # Source-layer children (DXF only)
+                if data.type == "dxf" and item is not None and not is_missing:
+                    all_layers = item.data(2) or []
+                    hidden_set = set(data.hidden_layers)
+                    for layer_name in all_layers:
+                        count = sum(
+                            1 for c in item.childItems()
+                            if c.data(1) == layer_name)
+                        suffix = "  (hidden)" if layer_name in hidden_set else ""
+                        layer_node = QTreeWidgetItem(
+                            file_node,
+                            [f"{layer_name}  ({count} items){suffix}"])
+                        layer_node.setData(0, _ROLE_UNDERLAY, idx)
+                        layer_node.setData(0, _ROLE_ENTITY, layer_name)
+                        if layer_name in hidden_set:
+                            layer_node.setForeground(0, self._GREY)
+
+                # PDF page child
+                elif data.type == "pdf" and not is_missing:
+                    QTreeWidgetItem(file_node, [f"Page {data.page + 1}"])
+
     # ── Helpers ─────────────────────────────────────────────────────────
 
     _GREY = QBrush(QColor("#888888"))
@@ -340,11 +390,19 @@ class ModelBrowser(QWidget):
     # ── Click handlers ────────────────────────────────────────────────────
 
     def _on_selection_changed(self):
-        """Handle tree selection changes — supports multi-select via
-        Ctrl+click and Shift+click."""
+        """Handle tree selection changes."""
         if self._syncing:
             return
         selected_items = self._tree.selectedItems()
+
+        # Check for underlay selection first
+        for tree_item in selected_items:
+            ul_idx = tree_item.data(0, _ROLE_UNDERLAY)
+            if ul_idx is not None:
+                self._on_underlay_selected(ul_idx)
+                return
+
+        # Existing entity selection logic
         entities = []
         for tree_item in selected_items:
             entity_id = tree_item.data(0, _ROLE_ENTITY)
@@ -354,7 +412,6 @@ class ModelBrowser(QWidget):
                     entities.append(entity)
         if not entities:
             return
-        # Guard against scene.selectionChanged re-entering via clearSelection
         self._syncing = True
         try:
             self._scene.clearSelection()
@@ -389,6 +446,14 @@ class ModelBrowser(QWidget):
         """Right-click context menu on tree items."""
         if self._scene is None:
             return
+
+        tree_item = self._tree.itemAt(pos)
+        if tree_item is not None:
+            ul_idx = tree_item.data(0, _ROLE_UNDERLAY)
+            if ul_idx is not None:
+                self._underlay_context_menu(tree_item, ul_idx, pos)
+                return
+
         # Gather entities from selected tree items
         entities = []
         for tree_item in self._tree.selectedItems():
@@ -428,3 +493,189 @@ class ModelBrowser(QWidget):
             lambda: (self._scene._show_all_hidden(), self.refresh()))
 
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    # ── Underlay handlers ────────────────────────────────────────────────
+
+    def _on_underlay_selected(self, idx: int):
+        """Handle click on an underlay file node — pan to it and populate
+        property panel (even for locked underlays)."""
+        underlays = getattr(self._scene, "underlays", [])
+        if idx < 0 or idx >= len(underlays):
+            return
+        data, item = underlays[idx]
+        if item is None:
+            return
+
+        # Pan view to the underlay
+        views = self._scene.views()
+        if views:
+            br = item.boundingRect()
+            scene_rect = item.mapToScene(br).boundingRect()
+            views[0].centerOn(scene_rect.center())
+
+        # Select in scene if not locked
+        self._syncing = True
+        try:
+            self._scene.clearSelection()
+            if not data.locked:
+                item.setSelected(True)
+        finally:
+            self._syncing = False
+
+        # Populate property panel (always, even for locked underlays)
+        self.entitySelected.emit(data)
+
+    def _underlay_context_menu(self, tree_item, ul_idx: int, pos):
+        """Build and show context menu for an underlay tree node."""
+        underlays = getattr(self._scene, "underlays", [])
+        if ul_idx < 0 or ul_idx >= len(underlays):
+            return
+        data, item = underlays[ul_idx]
+        is_missing = (item is not None
+                      and item.data(0) == "missing_underlay")
+
+        # Check if this is a source-layer node
+        layer_name = tree_item.data(0, _ROLE_ENTITY)
+        if isinstance(layer_name, str):
+            self._underlay_layer_context_menu(data, item, layer_name, pos)
+            return
+
+        menu = QMenu(self)
+        scene = self._scene
+
+        if is_missing:
+            act_relink = menu.addAction("Relink\u2026")
+            act_relink.triggered.connect(
+                lambda: self._relink_underlay(data, item))
+            menu.addSeparator()
+            act_remove = menu.addAction("Remove")
+            act_remove.triggered.connect(
+                lambda: self._remove_underlay(data, item))
+        else:
+            lock_label = "Unlock" if data.locked else "Lock"
+            act_lock = menu.addAction(lock_label)
+            act_lock.triggered.connect(
+                lambda: self._toggle_underlay_lock(data, item))
+
+            vis_label = "Show" if not data.visible else "Hide"
+            act_vis = menu.addAction(vis_label)
+            act_vis.triggered.connect(
+                lambda: self._toggle_underlay_visible(data, item))
+
+            level_menu = menu.addMenu("Change Level")
+            lm = getattr(scene, "_level_manager", None)
+            levels = lm.levels if lm else []
+            for lvl in levels:
+                act = level_menu.addAction(lvl.name)
+                act.triggered.connect(
+                    lambda checked=False, ln=lvl.name:
+                        self._set_underlay_level(data, ln))
+            level_menu.addSeparator()
+            act_all = level_menu.addAction("All Levels")
+            act_all.triggered.connect(
+                lambda: self._set_underlay_level(data, "*"))
+
+            menu.addSeparator()
+            act_relink = menu.addAction("Relink\u2026")
+            act_relink.triggered.connect(
+                lambda: self._relink_underlay(data, item))
+
+            act_refresh = menu.addAction("Refresh from Disk")
+            act_refresh.triggered.connect(
+                lambda: (scene.refresh_underlay(data, item),
+                         self.refresh()))
+
+            act_dup = menu.addAction("Duplicate")
+            act_dup.triggered.connect(
+                lambda: (UnderlayContextMenu._duplicate(scene, data, item),
+                         self.refresh()))
+
+            menu.addSeparator()
+            act_remove = menu.addAction("Remove")
+            act_remove.triggered.connect(
+                lambda: self._remove_underlay(data, item))
+
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _underlay_layer_context_menu(self, data, item, layer_name, pos):
+        """Context menu for a DXF source-layer node."""
+        menu = QMenu(self)
+        is_hidden = layer_name in data.hidden_layers
+        label = "Show Layer" if is_hidden else "Hide Layer"
+        act = menu.addAction(label)
+        act.triggered.connect(
+            lambda: self._toggle_underlay_layer(data, item, layer_name))
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    # ── Underlay action helpers ──────────────────────────────────────────
+
+    def _toggle_underlay_lock(self, data, item):
+        from PyQt6.QtWidgets import QGraphicsItem
+        data.locked = not data.locked
+        if data.locked:
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        else:
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self._scene.push_undo_state()
+        self.refresh()
+
+    def _toggle_underlay_visible(self, data, item):
+        data.visible = not data.visible
+        lm = getattr(self._scene, "_level_manager", None)
+        if lm:
+            lm.apply_to_scene(self._scene)
+        self._scene.push_undo_state()
+        self.refresh()
+
+    def _set_underlay_level(self, data, level_name: str):
+        data.level = level_name
+        lm = getattr(self._scene, "_level_manager", None)
+        if lm:
+            lm.apply_to_scene(self._scene)
+        self._scene.push_undo_state()
+        self.refresh()
+
+    def _toggle_underlay_layer(self, data, item, layer_name):
+        """Toggle a DXF source layer on/off."""
+        if layer_name in data.hidden_layers:
+            data.hidden_layers.remove(layer_name)
+            show = True
+        else:
+            data.hidden_layers.append(layer_name)
+            show = False
+        for child in item.childItems():
+            if child.data(1) == layer_name:
+                child.setVisible(show)
+        self._scene.underlaysChanged.emit()
+        self._scene.push_undo_state()
+        self.refresh()
+
+    def _relink_underlay(self, data, item):
+        """File dialog to relink a missing or changed underlay."""
+        if data.type == "dxf":
+            filter_str = "DXF Files (*.dxf)"
+        else:
+            filter_str = "PDF Files (*.pdf)"
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Relink Underlay", "", filter_str)
+        if not path:
+            return
+        data.path = path
+        self._scene.refresh_underlay(data, item)
+        self._scene.push_undo_state()
+        self.refresh()
+
+    def _remove_underlay(self, data, item):
+        """Remove with confirmation dialog."""
+        filename = os.path.basename(data.path)
+        reply = QMessageBox.question(
+            self, "Remove Underlay",
+            f"Remove underlay '{filename}'?\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._scene.remove_underlay(data, item)
+            self.refresh()

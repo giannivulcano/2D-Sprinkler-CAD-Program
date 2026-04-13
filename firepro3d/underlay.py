@@ -119,3 +119,36 @@ class Underlay:
         if os.path.exists(stored_path):
             return stored_path
         return None
+
+    def get_properties(self) -> dict:
+        """Return property template for the property manager panel.
+
+        All fields are read-only labels for MVP. Edits are done via
+        the browser tree context menu actions.
+        """
+        props = {
+            "File": {"type": "label", "value": os.path.basename(self.path)},
+            "Path": {"type": "label", "value": self.path},
+            "Type": {"type": "label", "value": self.type.upper()},
+            "Level": {"type": "label",
+                       "value": "All Levels" if self.level == "*"
+                       else self.level},
+            "X": {"type": "label", "value": f"{self.x:.1f}"},
+            "Y": {"type": "label", "value": f"{self.y:.1f}"},
+            "Scale": {"type": "label", "value": str(self.scale)},
+            "Rotation": {"type": "label", "value": f"{self.rotation:.1f}\u00b0"},
+            "Opacity": {"type": "label", "value": f"{self.opacity:.0%}"},
+            "Locked": {"type": "label",
+                        "value": "Yes" if self.locked else "No"},
+            "Visible": {"type": "label",
+                         "value": "Yes" if self.visible else "No"},
+        }
+        if self.type == "pdf":
+            props["DPI"] = {"type": "label", "value": str(self.dpi)}
+            props["Page"] = {"type": "label", "value": str(self.page + 1)}
+            props["Import Mode"] = {"type": "label", "value": self.import_mode}
+        if self.hidden_layers:
+            props["Hidden Layers"] = {
+                "type": "label",
+                "value": ", ".join(self.hidden_layers)}
+        return props
