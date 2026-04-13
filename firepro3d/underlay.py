@@ -33,6 +33,12 @@ class Underlay:
     visible: bool = True
     hidden_layers: list[str] = field(default_factory=list)
     import_mode: str = "auto"
+    # Import transform params (Revision 3) — baked into geometry coordinates;
+    # stored so refresh-from-disk can re-apply the same transform.
+    import_scale: float = 1.0
+    import_base_x: float = 0.0
+    import_base_y: float = 0.0
+    selected_layers: list[str] | None = None
 
     def to_dict(self) -> dict:
         d = {
