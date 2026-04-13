@@ -121,9 +121,12 @@ class DxfImportWorker(QThread):
                     continue
 
             try:
-                geom = self._extract_geometry(entity)
-                if geom is not None:
-                    geometries.append(geom)
+                result = self._extract_geometry(entity)
+                if result is not None:
+                    if isinstance(result, list):
+                        geometries.extend(result)
+                    else:
+                        geometries.append(result)
             except Exception:
                 skipped += 1
 
@@ -237,5 +240,21 @@ class DxfImportWorker(QThread):
             plain = entity.plain_text() if hasattr(entity, "plain_text") else entity.text
             insert = entity.dxf.insert
             return {"kind": "text", "layer": layer, "x": insert.x, "y": -insert.y, "text": plain}
+
+        elif etype in ("INSERT", "DIMENSION", "HATCH"):
+            # Explode block references, dimensions, and hatches into
+            # constituent geometry via ezdxf's virtual_entities().
+            results = []
+            try:
+                for sub_entity in entity.virtual_entities():
+                    sub_geom = self._extract_geometry(sub_entity)
+                    if sub_geom is not None:
+                        if isinstance(sub_geom, list):
+                            results.extend(sub_geom)
+                        else:
+                            results.append(sub_geom)
+            except Exception:
+                pass
+            return results if results else None
 
         return None
