@@ -455,6 +455,20 @@ class SceneIOMixin:
                                 line_weight=udata.line_weight,
                                 x=udata.x, y=udata.y, _record=udata)
 
+        # Handle missing underlay files
+        for udata in missing_underlays:
+            self._create_underlay_placeholder(udata)
+
+        if missing_underlays:
+            from PyQt6.QtWidgets import QMessageBox
+            paths = "\n".join(f"  \u2022 {u.path}" for u in missing_underlays)
+            QMessageBox.warning(
+                None, "Missing Underlay Files",
+                f"{len(missing_underlays)} underlay file(s) could not be found:\n\n"
+                f"{paths}\n\n"
+                "Use right-click \u2192 Relink in the browser tree to reconnect.",
+            )
+
         # --- Water supply ---
         ws_data = payload.get("water_supply")
         if ws_data:

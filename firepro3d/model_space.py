@@ -2256,6 +2256,31 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             if layer_name in hidden_set:
                 child.setVisible(False)
 
+    def _create_underlay_placeholder(self, data: Underlay) -> QGraphicsItem:
+        """Create a placeholder rect for a missing underlay file."""
+        rect = QGraphicsRectItem(0, 0, 200, 150)
+        pen = QPen(QColor("#ff0000"), 2, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        rect.setPen(pen)
+        rect.setBrush(QBrush(QColor(255, 0, 0, 30)))
+        rect.setPos(data.x, data.y)
+        rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        rect.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        rect.setData(0, "missing_underlay")
+
+        filename = os.path.basename(data.path)
+        label = QGraphicsSimpleTextItem(
+            f"{filename}\nMissing \u2014 right-click to relink", rect)
+        font = QFont()
+        font.setPointSize(8)
+        label.setFont(font)
+        label.setBrush(QBrush(QColor("#ff0000")))
+
+        self.addItem(rect)
+        self.underlays.append((data, rect))
+        self.underlaysChanged.emit()
+        return rect
+
     def find_underlay_for_item(self, item: QGraphicsItem):
         """Return the (Underlay, QGraphicsItem) tuple for a scene item, or None."""
         for data, scene_item in self.underlays:
@@ -2288,6 +2313,19 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         data.scale = item.scale()
         data.rotation = item.rotation()
         data.opacity = item.opacity()
+
+        # Check file exists before re-import
+        if not os.path.exists(data.path):
+            # Replace with placeholder
+            if item.scene() is self:
+                self.removeItem(item)
+            # Remove old entry from underlays list
+            old_entries = [(i, d) for i, (d, it) in enumerate(self.underlays) if d is data]
+            for i, _ in reversed(old_entries):
+                self.underlays.pop(i)
+            self._create_underlay_placeholder(data)
+            self._show_status(f"Missing underlay: {data.path}")
+            return
 
         # Remove old item from scene
         idx = None
