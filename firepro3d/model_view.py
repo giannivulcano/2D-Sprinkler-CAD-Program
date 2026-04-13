@@ -397,9 +397,9 @@ class Model_View(QGraphicsView):
             self._spacing_cache_age = 0
         else:
             age = getattr(self, '_spacing_cache_age', 0) + 1
-            if age > 1:
-                self._last_spacing_dims = []
             self._spacing_cache_age = age
+            if age > 2:
+                self._last_spacing_dims = []
         if spacing_dims:
             painter.save()
             painter.resetTransform()
@@ -764,7 +764,8 @@ class Model_View(QGraphicsView):
                 # Use the cached copy because the second press of the
                 # double-click may deselect the gridline, clearing the
                 # scene's live list before we get here.
-                for dim in getattr(self, '_last_spacing_dims', []):
+                cached = getattr(self, '_last_spacing_dims', [])
+                for dim in cached:
                     vp_mid = self.mapFromScene(dim["midpoint"])
                     if math.hypot(event.pos().x() - vp_mid.x(),
                                   event.pos().y() - vp_mid.y()) < 20:
@@ -776,8 +777,14 @@ class Model_View(QGraphicsView):
         """Open an inline editor to change gridline spacing distance."""
         from PyQt6.QtWidgets import QLineEdit
         from firepro3d.scale_manager import ScaleManager
+        from firepro3d.gridline import GridlineItem
         scene = self.scene()
         sm = getattr(scene, 'scale_manager', None)
+        # Capture the selection NOW — by the time the user presses Enter
+        # the scene selection will have been cleared by focus changes.
+        selected_snapshot = [
+            item for item in scene.selectedItems()
+            if isinstance(item, GridlineItem)]
         # Display in formatted units (e.g. 24'-0" or 7315.2 mm)
         current_text = (sm.format_length(dim["distance"])
                         if sm else f"{dim['distance']:.1f} mm")
@@ -801,7 +808,7 @@ class Model_View(QGraphicsView):
                 except ValueError:
                     parsed_mm = None
             if parsed_mm is not None:
-                scene._apply_spacing_edit(dim, parsed_mm)
+                scene._apply_spacing_edit(dim, parsed_mm, selected_snapshot)
             editor.deleteLater()
 
         def _cancel():
