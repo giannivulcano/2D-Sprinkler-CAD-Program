@@ -190,7 +190,11 @@ Modal dialog with two tabs (Vertical / Horizontal). Acts as a source-of-truth ed
 
 ### 7.3 Numerical Input
 
-All numeric fields use the existing numerical input handler with display-unit conversion. No hardcoded inches. Values are entered in the user's current display unit and converted to/from scene units (mm) internally.
+All dimension fields (Offset, Spacing, Length, Default Length, Quick Fill Spacing) are plain `QLineEdit` widgets — not spinboxes. Values display in formatted units via `ScaleManager.format_length()` (e.g., `24'-0"` for imperial, `7315.2 mm` for metric). User input is parsed via `ScaleManager.parse_dimension()`, which accepts any unit format (ft-in, mm, m, bare numbers). This matches the pipe properties and other dimension input fields in the application.
+
+### 7.3.1 Column Sorting
+
+Clicking a column header sorts the table by that column, toggling between ascending and descending. Dimension columns sort numerically (by parsed mm value), not lexicographically, so `48'-0"` sorts after `24'-0"` correctly. The Spacing column is recalculated after sorting since it is relative to the previous row.
 
 ### 7.4 Offset ↔ Spacing Sync
 
@@ -198,7 +202,14 @@ Editing offset recalculates spacing from the previous row. Editing spacing recal
 
 ### 7.5 Quick Fill
 
-Count + Spacing + Generate button fills the table with evenly-spaced rows. Auto-labels from the Start Label field using the selected scheme (Numbers or Letters). Appends to existing rows (does not replace).
+Count + Spacing + Generate button fills the table with evenly-spaced rows. Auto-labels from the Start Label field using the selected scheme (Numbers or Letters). Replaces existing rows (clears table first).
+
+### 7.5.1 Add Row Defaults
+
+Clicking "+" adds a row that continues the spacing pattern:
+- **2+ existing rows:** New row offset = last offset + (last offset − second-to-last offset).
+- **1 existing row:** New row offset = last offset + Quick Fill spacing value.
+- **Empty table:** Offset = 0.
 
 ### 7.6 Population from Scene
 
