@@ -3,7 +3,7 @@
 > **Status:** North-star design + decomposed follow-ups (spec-only — no code changes delivered by this document)
 > **Source files:** `firepro3d/underlay.py`, `firepro3d/dxf_preview_dialog.py`, `firepro3d/dxf_import_worker.py`, `firepro3d/pdf_import_worker.py`, `firepro3d/model_space.py`, `firepro3d/model_browser.py`, `firepro3d/scene_io.py`, `firepro3d/underlay_context_menu.py`, `firepro3d/calibrate_dialog.py`, `main.py`
 > **Date:** 2026-04-13
-> **Revision:** 2 (Phase 2 refinements from 2026-04-13 implementation grill session)
+> **Revision:** 3 (post-implementation review — spec updated to match delivered code)
 
 ---
 
@@ -197,9 +197,13 @@ Each underlay is assigned a Z-value derived from its level's elevation (set in `
 - `level == "*"` (all levels): Always visible regardless of Z-range filtering.
 - `data.visible == False`: Hidden regardless of level/Z-range (user's explicit override).
 
-```
-for data, item in scene.underlays:
+```python
+for data, item in getattr(scene, "underlays", []):
     if item is None:
+        continue
+    try:
+        item.isVisible()  # guard against deleted C++ objects
+    except RuntimeError:
         continue
     if not data.visible:
         item.setVisible(False)
@@ -207,13 +211,15 @@ for data, item in scene.underlays:
     if data.level == "*":
         item.setVisible(True)
         continue
-    # Z-value assigned from level elevation; Z-range filtering handles the rest
     lvl = lvl_map.get(data.level)
     if lvl is None:
         item.setVisible(False)
         continue
-    z = lvl.elevation
-    item.setVisible(view_depth <= z <= view_height if has_view_range else data.level == active)
+    if has_view_range:
+        z = lvl.elevation
+        item.setVisible(view_depth <= z <= view_height)
+    else:
+        item.setVisible(data.level == active)
 ```
 
 Both Z-range (or level match when no view range is set) AND the user's explicit `visible` toggle must pass for the underlay to be shown.
@@ -281,7 +287,7 @@ Extend `ModelBrowser.refresh()` in `firepro3d/model_browser.py` with an "Underla
 | Node | Left-click | Right-click menu |
 |---|---|---|
 | "Underlays" root | Expand/collapse | — |
-| File node | Select underlay in scene (if unlocked), pan to it, populate property panel (always, even if locked) | Lock/Unlock, Hide/Show, Change Level, Relink, Refresh, Duplicate, Remove, Properties |
+| File node | Select underlay in scene (if unlocked), pan to it, populate property panel (always, even if locked) | Lock/Unlock, Hide/Show, Change Level, Scale, Rotate, Opacity, Relink, Refresh, Duplicate, Remove |
 | Source layer node (DXF) | — | Hide/Show layer |
 | Missing file node | — | Relink, Remove |
 
@@ -319,11 +325,11 @@ Locked underlays are not selectable or movable in the scene (current behavior, u
 - Rubber-band spatial subset selection.
 - Insert-at-origin checkbox vs interactive placement.
 
-### 10.2 New: PDF DPI dropdown
+### 10.2 New: PDF DPI dropdown (P2 — not yet implemented)
 
 `QComboBox` with options: 72, 150, 300. Visible only when file type is PDF. Default: 150. Value written to `ImportParams.pdf_dpi` (field already exists).
 
-### 10.3 New: PDF import mode toggle
+### 10.3 New: PDF import mode toggle (P2 — not yet implemented)
 
 `QComboBox` with options: "Auto", "Vectors", "Raster". Visible only when file type is PDF. Default: "Auto". Value written to a new `ImportParams.import_mode` field.
 
@@ -350,9 +356,9 @@ Reads `$INSUNITS` from the DXF header. Maps known unit codes (1=inches, 2=feet, 
 | SPLINE | `path_points` (flattened) | Existing |
 | TEXT | `text` → QGraphicsTextItem | Existing |
 | MTEXT | `text` (plain_text extracted) | Existing |
-| **INSERT** | Recurse via `entity.virtual_entities()` | **New** |
-| **HATCH** | Boundary paths via `virtual_entities()` | **New** |
-| **DIMENSION** | Explode to lines + text via `virtual_entities()` | **New** |
+| INSERT | Recurse via `entity.virtual_entities()` | Implemented |
+| HATCH | Boundary paths via `virtual_entities()` | Implemented |
+| DIMENSION | Explode to lines + text via `virtual_entities()` | Implemented |
 
 **INSERT (block references)** is the highest-impact addition — architectural floor plans are primarily composed of blocks (doors, fixtures, symbols). Without INSERT support, large portions of the plan are missing from the underlay. `ezdxf`'s `virtual_entities()` explodes block references into constituent geometry with transforms applied, which can be fed recursively through `_extract_geometry()`.
 
@@ -466,13 +472,10 @@ See §2.2.
 | Path resolution: deep `..` guard | Paths with >2 levels of `..` fall back to absolute |
 | Serialization round-trip | `to_dict()` → `from_dict()` preserves all fields including new ones |
 | Backward compat | `from_dict()` with dict missing new fields applies correct defaults |
-| Hidden layers: apply | Items with matching `data(1)` get hidden |
-| Hidden layers: stale removal | Layer names not in refreshed file dropped from list |
-| Hidden layers: new layers visible | Layers added in refreshed file default to visible |
-| Level filtering: match | Underlay visible when `level == active_level` |
-| Level filtering: mismatch | Underlay hidden when `level != active_level` |
-| Level filtering: wildcard | Underlay with `level == "*"` always visible |
-| Level + visible interaction | `visible == False` hides even when level matches |
+| Field defaults | All 4 new fields have correct defaults |
+| Hidden layers list isolation | `field(default_factory=list)` prevents sharing between instances |
+
+**Note:** Hidden-layers apply/stale/new-layer tests and level-filtering tests require Qt scene infrastructure. These are better suited for integration tests (§14.2) and were deferred to that scope.
 
 ### 14.2 Integration tests (`tests/test_underlay_integration.py`)
 

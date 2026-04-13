@@ -2327,16 +2327,14 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             self._show_status(f"Missing underlay: {data.path}")
             return
 
-        # Remove old item from scene
-        idx = None
-        for i, (d, it) in enumerate(self.underlays):
-            if d is data:
-                idx = i
-                break
+        # Remove old entry from underlays list BEFORE re-import.
+        # DXF import is async (worker thread) — if we clean up after,
+        # the duplicate check races with _on_dxf_finished appending.
+        self.underlays = [(d, it) for d, it in self.underlays if d is not data]
         if item.scene() is self:
             self.removeItem(item)
 
-        # Re-import
+        # Re-import (appends a fresh entry to self.underlays)
         if data.type == "pdf":
             self.import_pdf(
                 data.path, dpi=data.dpi, page=data.page,
@@ -2349,15 +2347,6 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 x=data.x, y=data.y, _record=data,
                 user_layer=data.user_layer,
             )
-
-        # The import functions append a new entry — remove the duplicate old slot if needed
-        if idx is not None and idx < len(self.underlays):
-            # Find and remove the entry pointing to the old (now removed) item
-            # The fresh entry is at the end
-            old_entries = [(i, d) for i, (d, it) in enumerate(self.underlays) if d is data]
-            if len(old_entries) > 1:
-                # Remove the first (stale) one
-                self.underlays.pop(old_entries[0][0])
 
         self._show_status(f"Refreshed underlay: {data.path}")
 
