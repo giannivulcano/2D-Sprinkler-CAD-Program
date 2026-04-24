@@ -1037,10 +1037,13 @@ class UnderlayImportDialog(QDialog):
         return item
 
     def _draw_base_marker(self):
-        # Remove previous base marker items
+        # Remove previous base marker items (guard against deleted C++ objects)
         for m in self._base_markers:
-            if m.scene() is self._preview_scene:
-                self._preview_scene.removeItem(m)
+            try:
+                if m.scene() is self._preview_scene:
+                    self._preview_scene.removeItem(m)
+            except RuntimeError:
+                pass  # already deleted by scene.clear()
         self._base_markers.clear()
 
         bx = self._base_x_edit.value_mm()
