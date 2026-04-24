@@ -1093,7 +1093,7 @@ class UnderlayImportDialog(QDialog):
     def _on_scale_combo_changed(self, idx: int):
         _, val = self._SCALE_OPTIONS[idx]
         self._custom_scale_edit.setVisible(val is None)
-        self._calibration_lbl.setVisible(val is None and self._calibration_lbl.text())
+        self._calibration_lbl.setVisible(val is None and bool(self._calibration_lbl.text()))
 
     def _get_custom_scale(self) -> float:
         try:
