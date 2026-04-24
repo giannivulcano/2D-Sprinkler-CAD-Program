@@ -1914,6 +1914,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             import_base_y=by,
             selected_layers=getattr(params, "selected_layers", None),
             level=self.active_level,
+            import_mode=getattr(params, "import_mode", "auto"),
         )
         self._apply_underlay_display(group, record)
         self.underlays.append((record, group))

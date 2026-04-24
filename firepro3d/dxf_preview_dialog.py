@@ -100,7 +100,7 @@ class ImportParams:
         self.pdf_page: int = 0
         self.pdf_dpi: int = 150
         self.has_vectors: bool = True      # False → raster fallback
-        self.import_mode: str = "auto"    # "auto" | "vector" | "raster"
+        self.import_mode: str = "auto"    # "auto" | "vectors" | "raster"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -449,7 +449,8 @@ class SceneIOMixin:
             udata.path = resolved
             if udata.type == "pdf":
                 self.import_pdf(udata.path, dpi=udata.dpi, page=udata.page,
-                                x=udata.x, y=udata.y, _record=udata)
+                                x=udata.x, y=udata.y, _record=udata,
+                                import_mode=udata.import_mode)
             elif udata.type == "dxf":
                 self.import_dxf(udata.path, color=QColor(udata.colour),
                                 line_weight=udata.line_weight,
