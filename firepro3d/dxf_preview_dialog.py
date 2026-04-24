@@ -609,7 +609,7 @@ class UnderlayImportDialog(QDialog):
             self._on_scale_combo_changed(scale_idx)
         custom_scale = s.value(f"{pfx}custom_scale", 1.0, type=float)
         self._custom_scale_edit.blockSignals(True)
-        self._custom_scale_edit.setText(str(custom_scale))
+        self._custom_scale_edit.setText(f"{custom_scale:.5g}")
         self._custom_scale_edit.blockSignals(False)
         # Rotation
         rotation = s.value(f"{pfx}rotation", 0.0, type=float)
@@ -753,7 +753,7 @@ class UnderlayImportDialog(QDialog):
             # Auto-set custom scale
             custom_idx = len(self._SCALE_OPTIONS) - 1
             self._scale_combo.setCurrentIndex(custom_idx)
-            self._custom_scale_edit.setText(f"{factor:.5f}")
+            self._custom_scale_edit.setText(f"{factor:.5g}")
         else:
             self._units_info_lbl.setVisible(False)
 
@@ -1235,7 +1235,7 @@ class UnderlayImportDialog(QDialog):
                     factor = parsed_mm / px_dist
                     custom_idx = len(self._SCALE_OPTIONS) - 1
                     self._scale_combo.setCurrentIndex(custom_idx)
-                    self._custom_scale_edit.setText(f"{factor:.5f}")
+                    self._custom_scale_edit.setText(f"{factor:.5g}")
                     display = self._sm.format_length(parsed_mm) if self._sm else f"{parsed_mm:.1f} mm"
                     self._calibration_lbl.setText(
                         f"{px_dist:.1f} px = {display}")
@@ -1298,6 +1298,7 @@ class UnderlayImportDialog(QDialog):
             return 0.0
 
     def _set_rotation(self, deg: float):
+        deg = deg % 360.0
         self._rotation_edit.setText(f"{deg:.1f}°")
         self._on_rotation_changed()
 
