@@ -58,7 +58,7 @@ except ImportError:
     _HAS_FITZ = False
 
 from .dxf_import_worker import _sanitize_dxf
-from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
+from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS, SNAP_MARKERS
 from .scale_manager import ScaleManager
 from .dimension_edit import DimensionEdit
 from .constants import DEFAULT_USER_LAYER
@@ -140,8 +140,8 @@ class _PreviewView(QGraphicsView):
             if dlg and hasattr(dlg, "_cursor_h"):
                 dlg._cursor_h.setVisible(False)
                 dlg._cursor_v.setVisible(False)
-                dlg._snap_marker_h.setVisible(False)
-                dlg._snap_marker_v.setVisible(False)
+                dlg._snap_result = None
+                self.viewport().update()
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
@@ -197,23 +197,8 @@ class _PreviewView(QGraphicsView):
 
                 result = dlg._snap_engine.find(
                     scene_pos, self.scene(), self.transform())
-                if result is not None:
-                    s = 6
-                    sp = result.point
-                    dlg._snap_marker_h.setLine(
-                        sp.x() - s, sp.y(), sp.x() + s, sp.y())
-                    dlg._snap_marker_v.setLine(
-                        sp.x(), sp.y() - s, sp.x(), sp.y() + s)
-                    c = SNAP_COLORS.get(result.snap_type, "#ffff00")
-                    pen = QPen(QColor(c), 2)
-                    pen.setCosmetic(True)
-                    dlg._snap_marker_h.setPen(pen)
-                    dlg._snap_marker_v.setPen(pen)
-                    dlg._snap_marker_h.setVisible(True)
-                    dlg._snap_marker_v.setVisible(True)
-                else:
-                    dlg._snap_marker_h.setVisible(False)
-                    dlg._snap_marker_v.setVisible(False)
+                dlg._snap_result = result
+                self.viewport().update()
 
     def mouseReleaseEvent(self, event):
         if self._pan_start is not None:
@@ -234,6 +219,72 @@ class _PreviewView(QGraphicsView):
             if rect.width() > 2 or rect.height() > 2:
                 self.rubber_band_rect.emit(rect)
             self.set_mode("pan")
+
+    def drawForeground(self, painter: QPainter, rect):
+        """Draw snap glyph and source-item trace over the preview."""
+        super().drawForeground(painter, rect)
+        dlg = self.parent()
+        if dlg is None:
+            return
+        snap = getattr(dlg, "_snap_result", None)
+        if snap is None:
+            return
+
+        # ── Source-item trace (scene coords) ──────────────────────────
+        src = snap.source_item
+        if src is not None:
+            color = QColor(SNAP_COLORS.get(snap.snap_type, "#aaaaaa"))
+            trace_pen = QPen(color, 1, Qt.PenStyle.DashLine)
+            trace_pen.setCosmetic(True)
+            painter.save()
+            painter.setPen(trace_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            if isinstance(src, QGraphicsLineItem):
+                ln = src.line()
+                painter.drawLine(QLineF(src.mapToScene(ln.p1()),
+                                        src.mapToScene(ln.p2())))
+            elif isinstance(src, QGraphicsEllipseItem):
+                painter.drawEllipse(src.mapRectToScene(src.rect()))
+            elif isinstance(src, QGraphicsPathItem):
+                painter.drawPath(src.mapToScene(src.path()))
+            painter.restore()
+
+        # ── Snap glyph (viewport coords) ─────────────────────────────
+        color = QColor(SNAP_COLORS.get(snap.snap_type, "#ffffff"))
+        marker = SNAP_MARKERS.get(snap.snap_type, "square")
+        vp = self.mapFromScene(snap.point)
+        x, y = vp.x(), vp.y()
+        s = 6
+
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(color, 2)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if marker == "square":
+            painter.drawRect(int(x) - s, int(y) - s, 2 * s, 2 * s)
+        elif marker == "circle":
+            painter.drawEllipse(int(x) - s, int(y) - s, 2 * s, 2 * s)
+        elif marker == "triangle":
+            from PyQt6.QtGui import QPolygon
+            from PyQt6.QtCore import QPoint
+            poly = QPolygon([
+                QPoint(int(x), int(y) - s),
+                QPoint(int(x) + s, int(y) + s),
+                QPoint(int(x) - s, int(y) + s),
+            ])
+            painter.drawPolygon(poly)
+        elif marker == "x_cross":
+            painter.drawLine(int(x) - s, int(y) - s, int(x) + s, int(y) + s)
+            painter.drawLine(int(x) - s, int(y) + s, int(x) + s, int(y) - s)
+        else:
+            # Fallback: crosshair
+            painter.drawLine(int(x) - s, int(y), int(x) + s, int(y))
+            painter.drawLine(int(x), int(y) - s, int(x), int(y) + s)
+        painter.restore()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -276,6 +327,7 @@ class UnderlayImportDialog(QDialog):
         self._pick_markers: list[QGraphicsItem] = []
         self._pick_mode: str | None = None
         self._has_vectors: bool = True
+        self._snap_result: OsnapResult | None = None
         self._pdf_page: int = 0
         self._pdf_page_count: int = 0
 
@@ -296,16 +348,6 @@ class UnderlayImportDialog(QDialog):
     # ── Overlay items ─────────────────────────────────────────────────────────
 
     def _create_overlay_items(self):
-        snap_pen = QPen(QColor("#ffff00"), 2)
-        snap_pen.setCosmetic(True)
-        self._snap_marker_h = QGraphicsLineItem()
-        self._snap_marker_v = QGraphicsLineItem()
-        for m in (self._snap_marker_h, self._snap_marker_v):
-            m.setPen(snap_pen)
-            m.setZValue(998)
-            m.setVisible(False)
-            self._preview_scene.addItem(m)
-
         cursor_pen = QPen(QColor("#ff8800"), 1, Qt.PenStyle.DashDotLine)
         cursor_pen.setCosmetic(True)
         self._cursor_h = QGraphicsLineItem()
@@ -930,6 +972,7 @@ class UnderlayImportDialog(QDialog):
         rotation = self._get_rotation()
         if geom_items and rotation != 0.0:
             group = self._preview_scene.createItemGroup(geom_items)
+            group.setData(0, "DXF Underlay")  # snap engine descends into tagged groups
             bx = self._base_x_edit.value_mm() if hasattr(self, "_base_x_edit") else 0.0
             by = self._base_y_edit.value_mm() if hasattr(self, "_base_y_edit") else 0.0
             group.setTransformOriginPoint(bx, by)
