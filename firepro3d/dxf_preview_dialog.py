@@ -323,7 +323,7 @@ class UnderlayImportDialog(QDialog):
         self._base_x = 0.0
         self._base_y = 0.0
         self._pick_pts: list[QPointF] = []
-        self._base_marker: QGraphicsEllipseItem | None = None
+        self._base_markers: list[QGraphicsItem] = []
         self._pick_markers: list[QGraphicsItem] = []
         self._pick_mode: str | None = None
         self._has_vectors: bool = True
@@ -865,7 +865,7 @@ class UnderlayImportDialog(QDialog):
                 self._populate_layer_list()
                 self._selected_indices = None
                 self._preview_scene.clear()
-                self._base_marker = None
+                self._base_markers = []
                 self._pick_markers = []
                 self._create_overlay_items()
                 self._info_lbl.setText(
@@ -1037,10 +1037,12 @@ class UnderlayImportDialog(QDialog):
         return item
 
     def _draw_base_marker(self):
-        if self._base_marker is not None:
-            if self._base_marker.scene() is self._preview_scene:
-                self._preview_scene.removeItem(self._base_marker)
-            self._base_marker = None
+        # Remove previous base marker items
+        for m in self._base_markers:
+            if m.scene() is self._preview_scene:
+                self._preview_scene.removeItem(m)
+        self._base_markers.clear()
+
         bx = self._base_x_edit.value_mm()
         by = self._base_y_edit.value_mm()
         s = 15
@@ -1054,7 +1056,7 @@ class UnderlayImportDialog(QDialog):
         v.setZValue(500)
         self._preview_scene.addItem(h)
         self._preview_scene.addItem(v)
-        self._base_marker = h
+        self._base_markers = [h, v]
 
     # ── Layer controls ────────────────────────────────────────────────────────
 
@@ -1169,16 +1171,21 @@ class UnderlayImportDialog(QDialog):
             self._on_point_picked(pt)
 
     def _on_pick2_pt(self, pt: QPointF):
-        pen = QPen(QColor("#ff0000"), 2)
+        pen = QPen(QColor("#00cc44"), 2)
         pen.setCosmetic(True)
         s = 8
-        h = QGraphicsLineItem(pt.x() - s, pt.y(), pt.x() + s, pt.y())
-        h.setPen(pen); h.setZValue(600)
-        v = QGraphicsLineItem(pt.x(), pt.y() - s, pt.x(), pt.y() + s)
-        v.setPen(pen); v.setZValue(600)
-        self._preview_scene.addItem(h)
-        self._preview_scene.addItem(v)
-        self._pick_markers.extend([h, v])
+        # Diamond marker for scale pick points
+        path = QPainterPath()
+        path.moveTo(pt.x(), pt.y() - s)
+        path.lineTo(pt.x() + s, pt.y())
+        path.lineTo(pt.x(), pt.y() + s)
+        path.lineTo(pt.x() - s, pt.y())
+        path.closeSubpath()
+        diamond = QGraphicsPathItem(path)
+        diamond.setPen(pen)
+        diamond.setZValue(600)
+        self._preview_scene.addItem(diamond)
+        self._pick_markers.append(diamond)
         self._pick_pts.append(pt)
 
         if len(self._pick_pts) == 1:
@@ -1190,7 +1197,7 @@ class UnderlayImportDialog(QDialog):
                 self._pick_pts[0].x(), self._pick_pts[0].y(),
                 self._pick_pts[1].x(), self._pick_pts[1].y()
             )
-            line.setPen(QPen(QColor("#ff0000"), 1))
+            line.setPen(QPen(QColor("#00cc44"), 1, Qt.PenStyle.DashLine))
             line.setZValue(600)
             self._preview_scene.addItem(line)
             self._pick_markers.append(line)
