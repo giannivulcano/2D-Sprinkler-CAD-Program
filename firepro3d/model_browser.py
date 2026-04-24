@@ -555,9 +555,22 @@ class ModelBrowser(QWidget):
                 self._toggle_underlay_layer(data, item, layer_name)
         else:
             # File node toggled
-            if checked and not data.visible:
+            new_state = tree_item.checkState(0)
+            if new_state == Qt.CheckState.Unchecked and data.visible and data.hidden_layers:
+                # Was PartiallyChecked (visible but some layers hidden).
+                # User clicked expecting "show all" — clear hidden layers
+                # instead of hiding the whole underlay.
+                for child in item.childItems():
+                    lname = child.data(1)
+                    if lname and lname in data.hidden_layers:
+                        child.setVisible(True)
+                data.hidden_layers.clear()
+                self._scene.underlaysChanged.emit()
+                self._scene.push_undo_state()
+                self.refresh()
+            elif new_state == Qt.CheckState.Checked and not data.visible:
                 self._toggle_underlay_visible(data, item)
-            elif not checked and data.visible:
+            elif new_state == Qt.CheckState.Unchecked and data.visible:
                 self._toggle_underlay_visible(data, item)
 
     # ── Underlay handlers ────────────────────────────────────────────────

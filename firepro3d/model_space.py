@@ -2166,6 +2166,13 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def import_pdf(self, file_path, dpi=150, page=0, x=0.0, y=0.0,
                    _record: Underlay = None, import_mode: str = "auto"):
+        """Import a PDF page as a raster underlay.
+
+        ``import_mode`` is stored on the Underlay record for serialization
+        and refresh-from-disk but does not affect rendering — this method
+        always produces a raster pixmap.  Vector extraction happens in the
+        import dialog preview and goes through _commit_place_import.
+        """
         import os
         if not os.path.isfile(file_path):
             self._show_status(f"PDF not found: {file_path}")
