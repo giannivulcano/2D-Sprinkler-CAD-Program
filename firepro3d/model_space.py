@@ -2167,12 +2167,16 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
     def import_pdf(self, file_path, dpi=150, page=0, x=0.0, y=0.0,
                    _record: Underlay = None, import_mode: str = "auto"):
-        """Import a PDF page as a raster underlay.
+        """Import a PDF page as an underlay.
 
-        ``import_mode`` is stored on the Underlay record for serialization
-        and refresh-from-disk but does not affect rendering — this method
-        always produces a raster pixmap.  Vector extraction happens in the
-        import dialog preview and goes through _commit_place_import.
+        When *_record* is provided (reload / refresh-from-disk) and the
+        original import used vector extraction (``import_mode`` is
+        ``"vectors"`` or ``"auto"``), vectors are re-extracted from the
+        PDF and rendered as QGraphicsItems — matching the quality of
+        the original import-dialog placement.
+
+        Falls back to raster rendering when vector extraction is
+        unavailable or ``import_mode`` is ``"raster"``.
         """
         import os
         if not os.path.isfile(file_path):
@@ -2180,6 +2184,30 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             log.warning("PDF not found: %s", file_path)
             return
 
+        # -----------------------------------------------------------------
+        # Vector path — re-extract from PDF when reloading a vector import
+        # -----------------------------------------------------------------
+        effective_mode = _record.import_mode if _record else import_mode
+        if effective_mode in ("vectors", "auto"):
+            try:
+                from .pdf_import_worker import extract_pdf_vectors_sync
+                p = _record.page if _record else page
+                geom_list, _layers = extract_pdf_vectors_sync(file_path, page=p)
+            except Exception as exc:
+                log.warning("PDF vector extraction failed, falling back to raster: %s", exc)
+                geom_list = []
+
+            if geom_list:
+                self._import_pdf_vectors(
+                    file_path, geom_list, x=x, y=y,
+                    _record=_record, import_mode=effective_mode,
+                    dpi=dpi, page=_record.page if _record else page,
+                )
+                return
+
+        # -----------------------------------------------------------------
+        # Raster fallback
+        # -----------------------------------------------------------------
         pixmap = None
 
         # --- Strategy 1: PyMuPDF (fitz) — fast, synchronous, reliable ----
@@ -2275,6 +2303,102 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self.underlaysChanged.emit()
         self.push_undo_state()
         self._show_status(f"Imported PDF '{file_path}' page {page} at {dpi} DPI")
+
+    def _import_pdf_vectors(self, file_path: str, geom_list: list[dict],
+                            x: float = 0.0, y: float = 0.0,
+                            _record: Underlay = None,
+                            import_mode: str = "auto",
+                            dpi: int = 150, page: int = 0):
+        """Build vector QGraphicsItems from PDF geometry dicts.
+
+        Mirrors the DXF reload path: apply stored import transform
+        (scale + base-point shift), convert to QGraphicsItems via
+        ``_geom_to_item()``, group, and register the underlay.
+        """
+        # Derive colour/lineweight from user_layer
+        ul = _record.user_layer if _record else DEFAULT_USER_LAYER
+        color, lw = self._underlay_color_lw(ul)
+        pen = QPen(color, lw)
+        pen.setCosmetic(True)
+
+        # Apply import transform if reloading from a record with baked params
+        if _record is not None and (_record.import_scale != 1.0
+                                     or _record.import_base_x != 0.0
+                                     or _record.import_base_y != 0.0):
+            s = _record.import_scale
+            bx, by = _record.import_base_x, _record.import_base_y
+            transformed = []
+            for g in geom_list:
+                kind = g.get("kind")
+                t = dict(g)
+                if kind == "line":
+                    t["x1"] = (g["x1"] - bx) * s
+                    t["y1"] = (g["y1"] - by) * s
+                    t["x2"] = (g["x2"] - bx) * s
+                    t["y2"] = (g["y2"] - by) * s
+                elif kind in ("circle", "arc"):
+                    xk = "x" if kind == "circle" else "rx"
+                    yk = "y" if kind == "circle" else "ry"
+                    wk = "w" if kind == "circle" else "rw"
+                    hk = "h" if kind == "circle" else "rh"
+                    t[xk] = (g[xk] - bx) * s
+                    t[yk] = (g[yk] - by) * s
+                    t[wk] = g[wk] * s
+                    t[hk] = g[hk] * s
+                elif kind == "ellipse_full":
+                    t["pos_cx"] = (g["pos_cx"] - bx) * s
+                    t["pos_cy"] = (g["pos_cy"] - by) * s
+                    t["x"] = g["x"] * s; t["y"] = g["y"] * s
+                    t["w"] = g["w"] * s; t["h"] = g["h"] * s
+                elif kind == "path_points":
+                    t["points"] = [((p[0] - bx) * s, (p[1] - by) * s)
+                                   for p in g["points"]]
+                elif kind == "text":
+                    t["x"] = (g["x"] - bx) * s
+                    t["y"] = (g["y"] - by) * s
+                transformed.append(t)
+            geom_list = transformed
+
+        items = []
+        for geom in geom_list:
+            item = self._geom_to_item(geom, pen, color)
+            if item is not None:
+                items.append(item)
+
+        if not items:
+            log.warning("PDF vector extraction yielded 0 items for %s", file_path)
+            return
+
+        old_method = self.itemIndexMethod()
+        self.setItemIndexMethod(QGraphicsScene.ItemIndexMethod.NoIndex)
+        for item in items:
+            self.addItem(item)
+        group = self.createItemGroup(items)
+        group.setZValue(Z_BELOW_GEOMETRY)
+        group.setPos(x, y)
+        group.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsSelectable |
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+        )
+        group.setData(0, "PDF Underlay")
+        all_layers = sorted({g.get("layer", "0") for g in geom_list})
+        group.setData(2, all_layers)
+        self.setItemIndexMethod(old_method)
+
+        record = _record or Underlay(
+            type="pdf", path=file_path,
+            x=x, y=y,
+            dpi=dpi, page=page,
+            level=self.active_level,
+            import_mode=import_mode,
+        )
+
+        self._apply_underlay_display(group, record)
+        self.underlays.append((record, group))
+        self.underlaysChanged.emit()
+        self.push_undo_state()
+        self._show_status(
+            f"Imported PDF '{file_path}' page {page} as vectors ({len(items)} items)")
 
     # -------------------------------------------------------------------------
     # UNDERLAYS — MANAGEMENT
