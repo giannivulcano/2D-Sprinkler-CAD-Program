@@ -2485,6 +2485,7 @@ class MainWindow(QMainWindow):
         dialog = UnderlayImportDialog(
             self, file_path=file_path,
             user_layer_manager=self.user_layer_mgr,
+            scale_manager=self.scene.scale_manager,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             params = dialog.get_import_params()

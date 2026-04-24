@@ -59,6 +59,7 @@ except ImportError:
 
 from .dxf_import_worker import _sanitize_dxf
 from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
+from .scale_manager import ScaleManager
 from .constants import DEFAULT_USER_LAYER
 
 
@@ -255,12 +256,13 @@ class UnderlayImportDialog(QDialog):
     ]
 
     def __init__(self, parent=None, file_path: str = "",
-                 user_layer_manager=None):
+                 user_layer_manager=None, scale_manager=None):
         super().__init__(parent)
         self.setWindowTitle("Import Underlay — Preview")
         self.resize(1100, 700)
 
         self._user_layer_manager = user_layer_manager
+        self._sm = scale_manager
         self._file_type: str = ""          # "dxf" or "pdf"
         self._all_geoms: list[dict] = []
         self._layers: list[str] = []
@@ -1124,20 +1126,32 @@ class UnderlayImportDialog(QDialog):
                 self._status_lbl.setText("Points too close — try again.")
                 return
 
-            real_dist, ok = QInputDialog.getDouble(
+            # Build a unit hint for the prompt
+            if self._sm:
+                hint = self._sm.format_length(1000.0)  # e.g. "3' 3 3/8\"" or "1000.000 mm"
+                unit_hint = f" (e.g. {hint})"
+            else:
+                unit_hint = ""
+
+            text, ok = QInputDialog.getText(
                 self, "Real Distance",
                 f"The two points are {px_dist:.1f} preview units apart.\n"
-                "Enter the REAL distance between them:",
-                decimals=3, min=0.001, max=1e9
+                f"Enter the REAL distance between them{unit_hint}:"
             )
-            if ok and real_dist > 0:
-                factor = real_dist / px_dist
-                custom_idx = len(self._SCALE_OPTIONS) - 1
-                self._scale_combo.setCurrentIndex(custom_idx)
-                self._custom_scale_spin.setValue(factor)
-                self._status_lbl.setText(
-                    f"Scale set: {px_dist:.1f} preview units = {real_dist} real → ×{factor:.5f}"
-                )
+            if ok and text.strip():
+                fallback = self._sm.bare_number_unit() if self._sm else "mm"
+                parsed_mm = ScaleManager.parse_dimension(text.strip(), fallback)
+                if parsed_mm is not None and parsed_mm > 0:
+                    factor = parsed_mm / px_dist
+                    custom_idx = len(self._SCALE_OPTIONS) - 1
+                    self._scale_combo.setCurrentIndex(custom_idx)
+                    self._custom_scale_spin.setValue(factor)
+                    display = self._sm.format_length(parsed_mm) if self._sm else f"{parsed_mm:.1f} mm"
+                    self._status_lbl.setText(
+                        f"Scale set: {px_dist:.1f} preview units = {display} → ×{factor:.5f}"
+                    )
+                else:
+                    self._status_lbl.setText("Could not parse distance — try again.")
             else:
                 self._status_lbl.setText("Scale pick cancelled.")
 
