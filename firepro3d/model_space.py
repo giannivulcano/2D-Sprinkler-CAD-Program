@@ -2271,11 +2271,13 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
     # UNDERLAYS — MANAGEMENT
 
     def _apply_underlay_display(self, item: QGraphicsItem, record: Underlay):
-        """Apply transform origin, scale, rotation, opacity, and lock state."""
+        """Apply transform origin, scale, rotation, opacity, visibility, and lock state."""
         item.setTransformOriginPoint(item.boundingRect().center())
         item.setScale(record.scale)
         item.setRotation(record.rotation)
         item.setOpacity(record.opacity)
+        if not record.visible:
+            item.setVisible(False)
         if record.locked:
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
