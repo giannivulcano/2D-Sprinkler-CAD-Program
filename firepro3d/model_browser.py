@@ -81,6 +81,7 @@ class ModelBrowser(QWidget):
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
+        self._tree.itemChanged.connect(self._on_tree_item_changed)
         layout.addWidget(self._tree)
 
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -146,197 +147,225 @@ class ModelBrowser(QWidget):
 
     def refresh(self):
         """Rebuild the tree from current scene data."""
-        self._tree.clear()
-        if self._scene is None:
-            return
+        self._syncing = True
+        try:
+            self._tree.clear()
+            if self._scene is None:
+                return
 
-        f_bold = QFont()
-        f_bold.setBold(True)
+            f_bold = QFont()
+            f_bold.setBold(True)
 
-        # -- Walls --
-        walls = getattr(self._scene, "_walls", [])
-        walls_root = QTreeWidgetItem(self._tree, [f"Walls ({len(walls)})"])
-        walls_root.setFont(0, f_bold)
-        walls_root.setExpanded(True)
-        for wall in walls:
-            label = wall.name if wall.name else "Wall"
-            item = QTreeWidgetItem(walls_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(wall))
-            item.setToolTip(0, f"Level: {wall.level}  Layer: {wall.user_layer}")
-            self._style_hidden(item, wall)
+            # -- Walls --
+            walls = getattr(self._scene, "_walls", [])
+            walls_root = QTreeWidgetItem(self._tree, [f"Walls ({len(walls)})"])
+            walls_root.setFont(0, f_bold)
+            walls_root.setExpanded(True)
+            for wall in walls:
+                label = wall.name if wall.name else "Wall"
+                item = QTreeWidgetItem(walls_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(wall))
+                item.setToolTip(0, f"Level: {wall.level}  Layer: {wall.user_layer}")
+                self._style_hidden(item, wall)
 
-        # -- Floors --
-        slabs = getattr(self._scene, "_floor_slabs", [])
-        floors_root = QTreeWidgetItem(self._tree, [f"Floors ({len(slabs)})"])
-        floors_root.setFont(0, f_bold)
-        floors_root.setExpanded(True)
-        for slab in slabs:
-            label = slab.name if slab.name else "Floor"
-            item = QTreeWidgetItem(floors_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(slab))
-            pts = len(slab.points) if hasattr(slab, "points") else 0
-            item.setToolTip(0, f"Level: {slab.level}  Points: {pts}")
-            self._style_hidden(item, slab)
+            # -- Floors --
+            slabs = getattr(self._scene, "_floor_slabs", [])
+            floors_root = QTreeWidgetItem(self._tree, [f"Floors ({len(slabs)})"])
+            floors_root.setFont(0, f_bold)
+            floors_root.setExpanded(True)
+            for slab in slabs:
+                label = slab.name if slab.name else "Floor"
+                item = QTreeWidgetItem(floors_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(slab))
+                pts = len(slab.points) if hasattr(slab, "points") else 0
+                item.setToolTip(0, f"Level: {slab.level}  Points: {pts}")
+                self._style_hidden(item, slab)
 
-        # -- Roofs --
-        roofs = getattr(self._scene, "_roofs", [])
-        roofs_root = QTreeWidgetItem(self._tree, [f"Roofs ({len(roofs)})"])
-        roofs_root.setFont(0, f_bold)
-        roofs_root.setExpanded(True)
-        for roof in roofs:
-            label = roof.name if roof.name else "Roof"
-            item = QTreeWidgetItem(roofs_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(roof))
-            pts = len(roof.points) if hasattr(roof, "points") else 0
-            item.setToolTip(0, f"Level: {roof.level}  Type: {getattr(roof, '_roof_type', 'flat')}  Points: {pts}")
-            self._style_hidden(item, roof)
+            # -- Roofs --
+            roofs = getattr(self._scene, "_roofs", [])
+            roofs_root = QTreeWidgetItem(self._tree, [f"Roofs ({len(roofs)})"])
+            roofs_root.setFont(0, f_bold)
+            roofs_root.setExpanded(True)
+            for roof in roofs:
+                label = roof.name if roof.name else "Roof"
+                item = QTreeWidgetItem(roofs_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(roof))
+                pts = len(roof.points) if hasattr(roof, "points") else 0
+                item.setToolTip(0, f"Level: {roof.level}  Type: {getattr(roof, '_roof_type', 'flat')}  Points: {pts}")
+                self._style_hidden(item, roof)
 
-        # -- Rooms --
-        rooms = getattr(self._scene, "_rooms", [])
-        rooms_root = QTreeWidgetItem(self._tree, [f"Rooms ({len(rooms)})"])
-        rooms_root.setFont(0, f_bold)
-        rooms_root.setExpanded(True)
-        for room in rooms:
-            label = room.name if room.name else "Room"
-            item = QTreeWidgetItem(rooms_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(room))
-            item.setToolTip(0, f"Level: {room.level}  Tag: {getattr(room, '_tag', '')}")
-            self._style_hidden(item, room)
+            # -- Rooms --
+            rooms = getattr(self._scene, "_rooms", [])
+            rooms_root = QTreeWidgetItem(self._tree, [f"Rooms ({len(rooms)})"])
+            rooms_root.setFont(0, f_bold)
+            rooms_root.setExpanded(True)
+            for room in rooms:
+                label = room.name if room.name else "Room"
+                item = QTreeWidgetItem(rooms_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(room))
+                item.setToolTip(0, f"Level: {room.level}  Tag: {getattr(room, '_tag', '')}")
+                self._style_hidden(item, room)
 
-        # -- Doors --
-        doors: list = []
-        for wall in walls:
-            for op in getattr(wall, "openings", []):
-                if isinstance(op, DoorOpening):
-                    doors.append(op)
-        doors_root = QTreeWidgetItem(self._tree, [f"Doors ({len(doors)})"])
-        doors_root.setFont(0, f_bold)
-        for i, door in enumerate(doors, 1):
-            item = QTreeWidgetItem(doors_root, [f"Door {i}"])
-            item.setData(0, _ROLE_ENTITY, id(door))
-            self._style_hidden(item, door)
+            # -- Doors --
+            doors: list = []
+            for wall in walls:
+                for op in getattr(wall, "openings", []):
+                    if isinstance(op, DoorOpening):
+                        doors.append(op)
+            doors_root = QTreeWidgetItem(self._tree, [f"Doors ({len(doors)})"])
+            doors_root.setFont(0, f_bold)
+            for i, door in enumerate(doors, 1):
+                item = QTreeWidgetItem(doors_root, [f"Door {i}"])
+                item.setData(0, _ROLE_ENTITY, id(door))
+                self._style_hidden(item, door)
 
-        # -- Windows --
-        windows: list = []
-        for wall in walls:
-            for op in getattr(wall, "openings", []):
-                if isinstance(op, WindowOpening):
-                    windows.append(op)
-        windows_root = QTreeWidgetItem(self._tree, [f"Windows ({len(windows)})"])
-        windows_root.setFont(0, f_bold)
-        for i, win in enumerate(windows, 1):
-            item = QTreeWidgetItem(windows_root, [f"Window {i}"])
-            item.setData(0, _ROLE_ENTITY, id(win))
-            self._style_hidden(item, win)
+            # -- Windows --
+            windows: list = []
+            for wall in walls:
+                for op in getattr(wall, "openings", []):
+                    if isinstance(op, WindowOpening):
+                        windows.append(op)
+            windows_root = QTreeWidgetItem(self._tree, [f"Windows ({len(windows)})"])
+            windows_root.setFont(0, f_bold)
+            for i, win in enumerate(windows, 1):
+                item = QTreeWidgetItem(windows_root, [f"Window {i}"])
+                item.setData(0, _ROLE_ENTITY, id(win))
+                self._style_hidden(item, win)
 
-        # -- Pipes --
-        pipes = list(getattr(self._scene, "sprinkler_system", None).pipes) \
-            if getattr(self._scene, "sprinkler_system", None) else []
-        pipes_root = QTreeWidgetItem(self._tree, [f"Pipes ({len(pipes)})"])
-        pipes_root.setFont(0, f_bold)
-        pipes_root.setExpanded(True)
-        for i, pipe in enumerate(pipes, 1):
-            dia = pipe._properties.get("Diameter", {}).get("value", "?")
-            label = f"Pipe {i}  ({dia})"
-            item = QTreeWidgetItem(pipes_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(pipe))
-            item.setToolTip(0, f"Level: {pipe.level}  Layer: {pipe.user_layer}")
-            self._style_hidden(item, pipe)
+            # -- Pipes --
+            pipes = list(getattr(self._scene, "sprinkler_system", None).pipes) \
+                if getattr(self._scene, "sprinkler_system", None) else []
+            pipes_root = QTreeWidgetItem(self._tree, [f"Pipes ({len(pipes)})"])
+            pipes_root.setFont(0, f_bold)
+            pipes_root.setExpanded(True)
+            for i, pipe in enumerate(pipes, 1):
+                dia = pipe._properties.get("Diameter", {}).get("value", "?")
+                label = f"Pipe {i}  ({dia})"
+                item = QTreeWidgetItem(pipes_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(pipe))
+                item.setToolTip(0, f"Level: {pipe.level}  Layer: {pipe.user_layer}")
+                self._style_hidden(item, pipe)
 
-        # -- Sprinklers --
-        sprinkler_nodes = [n for n in
-            (getattr(self._scene, "sprinkler_system", None).nodes
-             if getattr(self._scene, "sprinkler_system", None) else [])
-            if n.has_sprinkler()]
-        sprinklers_root = QTreeWidgetItem(
-            self._tree, [f"Sprinklers ({len(sprinkler_nodes)})"])
-        sprinklers_root.setFont(0, f_bold)
-        sprinklers_root.setExpanded(True)
-        for i, node in enumerate(sprinkler_nodes, 1):
-            spr = node.sprinkler
-            mfr = spr._properties.get("Manufacturer", {}).get("value", "")
-            orient = spr._properties.get("Orientation", {}).get("value", "")
-            label = f"Sprinkler {i}  ({mfr} {orient})"
-            item = QTreeWidgetItem(sprinklers_root, [label])
-            item.setData(0, _ROLE_ENTITY, id(node))
-            item.setToolTip(0, f"Level: {node.level}  Layer: {node.user_layer}")
-            self._style_hidden(item, node)
+            # -- Sprinklers --
+            sprinkler_nodes = [n for n in
+                (getattr(self._scene, "sprinkler_system", None).nodes
+                 if getattr(self._scene, "sprinkler_system", None) else [])
+                if n.has_sprinkler()]
+            sprinklers_root = QTreeWidgetItem(
+                self._tree, [f"Sprinklers ({len(sprinkler_nodes)})"])
+            sprinklers_root.setFont(0, f_bold)
+            sprinklers_root.setExpanded(True)
+            for i, node in enumerate(sprinkler_nodes, 1):
+                spr = node.sprinkler
+                mfr = spr._properties.get("Manufacturer", {}).get("value", "")
+                orient = spr._properties.get("Orientation", {}).get("value", "")
+                label = f"Sprinkler {i}  ({mfr} {orient})"
+                item = QTreeWidgetItem(sprinklers_root, [label])
+                item.setData(0, _ROLE_ENTITY, id(node))
+                item.setToolTip(0, f"Level: {node.level}  Layer: {node.user_layer}")
+                self._style_hidden(item, node)
 
-        # -- Gridlines --
-        gridlines = getattr(self._scene, "_gridlines", [])
-        if gridlines:
-            gl_root = QTreeWidgetItem(self._tree, [f"Gridlines ({len(gridlines)})"])
-            gl_root.setFont(0, f_bold)
-            for gl in gridlines:
-                lbl = getattr(gl, "_label_text", "?")
-                item = QTreeWidgetItem(gl_root, [f"Grid {lbl}"])
-                item.setData(0, _ROLE_ENTITY, id(gl))
-                self._style_hidden(item, gl)
+            # -- Gridlines --
+            gridlines = getattr(self._scene, "_gridlines", [])
+            if gridlines:
+                gl_root = QTreeWidgetItem(self._tree, [f"Gridlines ({len(gridlines)})"])
+                gl_root.setFont(0, f_bold)
+                for gl in gridlines:
+                    lbl = getattr(gl, "_label_text", "?")
+                    item = QTreeWidgetItem(gl_root, [f"Grid {lbl}"])
+                    item.setData(0, _ROLE_ENTITY, id(gl))
+                    self._style_hidden(item, gl)
 
-        # -- Design Areas --
-        design_areas = getattr(self._scene, "design_areas", [])
-        if design_areas:
-            da_root = QTreeWidgetItem(self._tree, [f"Design Areas ({len(design_areas)})"])
-            da_root.setFont(0, f_bold)
-            for i, da in enumerate(design_areas, 1):
-                name = da._properties.get("System Name", {}).get("value", f"Area {i}")
-                item = QTreeWidgetItem(da_root, [name])
-                item.setData(0, _ROLE_ENTITY, id(da))
-                self._style_hidden(item, da)
+            # -- Design Areas --
+            design_areas = getattr(self._scene, "design_areas", [])
+            if design_areas:
+                da_root = QTreeWidgetItem(self._tree, [f"Design Areas ({len(design_areas)})"])
+                da_root.setFont(0, f_bold)
+                for i, da in enumerate(design_areas, 1):
+                    name = da._properties.get("System Name", {}).get("value", f"Area {i}")
+                    item = QTreeWidgetItem(da_root, [name])
+                    item.setData(0, _ROLE_ENTITY, id(da))
+                    self._style_hidden(item, da)
 
-        # -- Water Supply --
-        ws = getattr(self._scene, "water_supply_node", None)
-        if ws is not None:
-            ws_root = QTreeWidgetItem(self._tree, ["Water Supply (1)"])
-            ws_root.setFont(0, f_bold)
-            item = QTreeWidgetItem(ws_root, ["Water Supply"])
-            item.setData(0, _ROLE_ENTITY, id(ws))
-            self._style_hidden(item, ws)
+            # -- Water Supply --
+            ws = getattr(self._scene, "water_supply_node", None)
+            if ws is not None:
+                ws_root = QTreeWidgetItem(self._tree, ["Water Supply (1)"])
+                ws_root.setFont(0, f_bold)
+                item = QTreeWidgetItem(ws_root, ["Water Supply"])
+                item.setData(0, _ROLE_ENTITY, id(ws))
+                self._style_hidden(item, ws)
 
-        # -- Underlays ─────────────────────────────────────────────────
-        underlays = getattr(self._scene, "underlays", [])
-        if underlays:
-            ul_root = QTreeWidgetItem(
-                self._tree, [f"Underlays ({len(underlays)})"])
-            ul_root.setFont(0, f_bold)
-            ul_root.setExpanded(True)
+            # -- Underlays ─────────────────────────────────────────────────
+            underlays = getattr(self._scene, "underlays", [])
+            if underlays:
+                ul_root = QTreeWidgetItem(
+                    self._tree, [f"Underlays ({len(underlays)})"])
+                ul_root.setFont(0, f_bold)
+                ul_root.setExpanded(True)
 
-            for idx, (data, item) in enumerate(underlays):
-                filename = os.path.basename(data.path)
-                is_missing = (item is None
-                              or item.data(0) == "missing_underlay")
-                level_label = ("All Levels" if data.level == "*"
-                               else data.level)
+                for idx, (data, item) in enumerate(underlays):
+                    filename = os.path.basename(data.path)
+                    is_missing = (item is None
+                                  or item.data(0) == "missing_underlay")
+                    level_label = ("All Levels" if data.level == "*"
+                                   else data.level)
 
-                # File node
-                label = f"{filename}    [{level_label}]"
-                if is_missing:
-                    label += "  (missing)"
-                file_node = QTreeWidgetItem(ul_root, [label])
-                file_node.setData(0, _ROLE_UNDERLAY, idx)
-                if not data.visible:
-                    file_node.setForeground(0, self._GREY)
+                    # File node
+                    label = f"{filename}    [{level_label}]"
+                    if is_missing:
+                        label += "  (missing)"
+                    file_node = QTreeWidgetItem(ul_root, [label])
+                    file_node.setData(0, _ROLE_UNDERLAY, idx)
+                    if not is_missing:
+                        file_node.setFlags(
+                            file_node.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                        if data.type == "dxf" and item is not None:
+                            all_layers = item.data(2) or []
+                            hidden_set = set(data.hidden_layers)
+                            if not data.visible:
+                                file_node.setCheckState(0, Qt.CheckState.Unchecked)
+                            elif hidden_set and any(ln in hidden_set for ln in all_layers):
+                                file_node.setCheckState(
+                                    0, Qt.CheckState.PartiallyChecked)
+                            else:
+                                file_node.setCheckState(0, Qt.CheckState.Checked)
+                        else:
+                            # PDF or DXF with no layers — simple two-state
+                            file_node.setCheckState(
+                                0, Qt.CheckState.Checked if data.visible
+                                else Qt.CheckState.Unchecked)
+                    if not data.visible:
+                        file_node.setForeground(0, self._GREY)
 
-                # Source-layer children (DXF only)
-                if data.type == "dxf" and item is not None and not is_missing:
-                    all_layers = item.data(2) or []
-                    hidden_set = set(data.hidden_layers)
-                    for layer_name in all_layers:
-                        count = sum(
-                            1 for c in item.childItems()
-                            if c.data(1) == layer_name)
-                        suffix = "  (hidden)" if layer_name in hidden_set else ""
-                        layer_node = QTreeWidgetItem(
-                            file_node,
-                            [f"{layer_name}  ({count} items){suffix}"])
-                        layer_node.setData(0, _ROLE_UNDERLAY, idx)
-                        layer_node.setData(0, _ROLE_ENTITY, layer_name)
-                        if layer_name in hidden_set:
-                            layer_node.setForeground(0, self._GREY)
+                    # Source-layer children (DXF only)
+                    if data.type == "dxf" and item is not None and not is_missing:
+                        all_layers = item.data(2) or []
+                        hidden_set = set(data.hidden_layers)
+                        for layer_name in all_layers:
+                            count = sum(
+                                1 for c in item.childItems()
+                                if c.data(1) == layer_name)
+                            is_hidden = layer_name in hidden_set
+                            suffix = "  (hidden)" if is_hidden else ""
+                            layer_node = QTreeWidgetItem(
+                                file_node,
+                                [f"{layer_name}  ({count} items){suffix}"])
+                            layer_node.setData(0, _ROLE_UNDERLAY, idx)
+                            layer_node.setData(0, _ROLE_ENTITY, layer_name)
+                            layer_node.setFlags(
+                                layer_node.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                            layer_node.setCheckState(
+                                0, Qt.CheckState.Unchecked if is_hidden
+                                else Qt.CheckState.Checked)
+                            if is_hidden:
+                                layer_node.setForeground(0, self._GREY)
 
-                # PDF page child
-                elif data.type == "pdf" and not is_missing:
-                    QTreeWidgetItem(file_node, [f"Page {data.page + 1}"])
+                    # PDF page child
+                    elif data.type == "pdf" and not is_missing:
+                        QTreeWidgetItem(file_node, [f"Page {data.page + 1}"])
+        finally:
+            self._syncing = False
 
     # ── Helpers ─────────────────────────────────────────────────────────
 
@@ -497,6 +526,39 @@ class ModelBrowser(QWidget):
             lambda: (self._scene._show_all_hidden(), self.refresh()))
 
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    # ── Checkbox handler ───────────────────────────────────────────────
+
+    def _on_tree_item_changed(self, tree_item: QTreeWidgetItem, column: int):
+        """Handle checkbox state changes on underlay nodes."""
+        if self._syncing:
+            return
+        ul_idx = tree_item.data(0, _ROLE_UNDERLAY)
+        if ul_idx is None:
+            return
+        underlays = getattr(self._scene, "underlays", [])
+        if ul_idx < 0 or ul_idx >= len(underlays):
+            return
+        data, item = underlays[ul_idx]
+        if item is None:
+            return
+
+        layer_name = tree_item.data(0, _ROLE_ENTITY)
+        checked = tree_item.checkState(0) != Qt.CheckState.Unchecked
+
+        if isinstance(layer_name, str):
+            # Layer node toggled
+            is_hidden = layer_name in data.hidden_layers
+            if checked and is_hidden:
+                self._toggle_underlay_layer(data, item, layer_name)
+            elif not checked and not is_hidden:
+                self._toggle_underlay_layer(data, item, layer_name)
+        else:
+            # File node toggled
+            if checked and not data.visible:
+                self._toggle_underlay_visible(data, item)
+            elif not checked and data.visible:
+                self._toggle_underlay_visible(data, item)
 
     # ── Underlay handlers ────────────────────────────────────────────────
 
