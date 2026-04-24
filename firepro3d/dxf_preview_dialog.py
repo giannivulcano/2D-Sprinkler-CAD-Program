@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QGraphicsRectItem, QGraphicsTextItem, QGraphicsPixmapItem,
     QLabel, QPushButton, QComboBox, QColorDialog,
     QListWidget, QListWidgetItem, QGroupBox,
-    QFileDialog, QLineEdit, QDoubleSpinBox, QFormLayout,
+    QFileDialog, QLineEdit, QFormLayout,
     QDialogButtonBox, QProgressDialog, QApplication,
     QCheckBox, QWidget, QSizePolicy, QScrollArea,
     QMessageBox, QInputDialog, QAbstractItemView,
@@ -58,7 +58,9 @@ except ImportError:
     _HAS_FITZ = False
 
 from .dxf_import_worker import _sanitize_dxf
-from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS
+from .snap_engine import SnapEngine, OsnapResult, SNAP_COLORS, SNAP_MARKERS
+from .scale_manager import ScaleManager
+from .dimension_edit import DimensionEdit
 from .constants import DEFAULT_USER_LAYER
 
 
@@ -98,6 +100,7 @@ class ImportParams:
         self.pdf_page: int = 0
         self.pdf_dpi: int = 150
         self.has_vectors: bool = True      # False → raster fallback
+        self.import_mode: str = "auto"    # "auto" | "vectors" | "raster"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,8 +140,8 @@ class _PreviewView(QGraphicsView):
             if dlg and hasattr(dlg, "_cursor_h"):
                 dlg._cursor_h.setVisible(False)
                 dlg._cursor_v.setVisible(False)
-                dlg._snap_marker_h.setVisible(False)
-                dlg._snap_marker_v.setVisible(False)
+                dlg._snap_result = None
+                self.viewport().update()
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
@@ -194,23 +197,8 @@ class _PreviewView(QGraphicsView):
 
                 result = dlg._snap_engine.find(
                     scene_pos, self.scene(), self.transform())
-                if result is not None:
-                    s = 6
-                    sp = result.point
-                    dlg._snap_marker_h.setLine(
-                        sp.x() - s, sp.y(), sp.x() + s, sp.y())
-                    dlg._snap_marker_v.setLine(
-                        sp.x(), sp.y() - s, sp.x(), sp.y() + s)
-                    c = SNAP_COLORS.get(result.snap_type, "#ffff00")
-                    pen = QPen(QColor(c), 2)
-                    pen.setCosmetic(True)
-                    dlg._snap_marker_h.setPen(pen)
-                    dlg._snap_marker_v.setPen(pen)
-                    dlg._snap_marker_h.setVisible(True)
-                    dlg._snap_marker_v.setVisible(True)
-                else:
-                    dlg._snap_marker_h.setVisible(False)
-                    dlg._snap_marker_v.setVisible(False)
+                dlg._snap_result = result
+                self.viewport().update()
 
     def mouseReleaseEvent(self, event):
         if self._pan_start is not None:
@@ -231,6 +219,72 @@ class _PreviewView(QGraphicsView):
             if rect.width() > 2 or rect.height() > 2:
                 self.rubber_band_rect.emit(rect)
             self.set_mode("pan")
+
+    def drawForeground(self, painter: QPainter, rect):
+        """Draw snap glyph and source-item trace over the preview."""
+        super().drawForeground(painter, rect)
+        dlg = self.parent()
+        if dlg is None:
+            return
+        snap = getattr(dlg, "_snap_result", None)
+        if snap is None:
+            return
+
+        # ── Source-item trace (scene coords) ──────────────────────────
+        src = snap.source_item
+        if src is not None:
+            color = QColor(SNAP_COLORS.get(snap.snap_type, "#aaaaaa"))
+            trace_pen = QPen(color, 1, Qt.PenStyle.DashLine)
+            trace_pen.setCosmetic(True)
+            painter.save()
+            painter.setPen(trace_pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            if isinstance(src, QGraphicsLineItem):
+                ln = src.line()
+                painter.drawLine(QLineF(src.mapToScene(ln.p1()),
+                                        src.mapToScene(ln.p2())))
+            elif isinstance(src, QGraphicsEllipseItem):
+                painter.drawEllipse(src.mapRectToScene(src.rect()))
+            elif isinstance(src, QGraphicsPathItem):
+                painter.drawPath(src.mapToScene(src.path()))
+            painter.restore()
+
+        # ── Snap glyph (viewport coords) ─────────────────────────────
+        color = QColor(SNAP_COLORS.get(snap.snap_type, "#ffffff"))
+        marker = SNAP_MARKERS.get(snap.snap_type, "square")
+        vp = self.mapFromScene(snap.point)
+        x, y = vp.x(), vp.y()
+        s = 6
+
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        pen = QPen(color, 2)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if marker == "square":
+            painter.drawRect(int(x) - s, int(y) - s, 2 * s, 2 * s)
+        elif marker == "circle":
+            painter.drawEllipse(int(x) - s, int(y) - s, 2 * s, 2 * s)
+        elif marker == "triangle":
+            from PyQt6.QtGui import QPolygon
+            from PyQt6.QtCore import QPoint
+            poly = QPolygon([
+                QPoint(int(x), int(y) - s),
+                QPoint(int(x) + s, int(y) + s),
+                QPoint(int(x) - s, int(y) + s),
+            ])
+            painter.drawPolygon(poly)
+        elif marker == "x_cross":
+            painter.drawLine(int(x) - s, int(y) - s, int(x) + s, int(y) + s)
+            painter.drawLine(int(x) - s, int(y) + s, int(x) + s, int(y) - s)
+        else:
+            # Fallback: crosshair
+            painter.drawLine(int(x) - s, int(y), int(x) + s, int(y))
+            painter.drawLine(int(x), int(y) - s, int(x), int(y) + s)
+        painter.restore()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,12 +309,13 @@ class UnderlayImportDialog(QDialog):
     ]
 
     def __init__(self, parent=None, file_path: str = "",
-                 user_layer_manager=None):
+                 user_layer_manager=None, scale_manager=None):
         super().__init__(parent)
         self.setWindowTitle("Import Underlay — Preview")
         self.resize(1100, 700)
 
         self._user_layer_manager = user_layer_manager
+        self._sm = scale_manager
         self._file_type: str = ""          # "dxf" or "pdf"
         self._all_geoms: list[dict] = []
         self._layers: list[str] = []
@@ -268,10 +323,11 @@ class UnderlayImportDialog(QDialog):
         self._base_x = 0.0
         self._base_y = 0.0
         self._pick_pts: list[QPointF] = []
-        self._base_marker: QGraphicsEllipseItem | None = None
+        self._base_markers: list[QGraphicsItem] = []
         self._pick_markers: list[QGraphicsItem] = []
         self._pick_mode: str | None = None
         self._has_vectors: bool = True
+        self._snap_result: OsnapResult | None = None
         self._pdf_page: int = 0
         self._pdf_page_count: int = 0
 
@@ -292,16 +348,6 @@ class UnderlayImportDialog(QDialog):
     # ── Overlay items ─────────────────────────────────────────────────────────
 
     def _create_overlay_items(self):
-        snap_pen = QPen(QColor("#ffff00"), 2)
-        snap_pen.setCosmetic(True)
-        self._snap_marker_h = QGraphicsLineItem()
-        self._snap_marker_v = QGraphicsLineItem()
-        for m in (self._snap_marker_h, self._snap_marker_v):
-            m.setPen(snap_pen)
-            m.setZValue(998)
-            m.setVisible(False)
-            self._preview_scene.addItem(m)
-
         cursor_pen = QPen(QColor("#ff8800"), 1, Qt.PenStyle.DashDotLine)
         cursor_pen.setCosmetic(True)
         self._cursor_h = QGraphicsLineItem()
@@ -420,17 +466,19 @@ class UnderlayImportDialog(QDialog):
             self._scale_combo.addItem(label)
         self._scale_combo.currentIndexChanged.connect(self._on_scale_combo_changed)
         scale_vlay.addWidget(self._scale_combo)
-        self._custom_scale_spin = QDoubleSpinBox()
-        self._custom_scale_spin.setRange(0.0001, 1000.0)
-        self._custom_scale_spin.setDecimals(5)
-        self._custom_scale_spin.setValue(1.0)
-        self._custom_scale_spin.setSuffix("  ×")
-        self._custom_scale_spin.setVisible(False)
-        scale_vlay.addWidget(self._custom_scale_spin)
+        self._custom_scale_edit = QLineEdit()
+        self._custom_scale_edit.setPlaceholderText("scale factor")
+        self._custom_scale_edit.setText("1.0")
+        self._custom_scale_edit.setVisible(False)
+        scale_vlay.addWidget(self._custom_scale_edit)
         self._units_info_lbl = QLabel("")
         self._units_info_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self._units_info_lbl.setVisible(False)
         scale_vlay.addWidget(self._units_info_lbl)
+        self._calibration_lbl = QLabel("")
+        self._calibration_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+        self._calibration_lbl.setVisible(False)
+        scale_vlay.addWidget(self._calibration_lbl)
         pick2_btn = QPushButton("📐 Pick 2 pts on preview")
         pick2_btn.setToolTip(
             "Click two points on the preview, then enter the real distance between them."
@@ -443,25 +491,18 @@ class UnderlayImportDialog(QDialog):
         rot_grp = QGroupBox("Rotation")
         rot_vlay = QVBoxLayout(rot_grp)
         rot_form = QFormLayout()
-        self._rotation_spin = QDoubleSpinBox()
-        self._rotation_spin.setRange(-360.0, 360.0)
-        self._rotation_spin.setDecimals(1)
-        self._rotation_spin.setSingleStep(1.0)
-        self._rotation_spin.setValue(0.0)
-        self._rotation_spin.setSuffix(" °")
-        self._rotation_spin.valueChanged.connect(self._on_rotation_changed)
-        rot_form.addRow("Angle:", self._rotation_spin)
+        self._rotation_edit = QLineEdit()
+        self._rotation_edit.setText("0.0°")
+        self._rotation_edit.editingFinished.connect(self._on_rotation_changed)
+        rot_form.addRow("Angle:", self._rotation_edit)
         rot_vlay.addLayout(rot_form)
         rot_btn_lay = QHBoxLayout()
         btn_ccw = QPushButton("⟲ −90°")
-        btn_ccw.clicked.connect(lambda: self._rotation_spin.setValue(
-            self._rotation_spin.value() - 90.0))
+        btn_ccw.clicked.connect(lambda: self._set_rotation(self._get_rotation() - 90.0))
         btn_cw = QPushButton("⟳ +90°")
-        btn_cw.clicked.connect(lambda: self._rotation_spin.setValue(
-            self._rotation_spin.value() + 90.0))
+        btn_cw.clicked.connect(lambda: self._set_rotation(self._get_rotation() + 90.0))
         btn_180 = QPushButton("180°")
-        btn_180.clicked.connect(lambda: self._rotation_spin.setValue(
-            self._rotation_spin.value() + 180.0))
+        btn_180.clicked.connect(lambda: self._set_rotation(self._get_rotation() + 180.0))
         rot_btn_lay.addWidget(btn_ccw)
         rot_btn_lay.addWidget(btn_cw)
         rot_btn_lay.addWidget(btn_180)
@@ -471,18 +512,12 @@ class UnderlayImportDialog(QDialog):
         # Base point
         base_grp = QGroupBox("Base / Insertion Point")
         base_form = QFormLayout(base_grp)
-        self._base_x_spin = QDoubleSpinBox()
-        self._base_x_spin.setRange(-1e9, 1e9)
-        self._base_x_spin.setDecimals(3)
-        self._base_x_spin.setValue(0.0)
-        self._base_x_spin.valueChanged.connect(self._on_base_changed)
-        self._base_y_spin = QDoubleSpinBox()
-        self._base_y_spin.setRange(-1e9, 1e9)
-        self._base_y_spin.setDecimals(3)
-        self._base_y_spin.setValue(0.0)
-        self._base_y_spin.valueChanged.connect(self._on_base_changed)
-        base_form.addRow("X:", self._base_x_spin)
-        base_form.addRow("Y:", self._base_y_spin)
+        self._base_x_edit = DimensionEdit(self._sm, initial_mm=0.0)
+        self._base_x_edit.valueChanged.connect(self._on_base_changed)
+        self._base_y_edit = DimensionEdit(self._sm, initial_mm=0.0)
+        self._base_y_edit.valueChanged.connect(self._on_base_changed)
+        base_form.addRow("X:", self._base_x_edit)
+        base_form.addRow("Y:", self._base_y_edit)
         pick_base_btn = QPushButton("📍 Pick on preview")
         pick_base_btn.clicked.connect(self._start_pick_base)
         base_form.addRow(pick_base_btn)
@@ -504,6 +539,22 @@ class UnderlayImportDialog(QDialog):
         self._dest_layer_combo.currentTextChanged.connect(self._on_dest_layer_changed)
         self._on_dest_layer_changed()
         right_lay.addWidget(dest_grp)
+
+        # PDF options (DPI + import mode)
+        self._pdf_opts_grp = QGroupBox("PDF Options")
+        pdf_form = QFormLayout(self._pdf_opts_grp)
+        self._dpi_combo = QComboBox()
+        self._dpi_combo.addItems(["72", "150", "300"])
+        self._dpi_combo.setCurrentIndex(1)  # default 150
+        self._dpi_combo.currentIndexChanged.connect(self._on_pdf_option_changed)
+        pdf_form.addRow("DPI:", self._dpi_combo)
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(["Auto", "Vectors", "Raster"])
+        self._mode_combo.setCurrentIndex(0)  # default Auto
+        self._mode_combo.currentIndexChanged.connect(self._on_pdf_option_changed)
+        pdf_form.addRow("Mode:", self._mode_combo)
+        self._pdf_opts_grp.setVisible(False)  # shown only for PDFs
+        right_lay.addWidget(self._pdf_opts_grp)
 
         right_lay.addStretch()
         right_scroll.setWidget(right_w)
@@ -557,14 +608,14 @@ class UnderlayImportDialog(QDialog):
             self._scale_combo.blockSignals(False)
             self._on_scale_combo_changed(scale_idx)
         custom_scale = s.value(f"{pfx}custom_scale", 1.0, type=float)
-        self._custom_scale_spin.blockSignals(True)
-        self._custom_scale_spin.setValue(custom_scale)
-        self._custom_scale_spin.blockSignals(False)
+        self._custom_scale_edit.blockSignals(True)
+        self._custom_scale_edit.setText(str(custom_scale))
+        self._custom_scale_edit.blockSignals(False)
         # Rotation
         rotation = s.value(f"{pfx}rotation", 0.0, type=float)
-        self._rotation_spin.blockSignals(True)
-        self._rotation_spin.setValue(rotation)
-        self._rotation_spin.blockSignals(False)
+        self._rotation_edit.blockSignals(True)
+        self._rotation_edit.setText(f"{rotation:.1f}°")
+        self._rotation_edit.blockSignals(False)
         # Destination layer
         layer = s.value(f"{pfx}dest_layer", "", type=str)
         if layer:
@@ -583,8 +634,8 @@ class UnderlayImportDialog(QDialog):
         pfx = f"{self._SETTINGS_KEY}/"
         s = QSettings("GV", "FirePro3D")
         s.setValue(f"{pfx}scale_idx", self._scale_combo.currentIndex())
-        s.setValue(f"{pfx}custom_scale", self._custom_scale_spin.value())
-        s.setValue(f"{pfx}rotation", self._rotation_spin.value())
+        s.setValue(f"{pfx}custom_scale", self._get_custom_scale())
+        s.setValue(f"{pfx}rotation", self._get_rotation())
         s.setValue(f"{pfx}dest_layer", self._dest_layer_combo.currentText())
         s.setValue(f"{pfx}insert_at_origin", self._origin_cb.isChecked())
 
@@ -618,6 +669,7 @@ class UnderlayImportDialog(QDialog):
 
     def _load_dxf(self, path: str):
         self._file_type = "dxf"
+        self._pdf_opts_grp.setVisible(False)
         self._thumb_list.setVisible(False)
         self._has_vectors = True
 
@@ -701,7 +753,7 @@ class UnderlayImportDialog(QDialog):
             # Auto-set custom scale
             custom_idx = len(self._SCALE_OPTIONS) - 1
             self._scale_combo.setCurrentIndex(custom_idx)
-            self._custom_scale_spin.setValue(factor)
+            self._custom_scale_edit.setText(f"{factor:.5f}")
         else:
             self._units_info_lbl.setVisible(False)
 
@@ -709,6 +761,7 @@ class UnderlayImportDialog(QDialog):
 
     def _load_pdf(self, path: str):
         self._file_type = "pdf"
+        self._pdf_opts_grp.setVisible(True)
 
         if not _HAS_FITZ:
             QMessageBox.warning(self, "Missing dependency",
@@ -746,74 +799,94 @@ class UnderlayImportDialog(QDialog):
         self._pdf_page = 0
         self._load_pdf_page(path, 0)
 
-    def _load_pdf_page(self, path: str, page: int):
+    def _load_pdf_page(self, path: str, page: int, dpi: int | None = None):
         """Load vectors from a specific PDF page."""
-        from .pdf_import_worker import extract_pdf_vectors_sync
+        if dpi is None:
+            dpi = int(self._dpi_combo.currentText())
 
         self._pdf_page = page
-        self._info_lbl.setText(f"Extracting vectors from page {page + 1}…")
-        QApplication.processEvents()
+        mode = self._mode_combo.currentText().lower()  # "auto", "vectors", "raster"
 
-        geoms, layers = extract_pdf_vectors_sync(path, page)
-
-        if geoms:
-            self._has_vectors = True
-            self._all_geoms = geoms
-            self._layers = layers
-            self._populate_layer_list()
-            self._selected_indices = None
-
-            # Default base point for PDFs: bottom-left corner of bounding box.
-            # PDF coords have origin at top-left (Y-down), so bottom-left is
-            # (min_x, max_y).  This ensures "Insert at origin" places the
-            # visual bottom-left at the scene origin.
-            xs, ys = [], []
-            for g in geoms:
-                kind = g.get("kind")
-                if kind == "line":
-                    xs += [g["x1"], g["x2"]]
-                    ys += [g["y1"], g["y2"]]
-                elif kind == "path_points":
-                    for pt in g.get("points", []):
-                        xs.append(pt[0]); ys.append(pt[1])
-                elif kind in ("circle", "arc"):
-                    x0 = g.get("x", g.get("rx", 0))
-                    y0 = g.get("y", g.get("ry", 0))
-                    xs += [x0, x0 + g.get("w", g.get("rw", 0))]
-                    ys += [y0, y0 + g.get("h", g.get("rh", 0))]
-                elif kind == "text":
-                    xs.append(g["x"]); ys.append(g["y"])
-            if xs and ys:
-                self._base_x_spin.blockSignals(True)
-                self._base_y_spin.blockSignals(True)
-                self._base_x_spin.setValue(min(xs))
-                self._base_y_spin.setValue(max(ys))
-                self._base_x_spin.blockSignals(False)
-                self._base_y_spin.blockSignals(False)
-
-            self._rebuild_preview()
-            n = len(geoms)
-            self._info_lbl.setText(
-                f"{n} vector entities from page {page + 1} of "
-                f"{os.path.basename(path)}"
-            )
-        else:
-            # No vectors — show raster preview
+        if mode == "raster":
             self._has_vectors = False
             self._all_geoms = []
             self._layers = []
             self._populate_layer_list()
             self._selected_indices = None
-            self._show_raster_preview(path, page)
+            self._show_raster_preview(path, page, dpi)
             self._info_lbl.setText(
-                f"No vector geometry found on page {page + 1} — "
-                f"will import as raster image."
-            )
+                f"Raster import of page {page + 1} at {dpi} DPI.")
+        else:
+            from .pdf_import_worker import extract_pdf_vectors_sync
+            self._info_lbl.setText(f"Extracting vectors from page {page + 1}…")
+            QApplication.processEvents()
+            geoms, layers = extract_pdf_vectors_sync(path, page)
+
+            if geoms:
+                self._has_vectors = True
+                self._all_geoms = geoms
+                self._layers = layers
+                self._populate_layer_list()
+                self._selected_indices = None
+
+                xs, ys = [], []
+                for g in geoms:
+                    kind = g.get("kind")
+                    if kind == "line":
+                        xs += [g["x1"], g["x2"]]
+                        ys += [g["y1"], g["y2"]]
+                    elif kind == "path_points":
+                        for pt in g.get("points", []):
+                            xs.append(pt[0]); ys.append(pt[1])
+                    elif kind in ("circle", "arc"):
+                        x0 = g.get("x", g.get("rx", 0))
+                        y0 = g.get("y", g.get("ry", 0))
+                        xs += [x0, x0 + g.get("w", g.get("rw", 0))]
+                        ys += [y0, y0 + g.get("h", g.get("rh", 0))]
+                    elif kind == "text":
+                        xs.append(g["x"]); ys.append(g["y"])
+                if xs and ys:
+                    self._base_x_edit.blockSignals(True)
+                    self._base_y_edit.blockSignals(True)
+                    self._base_x_edit.set_value_mm(min(xs))
+                    self._base_y_edit.set_value_mm(max(ys))
+                    self._base_x_edit.blockSignals(False)
+                    self._base_y_edit.blockSignals(False)
+
+                self._rebuild_preview()
+                n = len(geoms)
+                self._info_lbl.setText(
+                    f"{n} vector entities from page {page + 1} of "
+                    f"{os.path.basename(path)}")
+            elif mode == "vectors":
+                self._has_vectors = False
+                self._all_geoms = []
+                self._layers = []
+                self._populate_layer_list()
+                self._selected_indices = None
+                self._preview_scene.clear()
+                self._base_markers = []
+                self._pick_markers = []
+                self._create_overlay_items()
+                self._info_lbl.setText(
+                    f"No vector geometry found on page {page + 1}.")
+                self._status_lbl.setText(
+                    "No vectors found — switch to Auto or Raster.")
+            else:
+                self._has_vectors = False
+                self._all_geoms = []
+                self._layers = []
+                self._populate_layer_list()
+                self._selected_indices = None
+                self._show_raster_preview(path, page, dpi)
+                self._info_lbl.setText(
+                    f"No vector geometry found on page {page + 1} — "
+                    f"will import as raster image.")
 
         self._units_info_lbl.setVisible(False)
         self._update_status()
 
-    def _show_raster_preview(self, path: str, page: int):
+    def _show_raster_preview(self, path: str, page: int, dpi: int = 150):
         """Show a raster rendering of the PDF page as a fallback preview."""
         self._preview_scene.clear()
         self._base_marker = None
@@ -824,8 +897,9 @@ class UnderlayImportDialog(QDialog):
         try:
             doc = fitz.open(path)
             pg = doc[page]
-            # Render at 72 DPI for preview
-            pix = pg.get_pixmap(alpha=False)
+            zoom = dpi / 72.0
+            mat = fitz.Matrix(zoom, zoom)
+            pix = pg.get_pixmap(matrix=mat, alpha=False)
             from PyQt6.QtGui import QImage
             qimg = QImage(pix.samples, pix.width, pix.height,
                           pix.stride, QImage.Format.Format_RGB888)
@@ -895,11 +969,12 @@ class UnderlayImportDialog(QDialog):
                 geom_items.append(item)
 
         # Group geometry items and apply rotation around the base point
-        rotation = self._rotation_spin.value() if hasattr(self, "_rotation_spin") else 0.0
+        rotation = self._get_rotation()
         if geom_items and rotation != 0.0:
             group = self._preview_scene.createItemGroup(geom_items)
-            bx = self._base_x_spin.value() if hasattr(self, "_base_x_spin") else 0.0
-            by = self._base_y_spin.value() if hasattr(self, "_base_y_spin") else 0.0
+            group.setData(0, "DXF Underlay")  # snap engine descends into tagged groups
+            bx = self._base_x_edit.value_mm() if hasattr(self, "_base_x_edit") else 0.0
+            by = self._base_y_edit.value_mm() if hasattr(self, "_base_y_edit") else 0.0
             group.setTransformOriginPoint(bx, by)
             group.setRotation(rotation)
             self._preview_geom_group = group
@@ -962,12 +1037,17 @@ class UnderlayImportDialog(QDialog):
         return item
 
     def _draw_base_marker(self):
-        if self._base_marker is not None:
-            if self._base_marker.scene() is self._preview_scene:
-                self._preview_scene.removeItem(self._base_marker)
-            self._base_marker = None
-        bx = self._base_x_spin.value()
-        by = self._base_y_spin.value()
+        # Remove previous base marker items (guard against deleted C++ objects)
+        for m in self._base_markers:
+            try:
+                if m.scene() is self._preview_scene:
+                    self._preview_scene.removeItem(m)
+            except RuntimeError:
+                pass  # already deleted by scene.clear()
+        self._base_markers.clear()
+
+        bx = self._base_x_edit.value_mm()
+        by = self._base_y_edit.value_mm()
         s = 15
         pen = QPen(QColor("#ff4400"), 2)
         pen.setCosmetic(True)
@@ -979,7 +1059,7 @@ class UnderlayImportDialog(QDialog):
         v.setZValue(500)
         self._preview_scene.addItem(h)
         self._preview_scene.addItem(v)
-        self._base_marker = h
+        self._base_markers = [h, v]
 
     # ── Layer controls ────────────────────────────────────────────────────────
 
@@ -1060,13 +1140,20 @@ class UnderlayImportDialog(QDialog):
 
     def _on_scale_combo_changed(self, idx: int):
         _, val = self._SCALE_OPTIONS[idx]
-        self._custom_scale_spin.setVisible(val is None)
+        self._custom_scale_edit.setVisible(val is None)
+        self._calibration_lbl.setVisible(val is None and bool(self._calibration_lbl.text()))
+
+    def _get_custom_scale(self) -> float:
+        try:
+            return float(self._custom_scale_edit.text())
+        except (ValueError, AttributeError):
+            return 1.0
 
     def _current_scale(self) -> float:
         idx = self._scale_combo.currentIndex()
         _, val = self._SCALE_OPTIONS[idx]
         if val is None:
-            return self._custom_scale_spin.value()
+            return self._get_custom_scale()
         return val
 
     def _start_pick2(self):
@@ -1087,16 +1174,21 @@ class UnderlayImportDialog(QDialog):
             self._on_point_picked(pt)
 
     def _on_pick2_pt(self, pt: QPointF):
-        pen = QPen(QColor("#ff0000"), 2)
+        pen = QPen(QColor("#00cc44"), 2)
         pen.setCosmetic(True)
         s = 8
-        h = QGraphicsLineItem(pt.x() - s, pt.y(), pt.x() + s, pt.y())
-        h.setPen(pen); h.setZValue(600)
-        v = QGraphicsLineItem(pt.x(), pt.y() - s, pt.x(), pt.y() + s)
-        v.setPen(pen); v.setZValue(600)
-        self._preview_scene.addItem(h)
-        self._preview_scene.addItem(v)
-        self._pick_markers.extend([h, v])
+        # Diamond marker for scale pick points
+        path = QPainterPath()
+        path.moveTo(pt.x(), pt.y() - s)
+        path.lineTo(pt.x() + s, pt.y())
+        path.lineTo(pt.x(), pt.y() + s)
+        path.lineTo(pt.x() - s, pt.y())
+        path.closeSubpath()
+        diamond = QGraphicsPathItem(path)
+        diamond.setPen(pen)
+        diamond.setZValue(600)
+        self._preview_scene.addItem(diamond)
+        self._pick_markers.append(diamond)
         self._pick_pts.append(pt)
 
         if len(self._pick_pts) == 1:
@@ -1108,7 +1200,7 @@ class UnderlayImportDialog(QDialog):
                 self._pick_pts[0].x(), self._pick_pts[0].y(),
                 self._pick_pts[1].x(), self._pick_pts[1].y()
             )
-            line.setPen(QPen(QColor("#ff0000"), 1))
+            line.setPen(QPen(QColor("#00cc44"), 1, Qt.PenStyle.DashLine))
             line.setZValue(600)
             self._preview_scene.addItem(line)
             self._pick_markers.append(line)
@@ -1124,20 +1216,33 @@ class UnderlayImportDialog(QDialog):
                 self._status_lbl.setText("Points too close — try again.")
                 return
 
-            real_dist, ok = QInputDialog.getDouble(
+            # Build a unit hint for the prompt
+            if self._sm:
+                hint = self._sm.format_length(1000.0)  # e.g. "3' 3 3/8\"" or "1000.000 mm"
+                unit_hint = f" (e.g. {hint})"
+            else:
+                unit_hint = ""
+
+            text, ok = QInputDialog.getText(
                 self, "Real Distance",
                 f"The two points are {px_dist:.1f} preview units apart.\n"
-                "Enter the REAL distance between them:",
-                decimals=3, min=0.001, max=1e9
+                f"Enter the REAL distance between them{unit_hint}:"
             )
-            if ok and real_dist > 0:
-                factor = real_dist / px_dist
-                custom_idx = len(self._SCALE_OPTIONS) - 1
-                self._scale_combo.setCurrentIndex(custom_idx)
-                self._custom_scale_spin.setValue(factor)
-                self._status_lbl.setText(
-                    f"Scale set: {px_dist:.1f} preview units = {real_dist} real → ×{factor:.5f}"
-                )
+            if ok and text.strip():
+                fallback = self._sm.bare_number_unit() if self._sm else "mm"
+                parsed_mm = ScaleManager.parse_dimension(text.strip(), fallback)
+                if parsed_mm is not None and parsed_mm > 0:
+                    factor = parsed_mm / px_dist
+                    custom_idx = len(self._SCALE_OPTIONS) - 1
+                    self._scale_combo.setCurrentIndex(custom_idx)
+                    self._custom_scale_edit.setText(f"{factor:.5f}")
+                    display = self._sm.format_length(parsed_mm) if self._sm else f"{parsed_mm:.1f} mm"
+                    self._calibration_lbl.setText(
+                        f"{px_dist:.1f} px = {display}")
+                    self._calibration_lbl.setVisible(True)
+                    self._status_lbl.setText(f"Scale calibrated: {display}")
+                else:
+                    self._status_lbl.setText("Could not parse distance — try again.")
             else:
                 self._status_lbl.setText("Scale pick cancelled.")
 
@@ -1159,12 +1264,12 @@ class UnderlayImportDialog(QDialog):
         self._status_lbl.setText("Click the base / insertion point on the preview…")
 
     def _on_point_picked(self, pt: QPointF):
-        self._base_x_spin.blockSignals(True)
-        self._base_y_spin.blockSignals(True)
-        self._base_x_spin.setValue(pt.x())
-        self._base_y_spin.setValue(pt.y())
-        self._base_x_spin.blockSignals(False)
-        self._base_y_spin.blockSignals(False)
+        self._base_x_edit.blockSignals(True)
+        self._base_y_edit.blockSignals(True)
+        self._base_x_edit.set_value_mm(pt.x())
+        self._base_y_edit.set_value_mm(pt.y())
+        self._base_x_edit.blockSignals(False)
+        self._base_y_edit.blockSignals(False)
         self._draw_base_marker()
         self._pick_mode = None
         self._status_lbl.setText(
@@ -1172,9 +1277,29 @@ class UnderlayImportDialog(QDialog):
         )
         self._preview_view.set_mode("pan")
 
+    def _on_pdf_option_changed(self):
+        """Re-render PDF preview when DPI or import mode changes."""
+        if self._file_type != "pdf":
+            return
+        path = self._file_edit.text().strip()
+        if not path:
+            return
+        self._load_pdf_page(path, self._pdf_page)
+
     def _on_rotation_changed(self):
         """Rebuild preview to reflect the new rotation angle."""
         self._rebuild_preview()
+
+    def _get_rotation(self) -> float:
+        text = self._rotation_edit.text().strip().rstrip("°").strip()
+        try:
+            return float(text)
+        except (ValueError, AttributeError):
+            return 0.0
+
+    def _set_rotation(self, deg: float):
+        self._rotation_edit.setText(f"{deg:.1f}°")
+        self._on_rotation_changed()
 
     def _on_base_changed(self):
         self._draw_base_marker()
@@ -1218,9 +1343,9 @@ class UnderlayImportDialog(QDialog):
         p.file_path = self._file_edit.text().strip()
         p.file_type = self._file_type
         p.scale = self._current_scale()
-        p.base_x = self._base_x_spin.value()
-        p.base_y = self._base_y_spin.value()
-        p.rotation = self._rotation_spin.value()
+        p.base_x = self._base_x_edit.value_mm()
+        p.base_y = self._base_y_edit.value_mm()
+        p.rotation = self._get_rotation()
         p.user_layer = self._dest_layer_combo.currentText()
         p.selected_layers = (
             list(self._active_layers())
@@ -1229,7 +1354,8 @@ class UnderlayImportDialog(QDialog):
         )
         p.has_vectors = self._has_vectors
         p.pdf_page = self._pdf_page
-        p.pdf_dpi = 150
+        p.pdf_dpi = int(self._dpi_combo.currentText())
+        p.import_mode = self._mode_combo.currentText().lower()
         p.insert_at_origin = self._origin_cb.isChecked()
 
         active_layers = self._active_layers()

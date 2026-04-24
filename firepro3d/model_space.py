@@ -1914,6 +1914,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             import_base_y=by,
             selected_layers=getattr(params, "selected_layers", None),
             level=self.active_level,
+            import_mode=getattr(params, "import_mode", "auto"),
         )
         self._apply_underlay_display(group, record)
         self.underlays.append((record, group))
@@ -2085,6 +2086,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         progress.close()
         self._cleanup_dxf_worker()
         self.underlaysChanged.emit()
+        self.push_undo_state()
         self._show_status(f"Imported DXF: {params['file_path']} ({len(items)} items)")
 
     def _geom_to_item(self, geom: dict, pen: QPen, color: QColor):
@@ -2164,7 +2166,14 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._dxf_import_params = None
 
     def import_pdf(self, file_path, dpi=150, page=0, x=0.0, y=0.0,
-                   _record: Underlay = None):
+                   _record: Underlay = None, import_mode: str = "auto"):
+        """Import a PDF page as a raster underlay.
+
+        ``import_mode`` is stored on the Underlay record for serialization
+        and refresh-from-disk but does not affect rendering — this method
+        always produces a raster pixmap.  Vector extraction happens in the
+        import dialog preview and goes through _commit_place_import.
+        """
         import os
         if not os.path.isfile(file_path):
             self._show_status(f"PDF not found: {file_path}")
@@ -2256,6 +2265,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             x=item.pos().x(), y=item.pos().y(),
             dpi=dpi, page=page,
             level=self.active_level,
+            import_mode=import_mode,
         )
 
         # Apply saved display settings
@@ -2263,17 +2273,20 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         self.underlays.append((record, item))
         self.underlaysChanged.emit()
+        self.push_undo_state()
         self._show_status(f"Imported PDF '{file_path}' page {page} at {dpi} DPI")
 
     # -------------------------------------------------------------------------
     # UNDERLAYS — MANAGEMENT
 
     def _apply_underlay_display(self, item: QGraphicsItem, record: Underlay):
-        """Apply transform origin, scale, rotation, opacity, and lock state."""
+        """Apply transform origin, scale, rotation, opacity, visibility, and lock state."""
         item.setTransformOriginPoint(item.boundingRect().center())
         item.setScale(record.scale)
         item.setRotation(record.rotation)
         item.setOpacity(record.opacity)
+        if not record.visible:
+            item.setVisible(False)
         if record.locked:
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
             item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
@@ -2382,7 +2395,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         if data.type == "pdf":
             self.import_pdf(
                 data.path, dpi=data.dpi, page=data.page,
-                x=data.x, y=data.y, _record=data
+                x=data.x, y=data.y, _record=data,
+                import_mode=data.import_mode,
             )
         elif data.type == "dxf":
             self.import_dxf(
