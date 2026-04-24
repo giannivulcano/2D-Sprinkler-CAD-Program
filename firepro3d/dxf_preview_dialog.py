@@ -970,7 +970,7 @@ class UnderlayImportDialog(QDialog):
 
         # Group geometry items and apply rotation around the base point
         rotation = self._get_rotation()
-        if geom_items and rotation != 0.0:
+        if geom_items:
             group = self._preview_scene.createItemGroup(geom_items)
             group.setData(0, "DXF Underlay")  # snap engine descends into tagged groups
             bx = self._base_x_edit.value_mm() if hasattr(self, "_base_x_edit") else 0.0
