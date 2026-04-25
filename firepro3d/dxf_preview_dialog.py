@@ -612,7 +612,7 @@ class UnderlayImportDialog(QDialog):
         self._custom_scale_edit.setText(f"{custom_scale:.5g}")
         self._custom_scale_edit.blockSignals(False)
         # Rotation
-        rotation = s.value(f"{pfx}rotation", 0.0, type=float)
+        rotation = s.value(f"{pfx}rotation", 0.0, type=float) % 360.0
         self._rotation_edit.blockSignals(True)
         self._rotation_edit.setText(f"{rotation:.1f}°")
         self._rotation_edit.blockSignals(False)
@@ -1293,7 +1293,7 @@ class UnderlayImportDialog(QDialog):
     def _get_rotation(self) -> float:
         text = self._rotation_edit.text().strip().rstrip("°").strip()
         try:
-            return float(text)
+            return float(text) % 360.0
         except (ValueError, AttributeError):
             return 0.0
 
