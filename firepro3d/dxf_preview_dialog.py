@@ -42,7 +42,7 @@ from PyQt6.QtGui import (
     QPen, QColor, QBrush, QPainterPath, QFont, QCursor, QPainter,
     QPixmap, QIcon,
 )
-from PyQt6.QtCore import Qt, QPointF, QRectF, QSizeF, QSize, QSettings, pyqtSignal
+from PyQt6.QtCore import Qt, QPointF, QRectF, QLineF, QSizeF, QSize, QSettings, pyqtSignal
 
 try:
     import ezdxf
@@ -136,7 +136,7 @@ class _PreviewView(QGraphicsView):
             self.setCursor(Qt.CursorShape.CrossCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
-            dlg = self.parent()
+            dlg = getattr(self, "_dialog", None)
             if dlg and hasattr(dlg, "_cursor_h"):
                 dlg._cursor_h.setVisible(False)
                 dlg._cursor_v.setVisible(False)
@@ -168,7 +168,11 @@ class _PreviewView(QGraphicsView):
                 self._rb_item.setZValue(1000)
                 self.scene().addItem(self._rb_item)
             elif self._mode == "pick_point":
-                self.point_picked.emit(scene_pos)
+                # Use snapped point if available
+                dlg = getattr(self, "_dialog", None)
+                snap = getattr(dlg, "_snap_result", None) if dlg else None
+                pt = snap.point if snap else scene_pos
+                self.point_picked.emit(pt)
 
     def mouseMoveEvent(self, event):
         if self._pan_start is not None:
@@ -185,19 +189,21 @@ class _PreviewView(QGraphicsView):
                 self._rb_item.setRect(rect)
         elif self._mode == "pick_point":
             scene_pos = self.mapToScene(event.pos())
-            dlg = self.parent()
+            dlg = getattr(self, "_dialog", None)
             if dlg and hasattr(dlg, "_cursor_h"):
-                vr = self.mapToScene(self.viewport().rect()).boundingRect()
-                dlg._cursor_h.setLine(vr.left(), scene_pos.y(),
-                                       vr.right(), scene_pos.y())
-                dlg._cursor_v.setLine(scene_pos.x(), vr.top(),
-                                       scene_pos.x(), vr.bottom())
-                dlg._cursor_h.setVisible(True)
-                dlg._cursor_v.setVisible(True)
-
                 result = dlg._snap_engine.find(
                     scene_pos, self.scene(), self.transform())
                 dlg._snap_result = result
+
+                # Crosshairs jump to snap point when available
+                cp = result.point if result else scene_pos
+                vr = self.mapToScene(self.viewport().rect()).boundingRect()
+                dlg._cursor_h.setLine(vr.left(), cp.y(),
+                                       vr.right(), cp.y())
+                dlg._cursor_v.setLine(cp.x(), vr.top(),
+                                       cp.x(), vr.bottom())
+                dlg._cursor_h.setVisible(True)
+                dlg._cursor_v.setVisible(True)
                 self.viewport().update()
 
     def mouseReleaseEvent(self, event):
@@ -223,7 +229,7 @@ class _PreviewView(QGraphicsView):
     def drawForeground(self, painter: QPainter, rect):
         """Draw snap glyph and source-item trace over the preview."""
         super().drawForeground(painter, rect)
-        dlg = self.parent()
+        dlg = getattr(self, "_dialog", None)
         if dlg is None:
             return
         snap = getattr(dlg, "_snap_result", None)
@@ -313,6 +319,7 @@ class UnderlayImportDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Import Underlay — Preview")
         self.resize(1100, 700)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
 
         self._user_layer_manager = user_layer_manager
         self._sm = scale_manager
@@ -333,6 +340,7 @@ class UnderlayImportDialog(QDialog):
 
         self._preview_scene = QGraphicsScene()
         self._preview_view = _PreviewView(self._preview_scene, parent=self)
+        self._preview_view._dialog = self  # direct ref — parent() changes after layout
         self._preview_view.rubber_band_rect.connect(self._on_rubber_band)
         self._preview_view.point_picked.connect(self._on_any_point_picked)
 

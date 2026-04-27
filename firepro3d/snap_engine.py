@@ -269,11 +269,19 @@ class SnapEngine:
             if self.skip_pipes and isinstance(item, Pipe):
                 continue
 
-            # DXF underlay groups — descend into children
-            if isinstance(item, QGraphicsItemGroup) and item.data(0) == "DXF Underlay":
-                for child in item.childItems():
-                    for snap_type, scene_pt, name in self._collect(child):
-                        ctx.check(snap_type, scene_pt, child, name)
+            # DXF/PDF underlay groups — skip the group itself;
+            # children are yielded directly by scene.items() below.
+            if (isinstance(item, QGraphicsItemGroup)
+                    and item.data(0) in ("DXF Underlay", "PDF Underlay")):
+                continue
+
+            # Children of underlay groups — collect snaps
+            parent = item.parentItem()
+            if parent is not None:
+                if (isinstance(parent, QGraphicsItemGroup)
+                        and parent.data(0) in ("DXF Underlay", "PDF Underlay")):
+                    for snap_type, scene_pt, name in self._collect(item):
+                        ctx.check(snap_type, scene_pt, item, name)
                 continue
 
             for snap_type, pt, name in self._collect(item):
@@ -328,22 +336,30 @@ class SnapEngine:
             _segments.append((gl.mapToScene(line.p1()),
                              gl.mapToScene(line.p2()), gl))
 
+        _underlay_tags = ("DXF Underlay", "PDF Underlay")
+
         def _phase4_items():
-            """Yield items for segment extraction, descending into DXF groups."""
+            """Yield items for segment extraction, descending into DXF groups.
+
+            Uses Qt's scene.items() spatial index instead of manual
+            sceneBoundingRect checks — Qt correctly handles cosmetic
+            pens and group transforms that boundingRect misses.
+            """
             for item in scene.items(search_rect):
                 if exclude is not None and item is exclude:
                     continue
-                if item.parentItem() is not None:
+                if item.zValue() > 150:
                     continue
+                parent = item.parentItem()
+                if parent is not None:
+                    # Yield children of underlay groups directly
+                    if (isinstance(parent, QGraphicsItemGroup)
+                            and parent.data(0) in _underlay_tags):
+                        yield item
+                    continue
+                # Skip the group itself (children already yielded above)
                 if (isinstance(item, QGraphicsItemGroup)
-                        and item.data(0) == "DXF Underlay"):
-                    # Only yield children whose bounding rect overlaps
-                    # the search area — a DXF underlay can have thousands
-                    # of children and the O(n²) segment pairing below
-                    # would freeze the UI without this spatial filter.
-                    for child in item.childItems():
-                        if child.sceneBoundingRect().intersects(search_rect):
-                            yield child
+                        and item.data(0) in _underlay_tags):
                     continue
                 yield item
 
