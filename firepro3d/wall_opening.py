@@ -129,6 +129,8 @@ class WallOpening(QGraphicsPathItem):
         """Recompute path and position based on parent wall."""
         if self._wall is None:
             return
+        length = self._wall.centerline_length()
+        self._offset_along = max(0.0, min(self._offset_along, length))
         center = self.center_on_wall()
         self.setPos(center)
         self._rebuild_path()
@@ -234,6 +236,8 @@ class WallOpening(QGraphicsPathItem):
         a = self._wall.centerline_angle_rad()
         proj = dx * math.cos(a) + dy * math.sin(a)
         self._offset_along += proj
+        length = self._wall.centerline_length()
+        self._offset_along = max(0.0, min(self._offset_along, length))
         self._reposition()
 
 
