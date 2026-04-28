@@ -97,11 +97,12 @@ _Grid system, scale calibration & underlay, wall/room/floor system, sprinkler co
 - [ ] Spec session: annotations & hatch patterns — NoteAnnotation (MText-like word-wrap, bold/italic, alignment), DimensionAnnotation (two-point + offset witness lines), HatchItem (region fill with constraint interaction), SVG hatch pattern loader (24×24 viewBox tiling, seamless rules), built-in Qt brush patterns. `annotations.py` (739 LOC), `hatch_patterns.py` (239 LOC) [type:Backlog] [P3] [subject:Architecture]
 
 ## Wall, Room & Floor Slab Follow-Ups (from `docs/specs/wall-room-floor-system.md` §13–§14)
-- [ ] Rename wall alignment Interior/Exterior → Left/Right — update `ALIGN_INTERIOR`/`ALIGN_EXTERIOR` constants, property dropdown, serialization migration (`from_dict` maps old names). `wall.py`, `model_space.py` [ref:wall-spec§4.2] [type:Task] [P2] [subject:CAD]
-- [ ] Remove Miter join mode — delete from enum and property dropdown, treat serialized `"Miter"` as `"Butt"` on load. `wall.py` [ref:wall-spec§5.1] [type:Task] [P2] [subject:CAD]
-- [ ] Enforce 1mm minimum wall thickness — clamp on property set and `from_dict`. `wall.py` [ref:wall-spec§4.3] [type:Task] [P2] [subject:CAD]
-- [ ] Add opening reposition in `_rebuild_path()` — call `_reposition()` on all owned openings whenever wall geometry changes. `wall.py` [ref:wall-spec§7.3] [type:Bug] [P2] [subject:CAD]
-- [ ] Add offset clamping for wall openings — clamp `_offset_along` to `[0, centerline_length]` in `_reposition()` and `translate()`. `wall_opening.py` [ref:wall-spec§7.4] [type:Task] [P2] [subject:CAD]
+- [x] Rename wall alignment Interior/Exterior → Left/Right — update `ALIGN_INTERIOR`/`ALIGN_EXTERIOR` constants, property dropdown, serialization migration (`from_dict` maps old names). `wall.py`, `model_space.py` [ref:wall-spec§4.2] [type:Task] [P2] [subject:CAD] [done:2026-04-27]
+- [x] Remove Miter join mode — delete from enum and property dropdown, serialized `"Miter"` mapped to `"Solid"` on load (preserves corner geometry). `wall.py` [ref:wall-spec§5.1] [type:Task] [P2] [subject:CAD] [done:2026-04-27]
+- [x] Enforce 1mm minimum wall thickness — clamp on property set and `from_dict`. `wall.py` [ref:wall-spec§4.3] [type:Task] [P2] [subject:CAD] [done:2026-04-27]
+- [x] Add opening reposition in `_rebuild_path()` — call `_reposition()` on all owned openings whenever wall geometry changes. `wall.py` [ref:wall-spec§7.3] [type:Bug] [P2] [subject:CAD] [done:2026-04-27]
+- [x] Add offset clamping for wall openings — clamp `_offset_along` to `[0, centerline_length]` in `_reposition()` and `translate()`. `wall_opening.py` [ref:wall-spec§7.4] [type:Task] [P2] [subject:CAD] [done:2026-04-27]
+- [ ] Fix contradictory comments in room inset logic — `model_space.py:5688-5690` comments describe the opposite of what the code does (Left/Right swapped). Code is correct per spec §8.4; comments are wrong. [type:Task] [P3] [subject:CAD]
 - [ ] Remove dead code in room.py — unreachable `return result` on lines 338-339. `room.py` [ref:wall-spec§13] [type:Task] [P3] [subject:CAD]
 - [ ] Extract wall join constants to `constants.py` — `MITER_TOL` (1.0), `MAX_MITER_FACTOR` (4.0), `AUTO_JOIN_TOLERANCE` (20.0), `TEE_TOLERANCE` (40.0). `wall.py`, `model_space.py`, `constants.py` [ref:wall-spec§5.3] [type:Task] [P3] [subject:CAD]
 
