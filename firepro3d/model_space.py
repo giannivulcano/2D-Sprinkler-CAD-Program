@@ -3334,7 +3334,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         circle radius).  Called by Model_View.keyPressEvent when Tab is
         pressed.
 
-        In wall mode, Tab cycles alignment (Center → Interior → Exterior)
+        In wall mode, Tab cycles alignment (Center → Left → Right)
         instead of opening the exact-input popup.
 
         Defaults are computed from the current cursor position relative to
@@ -3371,7 +3371,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         # ── Wall mode: cycle alignment instead of opening dialog ──
         if self.mode in ("wall", "wall_rect"):
-            _cycle = {"Center": "Interior", "Interior": "Exterior", "Exterior": "Center"}
+            _cycle = {"Center": "Left", "Left": "Right", "Right": "Center"}
             self._wall_alignment = _cycle.get(self._wall_alignment, "Center")
             if self.mode == "wall_rect":
                 if self._wall_rect_anchor is None:
@@ -5666,12 +5666,12 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         # The boundary walk traces wall centerlines. For non-center alignments
         # we need a half-wall-width inset to reach the interior face:
-        #   Center   → no adjustment (centerline = wall center, already correct)
-        #   Interior → inset by half thickness (centerline is at interior face,
-        #              room face is half-thickness inward)
-        #   Exterior → inset by half thickness (centerline is at exterior face,
-        #              room face is half-thickness inward)
-        align_counts = {"Center": 0, "Interior": 0, "Exterior": 0}
+        #   Center → no adjustment (centerline = wall center, already correct)
+        #   Left   → inset by half thickness (centerline is at left face,
+        #             room face is half-thickness inward)
+        #   Right  → inset by half thickness (centerline is at right face,
+        #             room face is half-thickness inward)
+        align_counts = {"Center": 0, "Left": 0, "Right": 0}
         total_ht = 0.0
         for w in walls:
             align_counts[w._alignment] = align_counts.get(w._alignment, 0) + 1
@@ -5680,17 +5680,17 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
 
         dominant = max(align_counts, key=align_counts.get)
         # All alignments need inset to reach the inner wall face:
-        #   Center   → centerline is at wall center → inset by half thickness (shrink)
-        #   Interior → centerline is at interior face → inset by half thickness (shrink)
-        #   Exterior → centerline is at exterior face → inset by half thickness (expand)
+        #   Center → centerline is at wall center → inset by half thickness (shrink)
+        #   Left   → centerline is at left face → inset by half thickness (shrink)
+        #   Right  → centerline is at right face → inset by half thickness (expand)
         # Determine inset needed to reach interior face from the boundary walk
         # (which traces wall centerlines/axes):
-        #   Center   → axis at wall center → inset by half thickness (shrink)
-        #   Interior → axis IS the interior face → no inset needed
-        #   Exterior → axis at exterior face → inset by full thickness (shrink)
-        if dominant == "Exterior":
+        #   Center → axis at wall center → inset by half thickness (shrink)
+        #   Left   → axis IS the left face → no inset needed
+        #   Right  → axis at right face → inset by full thickness (shrink)
+        if dominant == "Right":
             inset_dist = 0.0
-        elif dominant == "Interior":
+        elif dominant == "Left":
             inset_dist = avg_ht * 2  # full wall thickness
         else:  # Center
             inset_dist = avg_ht  # half wall thickness

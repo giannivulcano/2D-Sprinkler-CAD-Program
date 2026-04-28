@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt
 from .wall import (
     THICKNESS_PRESETS_IN, DEFAULT_THICKNESS_MM,
     FILL_NONE, FILL_SOLID, FILL_HATCH, FILL_SECTION,
-    ALIGN_CENTER, ALIGN_INTERIOR, ALIGN_EXTERIOR,
+    ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT,
 )
 from .dimension_edit import DimensionEdit
 
@@ -104,7 +104,7 @@ class WallDialog(QDialog):
 
         # Alignment
         self._align_combo = QComboBox()
-        self._align_combo.addItems([ALIGN_CENTER, ALIGN_INTERIOR, ALIGN_EXTERIOR])
+        self._align_combo.addItems([ALIGN_CENTER, ALIGN_LEFT, ALIGN_RIGHT])
         cur_align = self._defaults.get("alignment", ALIGN_CENTER)
         idx = self._align_combo.findText(cur_align)
         if idx >= 0:

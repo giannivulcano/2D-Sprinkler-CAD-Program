@@ -38,8 +38,8 @@ FILL_SECTION = "Section"
 
 # Alignment modes (Revit-style wall placement line)
 ALIGN_CENTER   = "Center"
-ALIGN_INTERIOR = "Interior"
-ALIGN_EXTERIOR = "Exterior"
+ALIGN_LEFT     = "Left"
+ALIGN_RIGHT    = "Right"
 
 _HATCH_SPACING = 6.0      # cosmetic pixel spacing for 2D hatch lines
 _SELECTION_COLOR = QColor("red")
@@ -80,12 +80,12 @@ def compute_wall_quad(
     else:
         ht = half_mm  # fallback: 1 px ≈ 1 mm
 
-    if alignment == ALIGN_INTERIOR:
-        # Interior: axis is on interior face — wall extends outward (right side)
+    if alignment == ALIGN_LEFT:
+        # Left: axis is on the left face — wall extends rightward
         off_left = QPointF(nx * ht * 2, ny * ht * 2)
         off_right = QPointF(0, 0)
-    elif alignment == ALIGN_EXTERIOR:
-        # Exterior: axis is on exterior face — wall extends inward (left side)
+    elif alignment == ALIGN_RIGHT:
+        # Right: axis is on the right face — wall extends leftward
         off_left = QPointF(0, 0)
         off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
     else:  # Center
@@ -134,7 +134,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
         self._base_offset_mm: float = 0.0          # offset from base level elevation
         self._top_offset_mm: float = 0.0           # offset from top level elevation
 
-        # Alignment mode (centerline / interior / exterior)
+        # Alignment mode (centerline / left / right)
         self._alignment: str = ALIGN_CENTER
 
         # Per-endpoint join mode
@@ -214,18 +214,18 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
 
         Alignment controls how the wall rectangle relates to the click line
         (defined by _pt1 / _pt2):
-          Center   — click line is the wall centerline (default)
-          Interior — click line is the left (normal-side) face
-          Exterior — click line is the right face
+          Center — click line is the wall centerline (default)
+          Left   — click line is the left (normal-side) face
+          Right  — click line is the right face
         """
         nx, ny = self.normal()
         ht = self.half_thickness_scene()
-        if self._alignment == ALIGN_INTERIOR:
-            # Interior: axis is on interior face — wall extends outward (right side)
+        if self._alignment == ALIGN_LEFT:
+            # Left: axis is on the left face — wall extends rightward
             off_left = QPointF(nx * ht * 2, ny * ht * 2)
             off_right = QPointF(0, 0)
-        elif self._alignment == ALIGN_EXTERIOR:
-            # Exterior: axis is on exterior face — wall extends inward (left side)
+        elif self._alignment == ALIGN_RIGHT:
+            # Right: axis is on the right face — wall extends leftward
             off_left = QPointF(0, 0)
             off_right = QPointF(-nx * ht * 2, -ny * ht * 2)
         else:  # ALIGN_CENTER
@@ -450,7 +450,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
             "Fill Mode":    {"type": "enum",      "value": self._fill_mode,
                              "options": ["None", "Solid", "Section"]},
             "Alignment":    {"type": "enum",      "value": self._alignment,
-                             "options": ["Center", "Interior", "Exterior"]},
+                             "options": ["Center", "Left", "Right"]},
             "Base Level":   {"type": "level_ref", "value": self._base_level},
             "Base Offset":  {"type": "dimension", "value": self._fmt(self._base_offset_mm),
                              "value_mm": self._base_offset_mm},
@@ -636,6 +636,11 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
                    color=data.get("color", "#cccccc"))
         wall._fill_mode = data.get("fill_mode", FILL_NONE)
         wall._alignment = data.get("alignment", ALIGN_CENTER)
+        # Migration: rename Interior/Exterior → Left/Right
+        if wall._alignment == "Interior":
+            wall._alignment = "Left"
+        elif wall._alignment == "Exterior":
+            wall._alignment = "Right"
         wall._base_level = data.get("base_level", DEFAULT_LEVEL)
         wall._top_level = data.get("top_level", "Level 2")
         if "height_mm" in data:
