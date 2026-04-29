@@ -58,8 +58,9 @@
 
 ## View Relationships Follow-Ups (from `docs/specs/view-relationships.md` §11)
 - [ ] Extract plan-family Z-band magic numbers to named constants in `constants.py` — spec is source of truth for order, `constants.py` should own values [ref:view-relationships§7.3] [type:Backlog] [P3] [subject:CAD]
-- [ ] Investigate elevation marker persistence — gap vs `DetailMarker.to_dict()` pattern; decide mirror or alternate approach [ref:view-relationships§6.3] [type:Backlog] [P2] [subject:CAD]
-- [ ] Spec session: Section view subsystem — first-class arbitrary-cut-line section views [ref:view-relationships§4.1] [type:Backlog] [P1] [subject:Architecture]
+- [x] Investigate elevation marker persistence — resolved by section view subsystem spec: section markers persist via `to_dict()`/`from_dict()`, elevation views retired and replaced by section views. See `docs/specs/section-view-subsystem.md` §10.5, §14. [ref:view-relationships§6.3] [type:Backlog] [P2] [subject:CAD] [done:2026-04-29]
+- [x] Spec session: Section view subsystem — arbitrary-angle cut planes replacing cardinal-only elevation views. See `docs/specs/section-view-subsystem.md`. Covers projection math, cut/behind rendering, SectionMarker with grips, SectionScene/SectionView/SectionManager, elevation retirement, cardinal shortcuts. [ref:view-relationships§4.1] [type:Backlog] [P1] [subject:Architecture] [done:2026-04-29]
+- [ ] Implement section view subsystem — SectionScene, SectionView, SectionMarker, SectionManager, section placement tool, cardinal shortcuts, elevation system retirement. See `docs/specs/section-view-subsystem.md` [ref:section-view-spec] [type:Task] [P1] [subject:Architecture]
 - [ ] Spec session: Drafting overrides / view templates — defines resolution rules on top of catalog [ref:view-relationships§7.4] [type:Backlog] [P2] [subject:Architecture]
 - [ ] Spec session: Cross-view selection / interaction sync [ref:view-relationships§1.3] [type:Backlog] [P2] [subject:Architecture]
 - [ ] Spec session: Paper-viewport-specific overrides (depends on view-templates spec landing first) [ref:view-relationships§7.4] [type:Backlog] [P3] [subject:Architecture]
