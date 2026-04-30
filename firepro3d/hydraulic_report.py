@@ -420,6 +420,9 @@ class HydraulicReportWidget(QWidget):
         self._csv_btn.clicked.connect(self._export_csv)
         btn_bar.addWidget(self._pdf_btn)
         btn_bar.addWidget(self._csv_btn)
+        self._ref_btn = QPushButton("Equiv. Length Table")
+        self._ref_btn.clicked.connect(self._show_equiv_length_ref)
+        btn_bar.addWidget(self._ref_btn)
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
 
@@ -495,6 +498,11 @@ class HydraulicReportWidget(QWidget):
             t.setRowCount(0)
         self._pdf_btn.setEnabled(False)
         self._csv_btn.setEnabled(False)
+
+    def _show_equiv_length_ref(self):
+        """Show the NFPA 13 equivalent length reference dialog."""
+        dlg = EquivalentLengthDialog(self)
+        dlg.show()
 
     # ------------------------------------------------------------------
     # Tab fillers
@@ -1002,3 +1010,52 @@ class HydraulicReportWidget(QWidget):
 
         html += "</body></html>"
         return html
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Equivalent Length Reference Dialog
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EquivalentLengthDialog(QWidget):
+    """Read-only reference dialog showing NFPA 13 Table 22.4.3.1.1."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Equivalent Pipe Lengths — NFPA 13 Table 22.4.3.1.1")
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setMinimumSize(700, 250)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        from firepro3d.equivalent_length import _DIAMETERS, _TABLE
+
+        diameters_display = [d.replace("Ø", "").strip() for d in _DIAMETERS]
+        headers = ["Fitting Type"] + diameters_display
+
+        table = _make_table(headers)
+        table.setRowCount(len(_TABLE))
+
+        row_labels = {
+            "90_elbow": "90° Elbow",
+            "45_elbow": "45° Elbow",
+            "tee_flow_turn": "Tee (flow turn)",
+            "cross_flow_turn": "Cross (flow turn)",
+            "cap": "Cap (end)",
+        }
+
+        for row, (key, values) in enumerate(_TABLE.items()):
+            table.setItem(row, 0, _item(row_labels.get(key, key), bold=True))
+            for col, val in enumerate(values):
+                table.setItem(row, col + 1, _item(str(int(val)) if val == int(val) else str(val)))
+
+        layout.addWidget(table)
+
+        note = QTextBrowser()
+        note.setMaximumHeight(40)
+        note.setHtml(
+            "<i>Values in feet. Source: NFPA 13, Table 22.4.3.1.1. "
+            "Wye fittings use 45° elbow values. Vertical elbows/tees use "
+            "corresponding horizontal values.</i>"
+        )
+        layout.addWidget(note)
