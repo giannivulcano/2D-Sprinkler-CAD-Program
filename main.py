@@ -1472,7 +1472,7 @@ class MainWindow(QMainWindow):
             "Clear\nResults", _I("clear_icon.svg"),
             self.clear_hydraulics)
         _btn.setToolTip("Clear hydraulic overlay and results")
-        _ref_btn = g_hyd.add_button(
+        _ref_btn = g_hyd.add_large_button(
             "Equiv.\nLengths", _I("report_icon.svg"),
             self.show_equiv_length_ref)
         _ref_btn.setToolTip("NFPA 13 Table 22.4.3.1.1 — Equivalent pipe lengths")
