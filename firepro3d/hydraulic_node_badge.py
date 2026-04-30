@@ -93,7 +93,8 @@ class HydraulicNodeBadge(QGraphicsSvgItem):
     """
 
     def __init__(self, parent_node, node_number: int,
-                 pressure: float, flow_out: float, total_flow: float,
+                 pressure: float, required_pressure: float,
+                 flow_out: float, total_flow: float,
                  position: str = "Right", stack_index: int = 0,
                  stack_total: int = 1, node_label: str = ""):
         super().__init__(_SVG_PATH, parent_node)
@@ -105,6 +106,7 @@ class HydraulicNodeBadge(QGraphicsSvgItem):
         self._node_number = node_number
         self._node_label = node_label or str(node_number)
         self._pressure = pressure
+        self._required_pressure = required_pressure
         self._flow_out = flow_out
         self._total_flow = total_flow
         self._badge_position = position
@@ -119,12 +121,13 @@ class HydraulicNodeBadge(QGraphicsSvgItem):
 
         # Properties for PropertyManager
         self._properties = {
-            "Node Number":          {"type": "label", "value": self._node_label},
-            "Pressure P (psi)":     {"type": "label", "value": f"{pressure:.1f}"},
-            "Flow Out q (gpm)":     {"type": "label", "value": f"{flow_out:.1f}"},
-            "Total Flow Q (gpm)":   {"type": "label", "value": f"{total_flow:.1f}"},
-            "Badge Position":       {"type": "enum",  "value": position,
-                                     "options": ["Above", "Below", "Left", "Right"]},
+            "Node Number":              {"type": "label", "value": self._node_label},
+            "Required P (psi)":         {"type": "label", "value": f"{required_pressure:.1f}"},
+            "Actual P (psi)":           {"type": "label", "value": f"{pressure:.1f}"},
+            "Flow Out q (gpm)":         {"type": "label", "value": f"{flow_out:.1f}"},
+            "Total Flow Q (gpm)":       {"type": "label", "value": f"{total_flow:.1f}"},
+            "Badge Position":           {"type": "enum",  "value": position,
+                                         "options": ["Above", "Below", "Left", "Right"]},
         }
 
     # ------------------------------------------------------------------

@@ -1472,6 +1472,10 @@ class MainWindow(QMainWindow):
             "Clear\nResults", _I("clear_icon.svg"),
             self.clear_hydraulics)
         _btn.setToolTip("Clear hydraulic overlay and results")
+        _ref_btn = g_hyd.add_large_button(
+            "Equiv.\nLengths", _I("report_icon.svg"),
+            self.show_equiv_length_ref)
+        _ref_btn.setToolTip("NFPA 13 Table 22.4.3.1.1 — Equivalent pipe lengths")
 
         # --- Thermal Radiation ---
         g_rad = analyze_page.add_group("Thermal Radiation")
@@ -2554,6 +2558,12 @@ class MainWindow(QMainWindow):
         """Clear the hydraulic overlay and the report dock."""
         self.scene.clear_hydraulics()
         self.hydro_report.clear()
+
+    def show_equiv_length_ref(self):
+        """Show the NFPA 13 equivalent length reference dialog."""
+        from firepro3d.hydraulic_report import EquivalentLengthDialog
+        dlg = EquivalentLengthDialog(self)
+        dlg.show()
 
     # ─────────────────────────────────────────────────────────────────────────
     # THERMAL RADIATION HELPERS

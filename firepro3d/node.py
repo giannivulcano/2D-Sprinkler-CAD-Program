@@ -224,14 +224,15 @@ class Node(DisplayableItemMixin, QGraphicsEllipseItem):
     # -------------------------------------------------------------------------
     # Hydraulic badge management
 
-    def create_hydraulic_badge(self, node_number, pressure, flow_out, total_flow,
-                               position="Right", stack_index=0, stack_total=1,
-                               node_label=""):
+    def create_hydraulic_badge(self, node_number, pressure, required_pressure,
+                               flow_out, total_flow, position="Right",
+                               stack_index=0, stack_total=1, node_label=""):
         """Create a selectable hydraulic node badge as a child item."""
         from .hydraulic_node_badge import HydraulicNodeBadge
         self.remove_hydraulic_badge()
         self._hydraulic_badge = HydraulicNodeBadge(
-            self, node_number, pressure, flow_out, total_flow,
+            self, node_number, pressure, required_pressure,
+            flow_out, total_flow,
             position=position, stack_index=stack_index,
             stack_total=stack_total, node_label=node_label,
         )

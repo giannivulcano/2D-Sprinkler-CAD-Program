@@ -46,7 +46,9 @@ class HydraulicResult:
     pipe_flows:         dict   # Pipe  → float (gpm)
     pipe_velocity:      dict   # Pipe  → float (fps)
     pipe_friction_loss: dict   # Pipe  → float (psi, total for the pipe)
+    required_node_pressures: dict  # Node → float (psi) — Phase 2 required pressure
     total_demand:       float  # gpm at supply connection
+    hose_stream_gpm:    float  # hose stream allowance (gpm) — added to demand at supply check
     required_pressure:  float  # psi required at supply node
     supply_pressure:    float  # psi available from supply curve at total_demand
     passed:             bool
@@ -115,6 +117,7 @@ class HydraulicSolver:
         if supply_node is None:
             return self._fail("Water supply node is not connected to the pipe network.",
                               messages)
+        self._supply_node = supply_node
 
         # ── Build BFS tree from supply ─────────────────────────────────────────
         adjacency                             = self._build_adjacency()
@@ -158,6 +161,10 @@ class HydraulicSolver:
         total_demand = sum(
             pipe_flow.get(parent_pipe[c], 0.0)
             for c in children.get(supply_node, [])
+        )
+
+        messages.append(
+            "ℹ️ Equivalent pipe lengths applied per NFPA 13 Table 22.4.3.1.1."
         )
 
         # ─────────────────────────────────────────────────────────────────────
@@ -205,18 +212,28 @@ class HydraulicSolver:
         # ─────────────────────────────────────────────────────────────────────
         # Phase 3: Check supply availability
         # ─────────────────────────────────────────────────────────────────────
-        avail_pressure = self._supply_available_pressure(supply_ws, total_demand)
+        hose_stream_gpm = supply_ws.hose_stream_allowance
+        q_check = total_demand + hose_stream_gpm
+        avail_pressure = self._supply_available_pressure(supply_ws, q_check)
         passed         = avail_pressure >= required_pressure
+
+        if hose_stream_gpm > 0:
+            messages.append(
+                f"ℹ️ Hose stream allowance: {hose_stream_gpm:.0f} gpm "
+                f"added to supply demand."
+            )
 
         if not passed:
             messages.append(
                 f"❌ Supply insufficient — need {required_pressure:.1f} psi "
-                f"@ {total_demand:.1f} gpm; "
+                f"@ {q_check:.1f} gpm (sprinkler: {total_demand:.1f} + "
+                f"hose: {hose_stream_gpm:.0f}); "
                 f"supply provides {avail_pressure:.1f} psi."
             )
         else:
             messages.append(
-                f"✅ System OK — Demand: {total_demand:.1f} gpm, "
+                f"✅ System OK — Sprinkler Demand: {total_demand:.1f} gpm, "
+                f"Total Demand: {q_check:.1f} gpm, "
                 f"Required: {required_pressure:.1f} psi, "
                 f"Available: {avail_pressure:.1f} psi."
             )
@@ -321,7 +338,9 @@ class HydraulicSolver:
             pipe_flows         = pipe_flow,
             pipe_velocity      = pipe_velocity,
             pipe_friction_loss = pipe_friction_loss,
+            required_node_pressures = required_node_pressure,
             total_demand       = total_demand,
+            hose_stream_gpm    = hose_stream_gpm,
             required_pressure  = required_pressure,
             supply_pressure    = avail_pressure,
             passed             = passed,
@@ -338,7 +357,7 @@ class HydraulicSolver:
     def _fail(msg: str, extra_messages: list | None = None) -> HydraulicResult:
         msgs = list(extra_messages or [])
         msgs.append(f"❌ {msg}")
-        return HydraulicResult({}, {}, {}, {}, 0.0, 0.0, 0.0, False, msgs, {}, {})
+        return HydraulicResult({}, {}, {}, {}, {}, 0.0, 0.0, 0.0, 0.0, False, msgs, {}, {})
 
     @staticmethod
     def _safe_float(value, default: float) -> float:
@@ -350,7 +369,7 @@ class HydraulicSolver:
     def _find_supply_network_node(self, supply_ws, messages: list):
         """
         Return the network Node closest to the WaterSupply item.
-        Issues a warning if the nearest node is >50 px away.
+        Issues a warning if the nearest node is >50 scene units away.
         Returns None if the system has no nodes.
         """
         from .node import Node
@@ -361,8 +380,13 @@ class HydraulicSolver:
         best = min(nodes, key=lambda n: (n.scenePos() - pos).manhattanLength())
         dist = (best.scenePos() - pos).manhattanLength()
         if dist > 50:
+            # Convert scene distance to display units (mm → ft-in or m)
+            if self.sm:
+                dist_str = self.sm.scene_to_display(dist)
+            else:
+                dist_str = f"{dist:.0f} mm"
             messages.append(
-                f"⚠️ Water supply is {dist:.0f} px from nearest node — "
+                f"⚠️ Water supply is {dist_str} from nearest node — "
                 "connect it closer to a pipe junction."
             )
         return best
@@ -414,7 +438,8 @@ class HydraulicSolver:
         """
         Hazen-Williams friction loss for a single pipe.
 
-        hf [psi] = 4.52 × Q^1.852 / (C^1.852 × d^4.87) × L_ft
+        hf [psi] = 4.52 * Q^1.852 / (C^1.852 * d^4.87) * L_total
+        L_total  = physical_length + equiv_length_node1 + equiv_length_node2
         """
         if q_gpm <= 0.0:
             return 0.0
@@ -422,7 +447,20 @@ class HydraulicSolver:
         d = pipe.get_inner_diameter()   # inches
         if d <= 0 or c <= 0:
             return 0.0
+
         L_ft = pipe.get_length_ft(sm=self.sm)
+
+        # Add equivalent pipe lengths for fittings at both ends
+        from .equivalent_length import equivalent_length_ft
+        nominal = pipe._properties["Diameter"]["value"]
+        supply = getattr(self, '_supply_node', None)
+
+        for node in (pipe.node1, pipe.node2):
+            if node is None or node is supply:
+                continue
+            fitting_type = getattr(getattr(node, 'fitting', None), 'type', 'no fitting')
+            L_ft += equivalent_length_ft(fitting_type, nominal)
+
         hf = 4.52 * (q_gpm ** 1.852) / ((c ** 1.852) * (d ** 4.87)) * L_ft
         return hf
 
