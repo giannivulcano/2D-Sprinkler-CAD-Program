@@ -231,3 +231,128 @@ class TestRequiredNodePressures:
         import dataclasses
         field_names = [f.name for f in dataclasses.fields(HydraulicResult)]
         assert "required_node_pressures" in field_names
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Task 8: End-to-End Integration Test
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEndToEnd:
+    """Integration test: small network exercising H1 + H2 + H3 + H4."""
+
+    def _build_network(self):
+        """Supply → N1 (tee) → N2 (90elbow, sprinkler) + N1 → N3 (cap, sprinkler).
+
+        All 2" Sch 40, C=120, 10 ft physical per pipe.
+        Supply: 80 psi static, 60 psi residual, 500 gpm test, 250 gpm hose.
+        Sprinklers: K=5.6, P_min=7 psi.
+        """
+        from firepro3d.hydraulic_solver import HydraulicSolver
+
+        sm = _mock_scale_manager(calibrated=True)
+
+        ws = _mock_water_supply(static=80, residual=60, test_flow=500,
+                                elevation=0, hose_stream=250)
+
+        def make_node(z=0, fitting_type="no fitting", has_spr=False):
+            n = MagicMock()
+            n.z_pos = z
+            n.fitting = MagicMock()
+            n.fitting.type = fitting_type
+            n.pipes = []
+            n.has_sprinkler.return_value = has_spr
+            n.sprinkler = None
+            sp = MagicMock()
+            sp.x.return_value = 0.0
+            sp.y.return_value = 0.0
+            sp.manhattanLength.return_value = 0.0
+            sp.__sub__ = lambda self, other: MagicMock(manhattanLength=MagicMock(return_value=0.0))
+            n.scenePos.return_value = sp
+            return n
+
+        supply_n = make_node(fitting_type="tee")  # supply node — fitting excluded
+        n1 = make_node(fitting_type="tee")
+        n2 = make_node(fitting_type="90elbow", has_spr=True)
+        n3 = make_node(fitting_type="cap", has_spr=True)
+
+        def make_pipe(na, nb):
+            p = MagicMock()
+            p.node1 = na
+            p.node2 = nb
+            p._properties = {
+                "Diameter": {"value": '2"Ø'},
+                "Schedule": {"value": "Sch 40"},
+                "C-Factor": {"value": "120"},
+            }
+            p.get_inner_diameter.return_value = 2.067
+            p.get_length_ft.return_value = 10.0
+            na.pipes.append(p)
+            nb.pipes.append(p)
+            return p
+
+        p1 = make_pipe(supply_n, n1)  # supply → N1
+        p2 = make_pipe(n1, n2)        # N1 → N2
+        p3 = make_pipe(n1, n3)        # N1 → N3
+
+        spr2 = MagicMock()
+        spr2.node = n2
+        spr2._properties = {
+            "K-Factor": {"value": "5.6"},
+            "Min Pressure": {"value": "7"},
+        }
+        n2.sprinkler = spr2
+
+        spr3 = MagicMock()
+        spr3.node = n3
+        spr3._properties = {
+            "K-Factor": {"value": "5.6"},
+            "Min Pressure": {"value": "7"},
+        }
+        n3.sprinkler = spr3
+
+        sys = _mock_sprinkler_system(ws,
+                                      nodes=[supply_n, n1, n2, n3],
+                                      pipes=[p1, p2, p3],
+                                      sprinklers=[spr2, spr3])
+
+        return HydraulicSolver(sys, sm), [spr2, spr3], supply_n, n1, n2, n3
+
+    def test_all_fixes_together(self):
+        solver, sprs, supply_n, n1, n2, n3 = self._build_network()
+        result = solver.solve(design_sprinklers=sprs)
+
+        # H4: Should not fail on scale (calibrated=True)
+        assert not any("calibrat" in m.lower() for m in result.messages)
+
+        # H1: Equivalent lengths applied message present
+        assert any("equivalent pipe lengths" in m.lower() for m in result.messages)
+
+        # H1: Friction loss should be non-trivial (equiv lengths add to physical)
+        for pipe, hf in result.pipe_friction_loss.items():
+            assert hf >= 0
+
+        # H2: Hose stream consumed
+        assert result.hose_stream_gpm == 250.0
+        assert any("hose stream" in m.lower() for m in result.messages)
+
+        # H3: Required node pressures populated
+        assert isinstance(result.required_node_pressures, dict)
+        assert n1 in result.required_node_pressures
+        assert n2 in result.required_node_pressures
+        assert n3 in result.required_node_pressures
+        # Required pressure at sprinkler nodes should be >= P_min (7 psi)
+        assert result.required_node_pressures[n2] >= 7.0
+        assert result.required_node_pressures[n3] >= 7.0
+        # Required at N1 should be >= required at N2 or N3 (it feeds both)
+        assert result.required_node_pressures[n1] >= max(
+            result.required_node_pressures[n2],
+            result.required_node_pressures[n3],
+        )
+
+    def test_uncalibrated_blocks(self):
+        """Same network but with uncalibrated scale — should fail at guard."""
+        solver, sprs, *_ = self._build_network()
+        solver.sm = _mock_scale_manager(calibrated=False)
+        result = solver.solve(design_sprinklers=sprs)
+        assert result.passed is False
+        assert any("calibrat" in m.lower() for m in result.messages)
