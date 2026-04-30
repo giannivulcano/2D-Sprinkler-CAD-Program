@@ -3071,6 +3071,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         solver = HydraulicSolver(self.sprinkler_system, self.scale_manager)
         result = solver.solve(design_sprinklers=design_sprinklers)
         self.hydraulic_result = result
+        self._supply_network_node = getattr(solver, '_supply_node', None)
         # Refresh all pipe labels and node badges
         for pipe in self.sprinkler_system.pipes:
             pipe.update_label()
@@ -3093,7 +3094,8 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             pos_label = best_position_for_node(nodes_at_pos[0])
             for stack_idx, node in enumerate(nodes_at_pos):
                 nn = result.node_numbers[node]
-                p = result.node_pressures.get(node, 0.0)
+                p_actual = result.node_pressures.get(node, 0.0)
+                p_required = result.required_node_pressures.get(node, 0.0)
                 q_out = 0.0
                 if node.has_sprinkler():
                     try:
@@ -3101,14 +3103,15 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                             "K-Factor", {}).get("value", 5.6))
                     except (ValueError, TypeError):
                         k = 5.6
-                    q_out = k * math.sqrt(max(p, 0.0))
+                    q_out = k * math.sqrt(max(p_actual, 0.0))
                 q_total = 0.0
                 for pipe in node.pipes:
                     pf = abs(result.pipe_flows.get(pipe, 0.0))
                     if pf > q_total:
                         q_total = pf
                 label = result.node_labels.get(node, str(nn)) if hasattr(result, 'node_labels') else str(nn)
-                node.create_hydraulic_badge(nn, p, q_out, q_total,
+                node.create_hydraulic_badge(nn, p_actual, p_required,
+                                            q_out, q_total,
                                             position=pos_label,
                                             stack_index=stack_idx,
                                             stack_total=len(nodes_at_pos),

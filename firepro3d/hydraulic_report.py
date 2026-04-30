@@ -126,6 +126,8 @@ class _HydraulicGraphWidget(QWidget):
         self._q_test = 0.0         # gpm at residual
         self._q_demand = 0.0       # system demand flow (gpm)
         self._p_demand = 0.0       # system required pressure (psi)
+        self._q_sprinkler = 0.0    # sprinkler-only demand (gpm)
+        self._hose_stream = 0.0    # hose stream allowance (gpm)
         self._q_max = 1000.0       # x-axis upper bound (gpm)
         self._p_max = 100.0        # y-axis upper bound (psi)
         self.setMinimumHeight(300)
@@ -141,6 +143,22 @@ class _HydraulicGraphWidget(QWidget):
     def set_demand_point(self, q_demand: float, p_required: float):
         """Set the system demand operating point for plotting."""
         self._q_demand = max(q_demand, 0.0)
+        self._p_demand = max(p_required, 0.0)
+        self._recalc_axes()
+        self.update()
+
+    def set_demand_points(self, q_sprinkler: float, hose_stream: float,
+                          p_required: float):
+        """Set demand with separate sprinkler and hose stream components.
+
+        Args:
+            q_sprinkler: Sprinkler demand flow (gpm).
+            hose_stream: Hose stream allowance (gpm).
+            p_required: Required pressure at supply (psi).
+        """
+        self._q_sprinkler = max(q_sprinkler, 0.0)
+        self._hose_stream = max(hose_stream, 0.0)
+        self._q_demand = self._q_sprinkler + self._hose_stream
         self._p_demand = max(p_required, 0.0)
         self._recalc_axes()
         self.update()
@@ -327,19 +345,47 @@ class _HydraulicGraphWidget(QWidget):
                    f"{self._q_test:.0f} GPM @ {self._p_residual:.0f} PSI")
 
     def _draw_demand_point(self, p: QPainter, rect: QRectF):
-        """Plot the system demand operating point as a red marker."""
-        x = self._q_to_x(self._q_demand, rect)
-        y = self._p_to_y(self._p_demand, rect)
-        # Red dot
-        p.setPen(QPen(QColor(200, 0, 0), 2))
-        p.setBrush(QBrush(QColor(200, 0, 0)))
-        p.drawEllipse(QPointF(x, y), 6, 6)
-        # Label
+        """Plot demand markers: origin, sprinkler point, and hose stream point."""
         label_font = QFont("Arial", 8, QFont.Weight.Bold)
+
+        # Gray dot at origin (0, 0)
+        x0 = self._q_to_x(0, rect)
+        y0 = self._p_to_y(0, rect)
+        p.setPen(QPen(QColor(140, 140, 140), 2))
+        p.setBrush(QBrush(QColor(140, 140, 140)))
+        p.drawEllipse(QPointF(x0, y0), 5, 5)
+
+        # Blue dot at sprinkler demand point
+        q_spr = self._q_sprinkler if self._q_sprinkler > 0 else self._q_demand
+        x_spr = self._q_to_x(q_spr, rect)
+        y_spr = self._p_to_y(self._p_demand, rect)
+        p.setPen(QPen(QColor(0, 80, 200), 2))
+        p.setBrush(QBrush(QColor(0, 80, 200)))
+        p.drawEllipse(QPointF(x_spr, y_spr), 6, 6)
         p.setFont(label_font)
-        p.setPen(QPen(QColor(180, 0, 0)))
-        p.drawText(QPointF(x + 10, y - 10),
-                   f"Demand: {self._q_demand:.0f} GPM @ {self._p_demand:.1f} PSI")
+        p.setPen(QPen(QColor(0, 60, 160)))
+        p.drawText(QPointF(x_spr + 10, y_spr - 10),
+                   f"Sprinkler: {q_spr:.0f} GPM @ {self._p_demand:.1f} PSI")
+
+        # Red dot at total demand (sprinkler + hose) — only when hose > 0
+        if self._hose_stream > 0:
+            x_total = self._q_to_x(self._q_demand, rect)
+            y_total = self._p_to_y(self._p_demand, rect)
+
+            # Dashed line between sprinkler and total demand points
+            dash_pen = QPen(QColor(180, 0, 0), 2, Qt.PenStyle.DashLine)
+            p.setPen(dash_pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawLine(QPointF(x_spr, y_spr), QPointF(x_total, y_total))
+
+            # Red marker
+            p.setPen(QPen(QColor(200, 0, 0), 2))
+            p.setBrush(QBrush(QColor(200, 0, 0)))
+            p.drawEllipse(QPointF(x_total, y_total), 6, 6)
+            p.setFont(label_font)
+            p.setPen(QPen(QColor(180, 0, 0)))
+            p.drawText(QPointF(x_total + 10, y_total + 16),
+                       f"Total: {self._q_demand:.0f} GPM @ {self._p_demand:.1f} PSI")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -392,7 +438,8 @@ class HydraulicReportWidget(QWidget):
         # Tab 2: Pipe Results
         self._pipe_res = _make_table([
             "#", "From", "To", "Diameter", "Schedule", "C-Factor",
-            "Length", "Flow (gpm)", "Velocity (fps)", "hf (psi)", "Status",
+            "Length", "Equiv (ft)", "Total (ft)",
+            "Flow (gpm)", "Velocity (fps)", "hf (psi)", "Status",
         ])
         pipe_res_container = QWidget()
         pipe_res_layout = QVBoxLayout(pipe_res_container)
@@ -455,6 +502,7 @@ class HydraulicReportWidget(QWidget):
     def _fill_summary(self):
         r = self._result
         ok = r.passed
+        hose = getattr(r, 'hose_stream_gpm', 0.0)
         status_html = (
             "<span style='color:green;font-weight:bold'>✅ PASS</span>"
             if ok else
@@ -465,8 +513,17 @@ class HydraulicReportWidget(QWidget):
         <table style='font-size:12pt;border-collapse:collapse;'>
           <tr><td style='padding:3px 12px'><b>Status</b></td>
               <td>{status_html}</td></tr>
-          <tr><td style='padding:3px 12px'><b>Total Demand</b></td>
+          <tr><td style='padding:3px 12px'><b>Sprinkler Demand</b></td>
               <td>{r.total_demand:.1f} gpm</td></tr>
+        """
+        if hose > 0:
+            html += f"""
+          <tr><td style='padding:3px 12px'><b>Hose Stream</b></td>
+              <td>{hose:.1f} gpm</td></tr>
+          <tr><td style='padding:3px 12px'><b>Total Demand</b></td>
+              <td>{r.total_demand + hose:.1f} gpm</td></tr>
+            """
+        html += f"""
           <tr><td style='padding:3px 12px'><b>Required Pressure</b></td>
               <td>{r.required_pressure:.1f} psi</td></tr>
           <tr><td style='padding:3px 12px'><b>Supply Available</b></td>
@@ -486,10 +543,13 @@ class HydraulicReportWidget(QWidget):
             self._fill_pipe_results()
 
     def _fill_pipe_results(self):
+        from .equivalent_length import equivalent_length_ft
+
         r = self._result
         sm = self._sm
         nn = getattr(r, 'node_labels', None) or (r.node_numbers if hasattr(r, 'node_numbers') else {})
         show_minor = self._show_minor_cb.isChecked()
+        supply_node = getattr(self._scene, '_supply_network_node', None)
 
         pipes = sorted(r.pipe_flows.keys(),
                        key=lambda p: r.pipe_flows[p], reverse=True)
@@ -526,6 +586,18 @@ class HydraulicReportWidget(QWidget):
                 else f"{pipe.length:.0f} px"
             )
 
+            # Equivalent length from fittings on this pipe
+            equiv_ft = 0.0
+            for end_node in (pipe.node1, pipe.node2):
+                if end_node is None or end_node is supply_node:
+                    continue
+                ft = getattr(end_node, 'fitting', None)
+                if ft is not None:
+                    equiv_ft += equivalent_length_ft(ft.type, d)
+
+            phys_ft = pipe.get_length_ft(sm=sm)
+            total_ft = phys_ft + equiv_ft
+
             # Node labels for From / To columns
             n1_num = str(nn.get(pipe.node1, "—")) if pipe.node1 else "—"
             n2_num = str(nn.get(pipe.node2, "—")) if pipe.node2 else "—"
@@ -539,10 +611,11 @@ class HydraulicReportWidget(QWidget):
 
             vals = [
                 str(row + 1), n1_num, n2_num, d, sc, cf, length_str,
+                f"{equiv_ft:.1f}", f"{total_ft:.1f}",
                 f"{q:.1f}", f"{v:.1f}", f"{hf:.2f}", vstatus,
             ]
             for col, val in enumerate(vals):
-                color = vcol if col in (8, 10) else None
+                color = vcol if col in (10, 12) else None
                 t.setItem(row, col, _item(val, color))
 
         t.setSortingEnabled(True)
@@ -624,8 +697,10 @@ class HydraulicReportWidget(QWidget):
                 ws.static_pressure, ws.residual_pressure, ws.test_flow
             )
         if self._result and self._result.total_demand > 0:
-            self._graph.set_demand_point(
-                self._result.total_demand, self._result.required_pressure
+            hose = getattr(self._result, 'hose_stream_gpm', 0.0)
+            self._graph.set_demand_points(
+                self._result.total_demand, hose,
+                self._result.required_pressure
             )
 
     # ------------------------------------------------------------------
@@ -672,9 +747,13 @@ class HydraulicReportWidget(QWidget):
             w = csv.writer(f)
 
             # ── Summary ──────────────────────────────────────────────────
+            hose = getattr(r, 'hose_stream_gpm', 0.0)
             w.writerow(["HYDRAULIC SUMMARY"])
             w.writerow(["Status",             "PASS" if r.passed else "FAIL"])
-            w.writerow(["Total Demand (gpm)", f"{r.total_demand:.1f}"])
+            w.writerow(["Sprinkler Demand (gpm)", f"{r.total_demand:.1f}"])
+            if hose > 0:
+                w.writerow(["Hose Stream (gpm)", f"{hose:.1f}"])
+                w.writerow(["Total Demand (gpm)", f"{r.total_demand + hose:.1f}"])
             w.writerow(["Required Pressure (psi)", f"{r.required_pressure:.1f}"])
             w.writerow(["Supply Available (psi)",  f"{r.supply_pressure:.1f}"])
             w.writerow([])
@@ -685,10 +764,13 @@ class HydraulicReportWidget(QWidget):
                 w.writerow([])
 
             # ── Pipe Results ──────────────────────────────────────────────
+            from .equivalent_length import equivalent_length_ft
             nn = getattr(r, 'node_labels', None) or (r.node_numbers if hasattr(r, 'node_numbers') else {})
+            supply_node = getattr(self._scene, '_supply_network_node', None)
             w.writerow(["PIPE RESULTS"])
             w.writerow(["#", "From", "To", "Diameter", "Schedule", "C-Factor",
-                        "Length", "Flow (gpm)", "Velocity (fps)", "hf (psi)"])
+                        "Length", "Equiv (ft)", "Total (ft)",
+                        "Flow (gpm)", "Velocity (fps)", "hf (psi)"])
             for i, (pipe, q) in enumerate(
                 sorted(r.pipe_flows.items(), key=lambda x: x[1], reverse=True), 1
             ):
@@ -704,7 +786,17 @@ class HydraulicReportWidget(QWidget):
                     if sm and sm.is_calibrated
                     else f"{pipe.length:.0f} px"
                 )
+                equiv_ft = 0.0
+                for end_node in (pipe.node1, pipe.node2):
+                    if end_node is None or end_node is supply_node:
+                        continue
+                    ft = getattr(end_node, 'fitting', None)
+                    if ft is not None:
+                        equiv_ft += equivalent_length_ft(ft.type, d)
+                phys_ft = pipe.get_length_ft(sm=sm)
+                total_ft = phys_ft + equiv_ft
                 w.writerow([i, n1, n2, d, sc, cf, length_str,
+                            f"{equiv_ft:.1f}", f"{total_ft:.1f}",
                             f"{q:.1f}", f"{v:.1f}", f"{hf:.2f}"])
             w.writerow([])
 
@@ -781,13 +873,21 @@ class HydraulicReportWidget(QWidget):
         # Summary table
         sc = "pass" if ok else "fail"
         st = "PASS" if ok else "FAIL"
+        hose = getattr(r, 'hose_stream_gpm', 0.0)
         html += f"""<h3>System Summary</h3>
         <table>
           <tr><th>Item</th><th>Value</th></tr>
           <tr><td>Status</td>
               <td class='{sc}'>{st}</td></tr>
+          <tr><td>Sprinkler Demand</td>
+              <td>{r.total_demand:.1f} gpm</td></tr>"""
+        if hose > 0:
+            html += f"""
+          <tr><td>Hose Stream</td>
+              <td>{hose:.1f} gpm</td></tr>
           <tr><td>Total Demand</td>
-              <td>{r.total_demand:.1f} gpm</td></tr>
+              <td>{r.total_demand + hose:.1f} gpm</td></tr>"""
+        html += f"""
           <tr><td>Required Pressure at Supply</td>
               <td>{r.required_pressure:.1f} psi</td></tr>
           <tr><td>Supply Pressure Available</td>
@@ -801,11 +901,14 @@ class HydraulicReportWidget(QWidget):
             html += "</ul>"
 
         # Pipe results
+        from .equivalent_length import equivalent_length_ft
         nn = r.node_numbers if hasattr(r, 'node_numbers') else {}
+        supply_node = getattr(self._scene, '_supply_network_node', None)
         html += """<h3>Pipe Results</h3>
         <table>
           <tr><th>#</th><th>From</th><th>To</th><th>Diameter</th><th>Schedule</th>
-              <th>C-Factor</th><th>Length</th><th>Flow (gpm)</th>
+              <th>C-Factor</th><th>Length</th><th>Equiv (ft)</th><th>Total (ft)</th>
+              <th>Flow (gpm)</th>
               <th>Velocity (fps)</th><th>hf (psi)</th><th>Status</th></tr>"""
         for i, (pipe, q) in enumerate(
             sorted(r.pipe_flows.items(), key=lambda x: x[1], reverse=True), 1
@@ -821,12 +924,24 @@ class HydraulicReportWidget(QWidget):
                 sm.scene_to_display(pipe.length)
                 if sm else f"{pipe.length:.0f} px"
             )
+
+            equiv_ft = 0.0
+            for end_node in (pipe.node1, pipe.node2):
+                if end_node is None or end_node is supply_node:
+                    continue
+                ft = getattr(end_node, 'fitting', None)
+                if ft is not None:
+                    equiv_ft += equivalent_length_ft(ft.type, d)
+            phys_ft = pipe.get_length_ft(sm=sm)
+            total_ft = phys_ft + equiv_ft
+
             vcls = "bad" if v > 20 else "warn" if v > 12 else "ok"
             vstatus = "⚠ HIGH" if v > 20 else "⚠ ELEV" if v > 12 else "OK"
             html += (
                 f"<tr><td>{i}</td><td>{n1}</td><td>{n2}</td>"
                 f"<td>{d}</td><td>{sc}</td><td>{cf}</td>"
-                f"<td>{length_str}</td><td>{q:.1f}</td>"
+                f"<td>{length_str}</td><td>{equiv_ft:.1f}</td><td>{total_ft:.1f}</td>"
+                f"<td>{q:.1f}</td>"
                 f"<td class='{vcls}'>{v:.1f}</td><td>{hf:.2f}</td>"
                 f"<td class='{vcls}'>{vstatus}</td></tr>"
             )
