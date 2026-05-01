@@ -176,6 +176,11 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._constraints: list = []        # list of Constraint objects
         self._constraint_circle_a = None    # first circle for concentric constraint
         self._constraint_grip_a: tuple | None = None  # (item, grip_index) for dimensional
+        # Align tool state
+        self._align_reference = None
+        self._align_highlight = None
+        self._align_ghost = None
+        self._align_padlocks: list = []
         # Interactive transforms (Rotate, Scale, Mirror)
         self._rotate_pivot: "QPointF | None" = None
         self._rotate_preview_line = None
@@ -773,6 +778,18 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         if mode != "constraint_dimensional":
             self._constraint_grip_a = None
 
+        # Clean up align state
+        if mode != "align":
+            self._align_reference = None
+            if self._align_highlight is not None:
+                if self._align_highlight.scene() is self:
+                    self.removeItem(self._align_highlight)
+                self._align_highlight = None
+            if hasattr(self, '_align_ghost') and self._align_ghost is not None:
+                if self._align_ghost.scene() is self:
+                    self.removeItem(self._align_ghost)
+                self._align_ghost = None
+
         # Clean up wall drawing state
         if mode != "wall":
             self._wall_anchor = None
@@ -930,6 +947,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
             "hatch":          "Click a closed object to apply hatching",
             "constraint_concentric":   "Select first circle",
             "constraint_dimensional":  "Click first grip point",
+            "align": "Click reference edge",
             "rotate":          "Pick pivot point",
             "scale":           "Pick base point (Tab = enter factor)",
             "mirror":          "Pick first axis point",
@@ -3986,6 +4004,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "door":                     "_move_door_window",
         "window":                   "_move_door_window",
         "detail":                   "_move_detail",
+        "align":                    "_move_align",
     }
 
     # ── Per-mode move handlers ──────────────────────────────────────────
@@ -4607,6 +4626,7 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         "hatch":                    "_press_merge_hatch",
         "constraint_concentric":    "_press_constraint",
         "constraint_dimensional":   "_press_constraint",
+        "align":                    "_press_align",
         "polyline":                 "_press_polyline",
         "draw_line":                "_press_draw_line",
         "construction_line":        "_press_construction_line",
