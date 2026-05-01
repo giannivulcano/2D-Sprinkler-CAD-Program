@@ -1868,3 +1868,94 @@ class SceneToolsMixin:
         proj_x = s1.x() + t * dx
         proj_y = s1.y() + t * dy
         return math.hypot(p.x() - proj_x, p.y() - proj_y)
+
+    def _move_align(self, event, snapped):
+        """Live preview for the align tool.
+
+        Before reference pick: highlight the nearest edge under the cursor
+        with a dashed line.
+        After reference pick: show a ghost dotted line where the target edge
+        would land after alignment.
+        """
+        from .geometry_intersect import is_parallel, perpendicular_translation
+
+        pos = snapped
+
+        if self._align_reference is None:
+            # ── Pre-reference: highlight nearest edge ───────────────────
+            result = self._find_nearest_edge(pos)
+            if result is not None:
+                edge, _ = result
+                if self._align_highlight is not None:
+                    # Update existing highlight
+                    self._align_highlight.setLine(
+                        edge[0].x(), edge[0].y(),
+                        edge[1].x(), edge[1].y())
+                else:
+                    highlight = QGraphicsLineItem(
+                        edge[0].x(), edge[0].y(),
+                        edge[1].x(), edge[1].y())
+                    pen = QPen(QColor("#00bfff"), 2)
+                    pen.setCosmetic(True)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                    highlight.setPen(pen)
+                    highlight.setZValue(9999)
+                    self.addItem(highlight)
+                    self._align_highlight = highlight
+            else:
+                # No edge nearby — remove highlight
+                if self._align_highlight is not None:
+                    if self._align_highlight.scene() is self:
+                        self.removeItem(self._align_highlight)
+                    self._align_highlight = None
+        else:
+            # ── Post-reference: ghost line showing projected position ───
+            ref_edge, ref_item = self._align_reference
+            ref_p1, ref_p2 = ref_edge
+
+            result = self._find_nearest_edge(pos)
+            if result is not None:
+                target_edge, target_item = result
+                if target_item is not ref_item:
+                    # Find nearest parallel edge
+                    target_edges = extract_edges(target_item)
+                    best_te = None
+                    best_delta = QPointF(0, 0)
+                    best_dist = float("inf")
+                    for te in target_edges:
+                        if is_parallel(ref_p1, ref_p2, te[0], te[1]):
+                            mid = QPointF((te[0].x() + te[1].x()) / 2,
+                                          (te[0].y() + te[1].y()) / 2)
+                            d = perpendicular_translation(ref_p1, ref_p2, mid)
+                            dist = math.hypot(d.x(), d.y())
+                            if dist < best_dist:
+                                best_dist = dist
+                                best_te = te
+                                best_delta = d
+
+                    if best_te is not None:
+                        # Show ghost line at projected position
+                        gp1 = QPointF(best_te[0].x() + best_delta.x(),
+                                      best_te[0].y() + best_delta.y())
+                        gp2 = QPointF(best_te[1].x() + best_delta.x(),
+                                      best_te[1].y() + best_delta.y())
+                        if self._align_ghost is not None:
+                            self._align_ghost.setLine(
+                                gp1.x(), gp1.y(), gp2.x(), gp2.y())
+                        else:
+                            ghost = QGraphicsLineItem(
+                                gp1.x(), gp1.y(), gp2.x(), gp2.y())
+                            pen = QPen(QColor("#00ff88"), 2)
+                            pen.setCosmetic(True)
+                            pen.setStyle(Qt.PenStyle.DotLine)
+                            ghost.setPen(pen)
+                            ghost.setZValue(9999)
+                            self.addItem(ghost)
+                            self._align_ghost = ghost
+                        return
+
+            # No valid target — remove ghost
+            if self._align_ghost is not None:
+                if self._align_ghost.scene() is self:
+                    self.removeItem(self._align_ghost)
+                self._align_ghost = None
