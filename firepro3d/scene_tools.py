@@ -123,6 +123,96 @@ def extract_edges(item) -> list[tuple[QPointF, QPointF]]:
     return []
 
 
+class _PadlockItem(QGraphicsPathItem):
+    """Small padlock icon placed at the alignment point.
+
+    First click: creates an ``AlignmentConstraint`` and locks (turns green).
+    Second click (when locked): removes the constraint and itself from
+    the scene.
+    """
+
+    _SIZE = 12  # pixels (ignores transforms)
+
+    def __init__(self, pos: QPointF, constraint_data: dict, parent=None):
+        super().__init__(parent)
+        self.constraint_data = constraint_data
+        self._locked = False
+        self._constraint = None
+
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setZValue(10000)
+        self.setPos(pos)
+
+        self._build_path()
+        self._update_appearance()
+
+    def _build_path(self):
+        """Construct padlock shape: rectangle body + arc shackle."""
+        s = self._SIZE
+        path = QPainterPath()
+        # Body (rectangle)
+        body_w = s
+        body_h = s * 0.7
+        body_x = -body_w / 2
+        body_y = 0
+        path.addRect(body_x, body_y, body_w, body_h)
+        # Shackle (arc)
+        shackle_w = s * 0.6
+        shackle_h = s * 0.5
+        shackle_x = -shackle_w / 2
+        shackle_y = -shackle_h
+        path.moveTo(shackle_x, 0)
+        path.arcTo(shackle_x, shackle_y, shackle_w, shackle_h * 2, 180, -180)
+        self.setPath(path)
+
+    def _update_appearance(self):
+        """Orange when unlocked, green when locked."""
+        if self._locked:
+            color = QColor("#22cc44")
+        else:
+            color = QColor("#ff8800")
+        pen = QPen(color, 2)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(QColor(color.red(), color.green(), color.blue(), 60)))
+
+    def mousePressEvent(self, event):
+        """Toggle lock state on click."""
+        if not self._locked:
+            # First click — create constraint and lock
+            from .constraints import AlignmentConstraint
+            cd = self.constraint_data
+            self._constraint = AlignmentConstraint(
+                reference_item=cd.get("reference_item"),
+                reference_line=cd.get("reference_line"),
+                target_item=cd.get("target_item"),
+                target_point=cd.get("target_point", QPointF(0, 0)),
+                perp_direction=cd.get("perp_direction", QPointF(0, 1)),
+                perpendicular_offset=cd.get("perpendicular_offset", 0.0),
+            )
+            scene = self.scene()
+            if scene and hasattr(scene, "_constraints"):
+                scene._constraints.append(self._constraint)
+            self._locked = True
+            self._update_appearance()
+        else:
+            # Second click — remove constraint and self
+            scene = self.scene()
+            if scene and self._constraint is not None:
+                if hasattr(scene, "_constraints"):
+                    try:
+                        scene._constraints.remove(self._constraint)
+                    except ValueError:
+                        pass
+                if hasattr(scene, "_align_padlocks"):
+                    try:
+                        scene._align_padlocks.remove(self)
+                    except ValueError:
+                        pass
+                scene.removeItem(self)
+
+
 class SceneToolsMixin:
     """Geometry editing tools for the plan-view scene."""
 
@@ -1816,7 +1906,31 @@ class SceneToolsMixin:
             else:
                 item.moveBy(delta.x(), delta.y())
 
-        self._show_status("Aligned")
+        # Compute perpendicular direction for constraint
+        dx = ref_p2.x() - ref_p1.x()
+        dy = ref_p2.y() - ref_p1.y()
+        seg_len = math.hypot(dx, dy)
+        if seg_len > 1e-10:
+            perp_dir = QPointF(-dy / seg_len, dx / seg_len)
+        else:
+            perp_dir = QPointF(0, 1)
+
+        # Place padlock at midpoint of the aligned edge
+        mid = QPointF((best_edge[0].x() + best_edge[1].x()) / 2 + delta.x(),
+                      (best_edge[0].y() + best_edge[1].y()) / 2 + delta.y())
+        constraint_data = {
+            "reference_item": ref_item,
+            "reference_line": (QPointF(ref_p1), QPointF(ref_p2)),
+            "target_item": target,
+            "target_point": mid,
+            "perp_direction": perp_dir,
+            "perpendicular_offset": 0.0,
+        }
+        padlock = _PadlockItem(mid, constraint_data)
+        self.addItem(padlock)
+        self._align_padlocks.append(padlock)
+
+        self._show_status("Aligned \u2014 click padlock to lock")
         for v in self.views():
             v.viewport().update()
 
