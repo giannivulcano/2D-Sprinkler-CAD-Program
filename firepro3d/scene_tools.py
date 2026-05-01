@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import math
 import json
-from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QPen, QBrush, QColor, QPainterPath, QFont
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsLineItem, QApplication
 
@@ -1697,3 +1697,174 @@ class SceneToolsMixin:
             for i in range(len(pts) - 1):
                 segs.append(("line", QPointF(pts[i]), QPointF(pts[i + 1])))
         return segs
+
+    # ======================================================================
+    # ALIGN TOOL
+    # ======================================================================
+
+    def _press_align(self, event, pos, snapped, item_under, node_under, pipe_under):
+        """Two-pick align handler.
+
+        First click: store reference edge nearest to cursor.
+        Second click: find target item, compute perpendicular translation
+        to align its nearest parallel edge with the reference, and move it.
+        """
+        from .gridline import GridlineItem
+        from .geometry_intersect import is_parallel, perpendicular_translation
+
+        if self._align_reference is None:
+            # ── First pick: reference edge ──────────────────────────────
+            result = self._find_nearest_edge(pos)
+            if result is None:
+                self._show_status("No edge found near cursor")
+                return
+            edge, ref_item = result
+            self._align_reference = (edge, ref_item)
+            # Visual highlight: dashed line along the reference edge
+            highlight = QGraphicsLineItem(
+                edge[0].x(), edge[0].y(), edge[1].x(), edge[1].y())
+            pen = QPen(QColor("#00bfff"), 2)
+            pen.setCosmetic(True)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            highlight.setPen(pen)
+            highlight.setZValue(9999)
+            self.addItem(highlight)
+            self._align_highlight = highlight
+            self.instructionChanged.emit("Click element to align")
+        else:
+            # ── Second pick: target ─────────────────────────────────────
+            ref_edge, ref_item = self._align_reference
+
+            # Determine target: selected items or item under cursor
+            selected = [s for s in self.selectedItems()
+                        if s is not ref_item and s is not self._align_highlight]
+            if selected:
+                self._execute_align(ref_edge, ref_item, selected[0],
+                                    group=selected if len(selected) > 1 else None)
+            else:
+                result = self._find_nearest_edge(pos)
+                if result is None:
+                    self._show_status("No target edge found")
+                    return
+                target_edge, target_item = result
+                if target_item is ref_item:
+                    self._show_status("Target must differ from reference")
+                    return
+                self._execute_align(ref_edge, ref_item, target_item)
+
+            # Clean up reference state
+            self._align_reference = None
+            if self._align_highlight is not None:
+                if self._align_highlight.scene() is self:
+                    self.removeItem(self._align_highlight)
+                self._align_highlight = None
+            if self._align_ghost is not None:
+                if self._align_ghost.scene() is self:
+                    self.removeItem(self._align_ghost)
+                self._align_ghost = None
+            self.instructionChanged.emit("Click reference edge")
+
+    def _execute_align(self, ref_edge, ref_item, target, group=None):
+        """Align *target* (and optional *group*) to *ref_edge*.
+
+        Finds the nearest parallel edge on the target, computes the
+        perpendicular delta, and moves the target accordingly.
+        """
+        from .gridline import GridlineItem
+        from .geometry_intersect import is_parallel, perpendicular_translation
+
+        delta = QPointF(0, 0)
+        best_edge = None
+
+        target_edges = extract_edges(target)
+        if not target_edges:
+            self._show_status("Target has no extractable edges")
+            return
+
+        # Find the nearest parallel edge on the target
+        ref_p1, ref_p2 = ref_edge
+        best_dist = float("inf")
+        for te in target_edges:
+            if is_parallel(ref_p1, ref_p2, te[0], te[1]):
+                mid = QPointF((te[0].x() + te[1].x()) / 2,
+                              (te[0].y() + te[1].y()) / 2)
+                d = perpendicular_translation(ref_p1, ref_p2, mid)
+                dist = math.hypot(d.x(), d.y())
+                if dist < best_dist:
+                    best_dist = dist
+                    best_edge = te
+                    delta = d
+
+        if best_edge is None:
+            self._show_status("No parallel edge found on target")
+            return
+
+        self.push_undo_state()
+
+        items_to_move = [target] + (group[1:] if group else [])
+        for item in items_to_move:
+            if isinstance(item, GridlineItem):
+                if getattr(item, '_locked', False):
+                    self._show_status("Gridline is locked — skipped")
+                    continue
+                # Use move_perpendicular for gridlines
+                # Compute signed perpendicular distance
+                line = item.line()
+                nx, ny = item._perpendicular_vector()
+                dist_signed = delta.x() * nx + delta.y() * ny
+                item.move_perpendicular(dist_signed)
+            else:
+                item.moveBy(delta.x(), delta.y())
+
+        self._show_status("Aligned")
+        for v in self.views():
+            v.viewport().update()
+
+    def _find_nearest_edge(self, pos):
+        """Spatial query: find the nearest edge segment to *pos*.
+
+        Returns ``(edge, item)`` where *edge* is ``(QPointF, QPointF)``
+        and *item* is the owning scene item, or ``None`` if nothing found.
+        """
+        tol = 20.0
+        views = self.views()
+        if views:
+            scale = views[0].transform().m11()
+            tol = 20.0 / max(scale, 1e-6)
+
+        search_rect = QRectF(pos.x() - tol, pos.y() - tol, tol * 2, tol * 2)
+        candidates = self.items(search_rect)
+
+        best_edge = None
+        best_item = None
+        best_dist = tol
+
+        for item in candidates:
+            # Skip our own highlight / ghost items
+            if item is self._align_highlight or item is self._align_ghost:
+                continue
+            edges = extract_edges(item)
+            for edge in edges:
+                d = self._point_to_segment_dist(pos, edge[0], edge[1])
+                if d < best_dist:
+                    best_dist = d
+                    best_edge = edge
+                    best_item = item
+
+        if best_edge is None:
+            return None
+        return (best_edge, best_item)
+
+    @staticmethod
+    def _point_to_segment_dist(p, s1, s2):
+        """Return the minimum distance from point *p* to segment *s1*-*s2*."""
+        dx = s2.x() - s1.x()
+        dy = s2.y() - s1.y()
+        len_sq = dx * dx + dy * dy
+        if len_sq < 1e-12:
+            return math.hypot(p.x() - s1.x(), p.y() - s1.y())
+        t = ((p.x() - s1.x()) * dx + (p.y() - s1.y()) * dy) / len_sq
+        t = max(0.0, min(1.0, t))
+        proj_x = s1.x() + t * dx
+        proj_y = s1.y() + t * dy
+        return math.hypot(p.x() - proj_x, p.y() - proj_y)
