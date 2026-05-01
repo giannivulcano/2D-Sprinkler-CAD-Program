@@ -621,6 +621,16 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         self._constraints = [c for c in self._constraints
                              if not any(c.involves(d) for d in all_deleted)]
 
+        # Clean up padlocks for removed constraints
+        surviving = set(self._constraints)
+        stale_padlocks = [p for p in self._align_padlocks
+                          if p._constraint is not None
+                          and p._constraint not in surviving]
+        for p in stale_padlocks:
+            self._align_padlocks.remove(p)
+            if p.scene() is self:
+                self.removeItem(p)
+
         # Update fittings on surviving nodes that lost pipes
         for node in ss.nodes:
             if hasattr(node, "fitting") and node.fitting:
@@ -2903,6 +2913,12 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 if h.scene() is self:
                     self.removeItem(h)
             self._hatch_items.clear()
+
+            # Clear padlocks
+            for p in self._align_padlocks:
+                if p.scene() is self:
+                    self.removeItem(p)
+            self._align_padlocks.clear()
 
             self._constraints.clear()
 
@@ -7292,6 +7308,19 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                 self.preview_pipe.hide()
                 self.preview_node.hide()
                 self.instructionChanged.emit("Pick start node")
+                return
+            # Align: first Escape clears reference, second exits mode
+            if self.mode == "align" and self._align_reference is not None:
+                self._align_reference = None
+                if self._align_highlight is not None:
+                    if self._align_highlight.scene() is self:
+                        self.removeItem(self._align_highlight)
+                    self._align_highlight = None
+                if hasattr(self, '_align_ghost') and self._align_ghost is not None:
+                    if self._align_ghost.scene() is self:
+                        self.removeItem(self._align_ghost)
+                    self._align_ghost = None
+                self._show_status("Click reference edge")
                 return
             if self.mode and self.mode not in (None, "select"):
                 self._show_status("Mode cancelled", 2000)
