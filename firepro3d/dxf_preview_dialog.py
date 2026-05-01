@@ -733,7 +733,10 @@ class UnderlayImportDialog(QDialog):
             try:
                 g = worker_ref._extract_geometry(ent)
                 if g is not None:
-                    geoms.append(g)
+                    if isinstance(g, list):
+                        geoms.extend(g)
+                    else:
+                        geoms.append(g)
             except Exception:
                 pass
         prog.close()
