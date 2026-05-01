@@ -37,6 +37,92 @@ from .cad_math import CAD_Math
 from . import geometry_intersect as gi
 
 
+def extract_edges(item) -> list[tuple[QPointF, QPointF]]:
+    """Extract linear edge segments from a scene item.
+
+    Returns a list of (QPointF, QPointF) tuples representing line segments
+    in scene coordinates.  Handles gridlines, walls, pipes, construction
+    geometry, polylines, and generic QGraphicsPathItems (DXF/PDF entities).
+
+    Args:
+        item: A QGraphicsItem or ``None``.
+
+    Returns:
+        List of ``(p1, p2)`` segment tuples.  Empty for unrecognised types.
+    """
+    if item is None:
+        return []
+
+    # Deferred imports to avoid circular dependencies
+    from .gridline import GridlineItem
+    from .wall import WallSegment
+    from .pipe import Pipe
+    from .construction_geometry import LineItem, PolylineItem, ConstructionLine
+
+    # GridlineItem — single line segment
+    if isinstance(item, GridlineItem):
+        line = item.line()
+        return [(line.p1(), line.p2())]
+
+    # WallSegment — centerline + two face edges
+    if isinstance(item, WallSegment):
+        edges = [(QPointF(item._pt1), QPointF(item._pt2))]
+        try:
+            p1l, p1r, p2r, p2l = item.mitered_quad()
+            edges.append((QPointF(p1l), QPointF(p2l)))
+            edges.append((QPointF(p1r), QPointF(p2r)))
+        except Exception:
+            pass
+        return edges
+
+    # Pipe — node1 to node2
+    if isinstance(item, Pipe):
+        if item.node1 and item.node2:
+            return [(item.node1.scenePos(), item.node2.scenePos())]
+        return []
+
+    # LineItem or ConstructionLine — use item.line() mapped to scene coords
+    if isinstance(item, (LineItem, ConstructionLine)):
+        line = item.line()
+        p1 = item.mapToScene(line.p1())
+        p2 = item.mapToScene(line.p2())
+        return [(p1, p2)]
+
+    # PolylineItem — consecutive _points mapped to scene coords
+    if isinstance(item, PolylineItem):
+        pts = getattr(item, "_points", [])
+        if len(pts) < 2:
+            return []
+        edges = []
+        for i in range(len(pts) - 1):
+            p1 = item.mapToScene(pts[i])
+            p2 = item.mapToScene(pts[i + 1])
+            edges.append((p1, p2))
+        return edges
+
+    # Generic QGraphicsPathItem (DXF/PDF entities) — walk path elements
+    if isinstance(item, QGraphicsPathItem):
+        path = item.path()
+        edges = []
+        current = QPointF(0, 0)
+        for i in range(path.elementCount()):
+            el = path.elementAt(i)
+            pt = QPointF(el.x, el.y)
+            if el.type == QPainterPath.ElementType.MoveToElement:
+                current = pt
+            elif el.type == QPainterPath.ElementType.LineToElement:
+                p1 = item.mapToScene(current)
+                p2 = item.mapToScene(pt)
+                edges.append((p1, p2))
+                current = pt
+            else:
+                # Skip curve elements
+                current = pt
+        return edges
+
+    return []
+
+
 class SceneToolsMixin:
     """Geometry editing tools for the plan-view scene."""
 

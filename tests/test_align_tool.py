@@ -189,3 +189,23 @@ class TestAlignmentConstraint:
         assert c2 is not None
         assert isinstance(c2, AlignmentConstraint)
         assert c2.perpendicular_offset == 15.0
+
+
+from firepro3d.gridline import GridlineItem
+from firepro3d.scene_tools import extract_edges
+
+
+class TestExtractEdges:
+    def test_gridline_returns_one_segment(self, qapp):
+        gl = GridlineItem(QPointF(0, 0), QPointF(0, 500), "A")
+        edges = extract_edges(gl)
+        assert len(edges) == 1
+        p1, p2 = edges[0]
+        assert abs(p1.x()) < 1e-6
+        assert abs(p2.x()) < 1e-6
+
+    def test_none_returns_empty(self):
+        assert extract_edges(None) == []
+
+    def test_unknown_type_returns_empty(self):
+        assert extract_edges("not_an_item") == []
