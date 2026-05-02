@@ -13,9 +13,9 @@
 - [x] Detail markers filtered by view range [type:Recently Completed]
 - [x] Model browser refresh on undo/redo [type:Recently Completed]
 - [ ] README.md for the repository [type:Backlog] [subject:Documentation] [P3]
-- [ ] Unit tests for hydraulic solver [type:Backlog] [subject:Hydraulic Calculator]
-- [ ] Unit tests for auto-populate algorithms [type:Backlog] [subject:Sprinkler Design]
-- [ ] Unit tests for geometry utilities (CAD_Math, geometry_intersect) [type:Backlog] [subject:CAD]
+- [x] Unit tests for hydraulic solver — 59 tests covering Hazen-Williams formula, BFS tree, supply curve, validation guards, flow assignment, end-to-end 2/3-node networks, elevation effects [type:Backlog] [subject:Hydraulic Calculator] [done:2026-05-01]
+- [x] Unit tests for auto-populate algorithms — 76 tests covering density/area interpolation, polygon area, grid dimensions, rectangle decomposition, sprinkler grid computation [type:Backlog] [subject:Sprinkler Design] [done:2026-05-01]
+- [x] Unit tests for geometry utilities (CAD_Math, geometry_intersect) — 113 tests covering all public functions: vector ops, intersections, projections, rotations, edge cases [type:Backlog] [subject:CAD] [done:2026-05-01]
 - [x] Full code review, develop specs for various existing features that don't have specs and do full documentation for the project — **completed 2026-04-09**: audit identified 16 spec gaps, 5 test gaps, and 1 existing spec update; all decomposed into tasks below [type:Backlog] [P1] [subject:Documentation] [done:2026-04-09]
 - [x] Spec & grill session: define and refine the relationship between views — see `docs/specs/view-relationships.md` [type:Backlog] [P1] [subject:Architecture] [done:2026-04-08]
 - [x] Spec & grill session: wall, room & floor slab system — see `docs/specs/wall-room-floor-system.md`. Covers wall geometry (Center/Left/Right alignment), joinery (Auto/Butt/Solid), room boundary detection (tightest-CW-turn graph walk), NFPA coverage model, floor slab occlusion, wall opening lifecycle, cross-entity interactions. Divergences from current implementation flagged with migration paths. [type:Backlog] [P1] [subject:Architecture] [done:2026-04-27]
@@ -53,7 +53,7 @@
 - [ ] Extract snap primitive epsilons (`1e-10` line-line denom, `1e-12` degenerate segment/radius) to named constants on `SnapEngine` — surfaced by primitive unit tests mirroring literals [type:Backlog] [P3] [subject:CAD]
 - [ ] QPainterPath MoveTo element handling — `_collect`, `_geometric_snaps`, and `_check_geometry_intersections` all pair consecutive path elements as segments without checking element type; MoveToElements in multi-contour DXF paths create phantom connecting segments. Fix consistently across all three sites. [type:Backlog] [P3] [subject:CAD]
 - [ ] Full OSNAP visual treatment in import dialog — basic snap-to-point with color-coded crosshair works today; add foreground source-item trace, snap type label, and named target glyph markers to match main scene snap UX. `dxf_preview_dialog.py` [type:Backlog] [P2] [subject:CAD]
-- [ ] Phase-4 intersection highlight should show both source items — `ctx.check("intersection", ix, src1)` only passes one source; `source_item2` is always `None` for phase-4 intersections. Phase-2 gridline intersections manually set both. Fix `_check_geometry_intersections` to pass both `src1` and `src2` so the foreground trace highlights both crossing items [type:Backlog] [P2] [subject:CAD]
+- [x] Phase-4 intersection highlight should show both source items — fixed: `ctx.check()` now accepts `src_item2` and `source_lines`; phase-4 passes both source items and actual segment geometry; renderer draws only participating segments instead of full items. Also fixed: Phase 1 underlay child dead code, gridline force-win removed, wall width grip added, rubber-band selection no longer blocked by items. [type:Backlog] [P2] [subject:CAD] [done:2026-05-01]
 - [ ] Snap search rect performance at low zoom — `SNAP_TOLERANCE_PX / scale` creates very large search rects when zoomed out (e.g., 800×800 scene units at scale=0.1), pulling in far too many items for the O(n²) phase-4 pairing. Consider capping the scene-unit tolerance or skipping phase 4 when the search rect exceeds a threshold [type:Backlog] [P1] [subject:CAD]
 
 ## View Relationships Follow-Ups (from `docs/specs/view-relationships.md` §11)
@@ -133,11 +133,11 @@ _Grid system, scale calibration & underlay, wall/room/floor system, sprinkler co
 
 ## Code Review Audit — Test Gaps (from 2026-04-09 audit)
 _Existing test gap tasks (hydraulic solver, auto-populate, geometry utilities) already in Tasks section above_
-- [ ] Unit tests for wall, room & floor slab entities — wall alignment computation, room boundary detection, floor slab occlusion, section-cut hatching [type:Backlog] [P2] [subject:Testing]
-- [ ] Unit tests for sprinkler system components — sprinkler database CRUD, diameter/schedule lookup chain, fitting assignment rules, node Z-position computation [type:Backlog] [P2] [subject:Testing]
-- [ ] Unit tests for paper space — viewport coordinate transformation, title block rendering pipeline, layout algorithm [type:Backlog] [P2] [subject:Testing]
-- [ ] Unit tests for scene tools — offset, fillet/chamfer, trim/extend, break algorithms [type:Backlog] [P3] [subject:Testing]
-- [ ] Unit tests for 3D view — mesh generation from entity geometry, pick ray casting accuracy [type:Backlog] [P3] [subject:Testing]
+- [x] Unit tests for wall, room & floor slab entities — 98 tests covering alignment, normal, grips (incl. width grip), joinery, serialization, room area/perimeter, floor slab points/edges [type:Backlog] [P2] [subject:Testing] [done:2026-05-01]
+- [x] Unit tests for sprinkler system components — 65 tests covering DB CRUD, pipe diameter/schedule/C-factor, node creation/serialization, fitting type assignment, sprinkler properties [type:Backlog] [P2] [subject:Testing] [done:2026-05-01]
+- [x] Unit tests for paper space — 43 tests covering paper sizes, title block, viewport, scene setup, widget integration, layout constants [type:Backlog] [P2] [subject:Testing] [done:2026-05-01]
+- [x] Unit tests for scene tools — 104 tests covering offset, fillet/chamfer, break, perpendicular distance, grip hit detection, edge extraction, make_offset_item [type:Backlog] [P3] [subject:Testing] [done:2026-05-01]
+- [x] Unit tests for 3D view — 71 tests covering mesh generation, flux colors, visibility, coordinate transforms, camera angles, scene bounds, actor management, dirty flag [type:Backlog] [P3] [subject:Testing] [done:2026-05-01]
 
 ## Underlay Workflow Follow-Ups (from `docs/specs/underlay-workflow.md` §15)
 - [x] Implement `Underlay` data model changes — new fields (`level`, `visible`, `hidden_layers`, `import_mode`), serialization, backward compat [ref:underlay-spec§3] [type:Backlog] [P1] [subject:CAD] [done:2026-04-13]
@@ -150,8 +150,8 @@ _Existing test gap tasks (hydraulic solver, auto-populate, geometry utilities) a
 - [x] Add PDF DPI dropdown to import dialog [ref:underlay-spec§10.2] [type:Backlog] [P2] [subject:CAD] [done:2026-04-24]
 - [x] Add PDF import mode toggle (vector/raster/auto) to import dialog [ref:underlay-spec§10.3] [type:Backlog] [P2] [subject:CAD] [done:2026-04-24]
 - [x] Update refresh-from-disk to preserve new underlay state [ref:underlay-spec§11] [type:Backlog] [P2] [subject:CAD] [done:2026-04-24]
-- [ ] Unit tests for underlay path resolution and serialization [ref:underlay-spec§14.1] [type:Backlog] [P2] [subject:Testing]
-- [ ] Integration tests for underlay file-not-found and refresh [ref:underlay-spec§14.2] [type:Backlog] [P2] [subject:Testing]
+- [x] Unit tests for underlay path resolution and serialization — 36 tests covering dataclass fields, to_dict/from_dict, backward compat, path edge cases, relativization [ref:underlay-spec§14.1] [type:Backlog] [P2] [subject:Testing] [done:2026-05-01]
+- [x] Integration tests for underlay file-not-found and refresh — 44 tests covering placeholder creation, Z-ordering, display settings, hidden layers, remove, refresh, geom_to_item [ref:underlay-spec§14.2] [type:Backlog] [P2] [subject:Testing] [done:2026-05-01]
 - [ ] Batch multi-page PDF import [ref:underlay-spec§2.2] [type:Backlog] [P3] [subject:CAD]
 - [ ] Preserve source DXF colours option [ref:underlay-spec§2.2] [type:Backlog] [P3] [subject:CAD]
 - [ ] Undoable underlay operations [ref:underlay-spec§2.2] [type:Backlog] [P3] [subject:CAD]

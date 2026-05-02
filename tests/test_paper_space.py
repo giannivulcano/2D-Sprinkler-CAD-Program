@@ -1,0 +1,313 @@
+"""Unit tests for the Paper Space system (firepro3d/paper_space.py)."""
+from __future__ import annotations
+
+import pytest
+from PyQt6.QtWidgets import QGraphicsScene
+from PyQt6.QtCore import QRectF, Qt
+
+from firepro3d.paper_space import (
+    PAPER_SIZES, MARGIN, INNER_MARGIN, TITLE_H,
+    TitleBlockItem, PaperViewport, PaperScene, PaperSpaceWidget,
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def model_scene(qapp):
+    """Minimal model-space QGraphicsScene used as viewport source."""
+    scene = QGraphicsScene()
+    scene.addRect(0, 0, 1000, 1000)
+    return scene
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Paper sizes catalogue
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPaperSizes:
+    """Validate the PAPER_SIZES catalogue."""
+
+    def test_all_sizes_have_positive_dimensions(self):
+        for name, (w, h) in PAPER_SIZES.items():
+            assert w > 0, f"{name} width must be positive"
+            assert h > 0, f"{name} height must be positive"
+
+    def test_ansi_d_dimensions(self):
+        w, h = PAPER_SIZES["ANSI D"]
+        assert w == pytest.approx(863.6, abs=0.1)
+        assert h == pytest.approx(558.8, abs=0.1)
+
+    def test_ansi_b_dimensions(self):
+        w, h = PAPER_SIZES["ANSI B"]
+        assert w == pytest.approx(431.8, abs=0.1)
+        assert h == pytest.approx(279.4, abs=0.1)
+
+    def test_a4_dimensions(self):
+        w, h = PAPER_SIZES["A4"]
+        assert w == 210.0
+        assert h == 297.0
+
+    def test_expected_sizes_present(self):
+        expected = {"A4", "A3", "A2", "A1", "A0",
+                    "ANSI B", "ANSI D", "Letter", "D-size"}
+        assert expected.issubset(set(PAPER_SIZES.keys()))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TitleBlockItem (programmatic fallback)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestTitleBlockItem:
+    """Tests for the programmatic TitleBlockItem."""
+
+    def test_default_fields(self, qapp):
+        tb = TitleBlockItem(600, 400)
+        assert "Company" in tb.fields
+        assert "Project" in tb.fields
+        assert "Scale" in tb.fields
+        assert "Drawing No" in tb.fields
+        assert "Rev" in tb.fields
+        assert "Date" in tb.fields
+        assert "Drawn By" in tb.fields
+        assert "Checked By" in tb.fields
+
+    def test_default_company(self, qapp):
+        tb = TitleBlockItem(600, 400)
+        assert tb.fields["Company"] == "Celerity Engineering Limited"
+
+    def test_default_title(self, qapp):
+        tb = TitleBlockItem(600, 400)
+        assert tb.fields["Title"] == "Fire Suppression Layout"
+
+    def test_fields_mutable(self, qapp):
+        tb = TitleBlockItem(600, 400)
+        tb.fields["Project"] = "My Project"
+        assert tb.fields["Project"] == "My Project"
+
+    def test_bounding_rect_position(self, qapp):
+        """Title block sits at the bottom of the sheet inside margins."""
+        w, h = 600.0, 400.0
+        tb = TitleBlockItem(w, h)
+        br = tb.boundingRect()
+        expected_x = MARGIN + INNER_MARGIN
+        expected_y = h - MARGIN - INNER_MARGIN - TITLE_H
+        expected_w = w - 2 * (MARGIN + INNER_MARGIN)
+        assert br.x() == pytest.approx(expected_x)
+        assert br.y() == pytest.approx(expected_y)
+        assert br.width() == pytest.approx(expected_w)
+        assert br.height() == pytest.approx(TITLE_H)
+
+    def test_bounding_rect_varies_with_sheet_size(self, qapp):
+        tb1 = TitleBlockItem(600, 400)
+        tb2 = TitleBlockItem(800, 600)
+        assert tb1.boundingRect().width() != tb2.boundingRect().width()
+        assert tb1.boundingRect().y() != tb2.boundingRect().y()
+
+    def test_z_value(self, qapp):
+        tb = TitleBlockItem(600, 400)
+        assert tb.zValue() == 10
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PaperViewport
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPaperViewport:
+    """Tests for the PaperViewport item."""
+
+    def test_rect_matches_constructor(self, model_scene):
+        vp = PaperViewport(model_scene, 10, 20, 300, 200)
+        r = vp.rect()
+        assert r.x() == pytest.approx(10)
+        assert r.y() == pytest.approx(20)
+        assert r.width() == pytest.approx(300)
+        assert r.height() == pytest.approx(200)
+
+    def test_source_rect_default_none(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        assert vp.source_rect is None
+
+    def test_source_rect_setter(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        src = QRectF(50, 50, 200, 200)
+        vp.source_rect = src
+        assert vp.source_rect == src
+
+    def test_source_rect_reset_to_none(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        vp.source_rect = QRectF(0, 0, 50, 50)
+        vp.source_rect = None
+        assert vp.source_rect is None
+
+    def test_is_movable(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        flags = vp.flags()
+        assert flags & vp.GraphicsItemFlag.ItemIsMovable
+
+    def test_is_selectable(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        flags = vp.flags()
+        assert flags & vp.GraphicsItemFlag.ItemIsSelectable
+
+    def test_z_value(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        assert vp.zValue() == 5
+
+    def test_white_brush(self, model_scene):
+        vp = PaperViewport(model_scene, 0, 0, 100, 100)
+        assert vp.brush().color() == Qt.GlobalColor.white
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PaperScene
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPaperScene:
+    """Tests for PaperScene setup and API."""
+
+    def test_default_paper_size(self, model_scene):
+        ps = PaperScene(model_scene)
+        assert ps.paper_size == "ANSI D"
+
+    def test_custom_paper_size(self, model_scene):
+        ps = PaperScene(model_scene, paper_size="A4")
+        assert ps.paper_size == "A4"
+
+    def test_paper_size_setter(self, model_scene):
+        ps = PaperScene(model_scene, paper_size="ANSI D")
+        ps.paper_size = "A3"
+        assert ps.paper_size == "A3"
+
+    def test_invalid_paper_size_ignored(self, model_scene):
+        ps = PaperScene(model_scene, paper_size="ANSI D")
+        ps.paper_size = "NONEXISTENT"
+        assert ps.paper_size == "ANSI D"
+
+    def test_title_block_not_none(self, model_scene):
+        ps = PaperScene(model_scene)
+        assert ps.title_block is not None
+        assert isinstance(ps.title_block, TitleBlockItem)
+
+    def test_scene_rect_larger_than_paper(self, model_scene):
+        ps = PaperScene(model_scene, paper_size="ANSI D")
+        w, h = PAPER_SIZES["ANSI D"]
+        sr = ps.sceneRect()
+        # Scene rect should include 20 mm padding on each side
+        assert sr.width() == pytest.approx(w + 40)
+        assert sr.height() == pytest.approx(h + 40)
+        assert sr.x() == pytest.approx(-20)
+        assert sr.y() == pytest.approx(-20)
+
+    def test_scene_has_items(self, model_scene):
+        ps = PaperScene(model_scene)
+        # Should have at least: background rect, border rect, title block, viewport
+        assert len(ps.items()) >= 4
+
+    def test_paper_size_change_rebuilds(self, model_scene):
+        """Changing paper size triggers a full rebuild."""
+        ps = PaperScene(model_scene, paper_size="A4")
+        sr_a4 = ps.sceneRect()
+        ps.paper_size = "ANSI D"
+        sr_ansi = ps.sceneRect()
+        assert sr_a4 != sr_ansi
+
+    def test_refresh_viewport_no_crash(self, model_scene):
+        """refresh_viewport() should not raise."""
+        ps = PaperScene(model_scene)
+        ps.refresh_viewport()  # should succeed silently
+
+    def test_viewport_exists_after_setup(self, model_scene):
+        ps = PaperScene(model_scene)
+        assert ps._viewport is not None
+        assert isinstance(ps._viewport, PaperViewport)
+
+    def test_viewport_inside_margins(self, model_scene):
+        """Viewport rect should sit within the border margins."""
+        ps = PaperScene(model_scene, paper_size="ANSI D")
+        vp = ps._viewport
+        r = vp.rect()
+        w, h = PAPER_SIZES["ANSI D"]
+        # Viewport x must be >= MARGIN + INNER_MARGIN
+        assert r.x() >= MARGIN + INNER_MARGIN - 1
+        # Viewport right edge must be <= w - MARGIN - INNER_MARGIN
+        assert r.x() + r.width() <= w - MARGIN - INNER_MARGIN + 1
+        # Viewport y must be >= MARGIN + INNER_MARGIN
+        assert r.y() >= MARGIN + INNER_MARGIN - 1
+
+    def test_all_paper_sizes_construct(self, model_scene):
+        """PaperScene can be constructed for every size in the catalogue."""
+        for name in PAPER_SIZES:
+            ps = PaperScene(model_scene, paper_size=name)
+            assert ps.paper_size == name
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PaperSpaceWidget
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestPaperSpaceWidget:
+    """Tests for the PaperSpaceWidget toolbar and integration."""
+
+    def test_widget_creates(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        assert widget is not None
+
+    def test_default_combo_value(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        assert widget._size_combo.currentText() == "ANSI D"
+
+    def test_combo_has_all_sizes(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        items = [widget._size_combo.itemText(i)
+                 for i in range(widget._size_combo.count())]
+        for name in PAPER_SIZES:
+            assert name in items
+
+    def test_change_paper_updates_scene(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        widget.change_paper("A3")
+        assert widget.paper_scene.paper_size == "A3"
+        assert widget._size_combo.currentText() == "A3"
+
+    def test_paper_scene_is_set(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        assert widget.paper_scene is not None
+        assert isinstance(widget.paper_scene, PaperScene)
+
+    def test_view_exists(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        assert widget.view is not None
+        assert widget.view.scene() is widget.paper_scene
+
+    def test_refresh_no_crash(self, model_scene):
+        widget = PaperSpaceWidget(model_scene)
+        widget._refresh()  # should not raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Margin / layout constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLayoutConstants:
+    """Sanity checks for paper layout constants."""
+
+    def test_margin_positive(self):
+        assert MARGIN > 0
+
+    def test_inner_margin_positive(self):
+        assert INNER_MARGIN > 0
+
+    def test_title_height_positive(self):
+        assert TITLE_H > 0
+
+    def test_title_fits_inside_smallest_paper(self):
+        """Title block + margins must fit inside the smallest paper size."""
+        min_h = min(h for _, (_, h) in PAPER_SIZES.items())
+        required = 2 * (MARGIN + INNER_MARGIN) + TITLE_H
+        assert required < min_h, (
+            f"Title block ({required:.1f} mm) exceeds smallest paper height "
+            f"({min_h:.1f} mm)"
+        )

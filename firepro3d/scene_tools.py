@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPathItem, QGraphicsLineItem,
 from .construction_geometry import (
     ConstructionLine, PolylineItem, LineItem, RectangleItem, CircleItem, ArcItem,
 )
+from .constants import DEFAULT_LEVEL
 from .node import Node
 from .annotations import HatchItem
 from .cad_math import CAD_Math
