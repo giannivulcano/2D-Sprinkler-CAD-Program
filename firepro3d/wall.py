@@ -22,7 +22,8 @@ from PyQt6.QtGui import (
 if TYPE_CHECKING:
     from .wall_opening import WallOpening
 
-from .constants import DEFAULT_LEVEL, DEFAULT_USER_LAYER
+from .constants import (DEFAULT_LEVEL, DEFAULT_USER_LAYER,
+                       MITER_TOL, MAX_MITER_FACTOR)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -959,8 +960,7 @@ class WallSegment(DisplayableItemMixin, QGraphicsPathItem):
         if sc is None or not hasattr(sc, '_walls'):
             return ((p1l, p1r, p2r, p2l), solid_pt1, solid_pt2)
 
-        MITER_TOL = 1.0
-        MAX_MITER = self.half_thickness_scene() * 4
+        MAX_MITER = self.half_thickness_scene() * MAX_MITER_FACTOR
 
         for my_idx in (0, 1):
             my_pt = self._pt1 if my_idx == 0 else self._pt2

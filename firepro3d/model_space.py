@@ -35,7 +35,8 @@ from .gridline import (GridlineItem, reset_grid_counters,
                        sync_grid_counters, apply_duplicate_warnings)
 from .view_marker import ViewMarkerArrow
 from .constants import (Z_BELOW_GEOMETRY, Z_UNDERLAY, DEFAULT_LEVEL,
-                       DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM)
+                       DEFAULT_USER_LAYER, DEFAULT_CEILING_OFFSET_MM,
+                       AUTO_JOIN_TOLERANCE, TEE_TOLERANCE)
 from .wall import WallSegment, compute_wall_quad, DEFAULT_THICKNESS_MM
 from .floor_slab import FloorSlab
 from .roof import RoofItem
@@ -5701,13 +5702,11 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         # Use only the walls that form this room's boundary
         walls = boundary_walls
 
-        # The boundary walk traces wall centerlines. For non-center alignments
-        # we need a half-wall-width inset to reach the interior face:
-        #   Center → no adjustment (centerline = wall center, already correct)
-        #   Left   → inset by half thickness (centerline is at left face,
-        #             room face is half-thickness inward)
-        #   Right  → inset by half thickness (centerline is at right face,
-        #             room face is half-thickness inward)
+        # The boundary walk traces wall centerlines/axes. For non-center
+        # alignments we may need to inset to reach the interior face:
+        #   Center → axis at wall center → inset by half thickness
+        #   Right  → axis IS the right face → no inset needed
+        #   Left   → axis at left face → inset by full wall thickness
         align_counts = {"Center": 0, "Left": 0, "Right": 0}
         total_ht = 0.0
         for w in walls:
@@ -5716,15 +5715,11 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
         avg_ht = total_ht / len(walls) if walls else 0.0
 
         dominant = max(align_counts, key=align_counts.get)
-        # All alignments need inset to reach the inner wall face:
-        #   Center → centerline is at wall center → inset by half thickness (shrink)
-        #   Left   → centerline is at left face → inset by half thickness (shrink)
-        #   Right  → centerline is at right face → inset by half thickness (expand)
         # Determine inset needed to reach interior face from the boundary walk
         # (which traces wall centerlines/axes):
         #   Center → axis at wall center → inset by half thickness (shrink)
-        #   Left   → axis IS the left face → no inset needed
-        #   Right  → axis at right face → inset by full thickness (shrink)
+        #   Right  → axis IS the right face → no inset needed
+        #   Left   → axis at left face → inset by full thickness (shrink)
         if dominant == "Right":
             inset_dist = 0.0
         elif dominant == "Left":
@@ -7186,10 +7181,10 @@ class Model_Space(SceneToolsMixin, SceneIOMixin, QGraphicsScene):
                     pass
         self._next_roof_num = (max(roof_nums) + 1) if roof_nums else 1
 
-    def _auto_join_wall(self, wall: WallSegment, tolerance: float = 20.0):
+    def _auto_join_wall(self, wall: WallSegment,
+                        tolerance: float = AUTO_JOIN_TOLERANCE):
         """Snap wall endpoints to nearby existing wall endpoints (miter join)
         and to mid-wall faces (tee join)."""
-        TEE_TOLERANCE = 40.0  # larger search radius for tee intersections
 
         # Track which endpoints have already been snapped (0=pt1, 1=pt2)
         snapped = set()

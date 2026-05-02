@@ -125,8 +125,25 @@ class HydraulicSolver:
             supply_node, adjacency
         )
 
-        # Filter design sprinklers to those reachable from supply
+        # ── Loop detection ─────────────────────────────────────────────────
+        # A spanning tree on N nodes has exactly N-1 edges.  Any pipe whose
+        # both endpoints are reachable but that was NOT chosen as a tree edge
+        # closes a loop.  Count them and warn.
         reachable = set(bfs_order)
+        tree_edge_count = len(bfs_order) - 1       # one parent edge per non-root
+        total_pipe_count = sum(
+            1 for p in self.system.pipes
+            if p.node1 in reachable and p.node2 in reachable
+        )
+        excluded_pipes = total_pipe_count - tree_edge_count
+        if excluded_pipes > 0:
+            messages.append(
+                f"⚠️ Looped network detected — {excluded_pipes} "
+                f"pipe{'s' if excluded_pipes != 1 else ''} excluded from "
+                f"tree-based analysis."
+            )
+
+        # Filter design sprinklers to those reachable from supply
         active_sprinklers = [s for s in design_sprinklers if s.node in reachable]
         if not active_sprinklers:
             return self._fail(

@@ -53,6 +53,13 @@ NFPA_MAX_COVERAGE_SQFT: dict[str, float] = {
 }
 
 # ── Pipe colour map ──────────────────────────────────────────────────────────
+# ── Wall join tolerances (mm) ────────────────────────────────────────────────
+MITER_TOL = 1.0               # max gap to treat endpoints as coincident for miter
+MAX_MITER_FACTOR = 4.0        # miter extension cap: half_thickness * this factor
+AUTO_JOIN_TOLERANCE = 20.0    # snap radius for endpoint-to-endpoint wall joins
+TEE_TOLERANCE = 40.0          # snap radius for tee (mid-wall) joins
+
+# ── Pipe colour map ──────────────────────────────────────────────────────────
 PIPE_COLORS: dict[str, str] = {
     "Red":   "#e62828",
     "Blue":  "#3366e6",

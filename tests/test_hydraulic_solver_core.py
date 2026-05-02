@@ -802,3 +802,104 @@ class TestVelocityWarning:
 
     def test_velocity_limit_constant(self):
         assert HydraulicSolver.VELOCITY_LIMIT_FPS == 20.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. Loop detection warning
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLoopDetection:
+    """Verify that looped networks produce a warning with excluded pipe count."""
+
+    def test_linear_network_no_loop_warning(self):
+        """Supply -> junction -> sprinkler (tree topology) should emit no loop warning."""
+        sm = _mock_scale_manager()
+        ws = _mock_water_supply(static=80, residual=60, test_flow=500,
+                                elevation=0, hose_stream=0)
+
+        supply_n = _mock_node(fitting_type="no fitting")
+        mid_n = _mock_node(fitting_type="no fitting")
+        spr_n = _mock_node(fitting_type="cap", has_spr=True)
+
+        _mock_pipe(supply_n, mid_n, length_ft=10.0)
+        _mock_pipe(mid_n, spr_n, length_ft=10.0)
+        spr = _mock_sprinkler(spr_n)
+
+        sys = _mock_sprinkler_system(
+            ws,
+            nodes=[supply_n, mid_n, spr_n],
+            pipes=[supply_n.pipes[0], mid_n.pipes[-1]],
+            sprinklers=[spr],
+        )
+        solver = HydraulicSolver(sys, sm)
+        result = solver.solve(design_sprinklers=[spr])
+
+        assert not any("looped network" in m.lower() for m in result.messages)
+
+    def test_looped_network_warning_present(self):
+        """A network with one extra pipe forming a loop should warn."""
+        sm = _mock_scale_manager()
+        ws = _mock_water_supply(static=80, residual=60, test_flow=500,
+                                elevation=0, hose_stream=0)
+
+        # Diamond: supply -> A -> B -> spr, plus A -> B extra pipe (loop)
+        supply_n = _mock_node(fitting_type="no fitting")
+        a_n = _mock_node(fitting_type="no fitting")
+        b_n = _mock_node(fitting_type="no fitting")
+        spr_n = _mock_node(fitting_type="cap", has_spr=True)
+
+        p1 = _mock_pipe(supply_n, a_n, length_ft=10.0)
+        p2 = _mock_pipe(a_n, b_n, length_ft=10.0)
+        p3 = _mock_pipe(b_n, spr_n, length_ft=10.0)
+        # Extra pipe closing a loop between supply_n and b_n
+        p_loop = _mock_pipe(supply_n, b_n, length_ft=15.0)
+
+        spr = _mock_sprinkler(spr_n)
+
+        sys = _mock_sprinkler_system(
+            ws,
+            nodes=[supply_n, a_n, b_n, spr_n],
+            pipes=[p1, p2, p3, p_loop],
+            sprinklers=[spr],
+        )
+        solver = HydraulicSolver(sys, sm)
+        result = solver.solve(design_sprinklers=[spr])
+
+        loop_msgs = [m for m in result.messages if "looped network" in m.lower()]
+        assert len(loop_msgs) == 1
+        # 4 pipes, 4 nodes -> tree has 3 edges -> 1 excluded
+        assert "1 pipe excluded" in loop_msgs[0]
+
+    def test_looped_network_excluded_count_multiple(self):
+        """Two extra pipes should report 2 pipes excluded."""
+        sm = _mock_scale_manager()
+        ws = _mock_water_supply(static=80, residual=60, test_flow=500,
+                                elevation=0, hose_stream=0)
+
+        supply_n = _mock_node(fitting_type="no fitting")
+        a_n = _mock_node(fitting_type="no fitting")
+        b_n = _mock_node(fitting_type="no fitting")
+        spr_n = _mock_node(fitting_type="cap", has_spr=True)
+
+        p1 = _mock_pipe(supply_n, a_n, length_ft=10.0)
+        p2 = _mock_pipe(a_n, b_n, length_ft=10.0)
+        p3 = _mock_pipe(b_n, spr_n, length_ft=10.0)
+        # Two extra loop-closing pipes
+        p_loop1 = _mock_pipe(supply_n, b_n, length_ft=15.0)
+        p_loop2 = _mock_pipe(a_n, spr_n, length_ft=12.0)
+
+        spr = _mock_sprinkler(spr_n)
+
+        sys = _mock_sprinkler_system(
+            ws,
+            nodes=[supply_n, a_n, b_n, spr_n],
+            pipes=[p1, p2, p3, p_loop1, p_loop2],
+            sprinklers=[spr],
+        )
+        solver = HydraulicSolver(sys, sm)
+        result = solver.solve(design_sprinklers=[spr])
+
+        loop_msgs = [m for m in result.messages if "looped network" in m.lower()]
+        assert len(loop_msgs) == 1
+        # 5 pipes, 4 nodes -> tree has 3 edges -> 2 excluded
+        assert "2 pipes excluded" in loop_msgs[0]
